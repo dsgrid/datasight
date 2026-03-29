@@ -1,0 +1,22 @@
+# Example queries — natural language questions paired with their correct SQL.
+#
+# These are injected into the AI system prompt as few-shot examples and
+# seeded into agent memory so similar future questions get better answers.
+#
+# Format:
+#   - question: <natural language question>
+#     sql: |
+#       <correct SQL for this database>
+
+- question: Show the first 10 rows
+  sql: |
+    SELECT *
+    FROM my_table
+    LIMIT 10
+
+- question: How many records are in each category?
+  sql: |
+    SELECT category, COUNT(*) AS record_count
+    FROM my_table
+    GROUP BY category
+    ORDER BY record_count DESC

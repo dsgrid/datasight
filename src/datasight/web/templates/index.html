@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>datasight</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  // Apply saved theme immediately to prevent flash (respect OS preference on first visit)
+  (function() {
+    var saved = localStorage.getItem('datasight-theme');
+    var t = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<style>
+  :root {
+    --navy: #023d60;
+    --cream: #e7e1cf;
+    --teal: #15a8a8;
+    --orange: #fe5d26;
+    --magenta: #bf1363;
+    --bg: #f5f3ee;
+    --surface: #ffffff;
+    --text: #1a1a1a;
+    --text-secondary: #5a6370;
+    --border: #e2e0db;
+    --user-bg: var(--navy);
+    --user-text: #ffffff;
+    --assistant-bg: var(--surface);
+    --assistant-text: var(--text);
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08);
+    --sidebar-width: 300px;
+  }
+
+  [data-theme="dark"] {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --text: #e6edf3;
+    --text-secondary: #8b949e;
+    --border: #30363d;
+    --user-bg: #1a3a52;
+    --user-text: #e6edf3;
+    --assistant-bg: var(--surface);
+    --assistant-text: var(--text);
+    --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body, .sidebar, header, #chat-form, .message-bubble,
+  .result-table-wrap, .table-toolbar, .input-wrap,
+  .welcome .example-btn, .result-table th, .tool-indicator {
+    transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  body {
+    font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Header */
+  header {
+    background: var(--navy);
+    color: var(--cream);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(2,61,96,0.15);
+    z-index: 20;
+  }
+
+  header .left { display: flex; align-items: center; gap: 12px; }
+
+  header .brand {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  header .brand span { color: var(--teal); }
+
+  header .actions { display: flex; gap: 8px; align-items: center; }
+
+  .btn-icon {
+    background: transparent;
+    border: 1px solid rgba(231,225,207,0.25);
+    color: var(--cream);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+  }
+
+  .btn-icon:hover {
+    background: rgba(231,225,207,0.12);
+    border-color: rgba(231,225,207,0.4);
+  }
+
+  .btn-icon.active {
+    background: rgba(21,168,168,0.2);
+    border-color: var(--teal);
+  }
+
+  /* Main layout */
+  .main-layout {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: var(--sidebar-width);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: margin-left 0.25s ease;
+  }
+
+  .sidebar.collapsed {
+    margin-left: calc(-1 * var(--sidebar-width));
+  }
+
+  .sidebar-header {
+    padding: 14px 16px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  .sidebar-content::-webkit-scrollbar { width: 5px; }
+  .sidebar-content::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Table items */
+  .table-item {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table-item:last-child { border-bottom: none; }
+
+  .table-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.1s;
+    user-select: none;
+  }
+
+  .table-header:hover { background: rgba(21,168,168,0.04); }
+
+  .table-header.selected {
+    background: rgba(21,168,168,0.08);
+    border-left: 3px solid var(--teal);
+    padding-left: 13px;
+  }
+
+  .table-icon {
+    width: 16px;
+    height: 16px;
+    color: var(--teal);
+    flex-shrink: 0;
+  }
+
+  .table-name {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .table-rows {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .table-chevron {
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+
+  .table-header.expanded .table-chevron { transform: rotate(90deg); }
+
+  /* Column list */
+  .column-list {
+    display: none;
+    padding: 0 16px 8px 40px;
+  }
+
+  .column-list.visible { display: block; }
+
+  .column-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 0.78rem;
+  }
+
+  .col-name {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    font-size: 0.76rem;
+  }
+
+  .col-type {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    background: var(--bg);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  /* Queries section */
+  .queries-section {
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    max-height: 50%;
+    overflow: hidden;
+  }
+
+  .queries-section .sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .query-count {
+    font-weight: 400;
+    color: var(--teal);
+  }
+
+  .queries-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+
+  .queries-list::-webkit-scrollbar { width: 5px; }
+  .queries-list::-webkit-scrollbar-track { background: transparent; }
+  .queries-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .query-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-bottom: 1px solid rgba(0,0,0,0.03);
+  }
+
+  .query-item:hover { background: rgba(21,168,168,0.04); }
+
+  .query-question {
+    font-size: 0.82rem;
+    color: var(--text);
+    line-height: 1.4;
+    margin-bottom: 4px;
+  }
+
+  .query-sql-preview {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .no-queries {
+    padding: 16px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    text-align: center;
+    font-style: italic;
+  }
+
+  /* Chat area */
+  .chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  /* Messages area */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 16px;
+    scroll-behavior: smooth;
+  }
+
+  #messages::-webkit-scrollbar { width: 6px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .message-row {
+    display: flex;
+    margin-bottom: 16px;
+    animation: fadeIn 0.25s ease;
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .message-row.user { justify-content: flex-end; }
+  .message-row.assistant { justify-content: flex-start; }
+
+  .message-bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    line-height: 1.6;
+    font-size: 0.925rem;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .message-row.user .message-bubble {
+    background: var(--user-bg);
+    color: var(--user-text);
+    border-bottom-right-radius: 4px;
+  }
+
+  .message-row.assistant .message-bubble {
+    background: var(--assistant-bg);
+    color: var(--assistant-text);
+    border-bottom-left-radius: 4px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+
+  /* Markdown content inside assistant bubbles */
+  .message-bubble p { margin-bottom: 0.6em; }
+  .message-bubble p:last-child { margin-bottom: 0; }
+  .message-bubble ul, .message-bubble ol { margin: 0.4em 0 0.6em 1.4em; }
+  .message-bubble li { margin-bottom: 0.2em; }
+  .message-bubble strong { font-weight: 600; }
+  .message-bubble code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85em;
+    background: var(--bg);
+    padding: 2px 5px;
+    border-radius: 4px;
+  }
+  .message-bubble pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 0.6em 0;
+  }
+  .message-bubble pre code {
+    background: transparent;
+    padding: 0;
+    font-size: 0.82em;
+    line-height: 1.5;
+  }
+
+  .message-bubble pre {
+    position: relative;
+  }
+
+  .copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: var(--border);
+    border: none;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .message-bubble pre:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { color: var(--text); background: var(--teal); color: white; }
+
+  /* Tool indicators */
+  .tool-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    margin-bottom: 8px;
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    animation: fadeIn 0.2s ease;
+  }
+
+  .tool-indicator .dot {
+    width: 6px; height: 6px;
+    background: var(--teal);
+    border-radius: 50%;
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .tool-indicator .sql-preview {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78em;
+    color: var(--teal);
+    background: rgba(21,168,168,0.08);
+    padding: 2px 6px;
+    border-radius: 4px;
+    max-width: 400px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Tool results (tables + charts) */
+  .tool-result {
+    max-width: 900px;
+    margin: 0 auto 16px;
+    width: 100%;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .tool-result iframe {
+    width: 100%;
+    height: 480px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  /* Data tables */
+  .result-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .table-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .table-filter {
+    flex: 1;
+    max-width: 280px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 0.78rem;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+  }
+
+  .table-filter:focus {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 1px rgba(21,168,168,0.2);
+  }
+
+  .table-filter::placeholder { color: var(--text-secondary); }
+
+  .result-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .result-table th {
+    background: var(--navy);
+    color: var(--cream);
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 500;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .result-table th:hover { background: #034b75; }
+
+  [data-theme="dark"] .result-table th { background: #1a3a52; }
+  [data-theme="dark"] .result-table th:hover { background: #224a66; }
+
+  .result-table th .sort-arrow {
+    display: inline-block;
+    width: 12px;
+    margin-left: 4px;
+    font-size: 0.7rem;
+    opacity: 0.4;
+  }
+
+  .result-table th.sort-asc .sort-arrow,
+  .result-table th.sort-desc .sort-arrow { opacity: 1; }
+
+  .result-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .result-table tbody tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+  [data-theme="dark"] .result-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  .result-table tbody tr:hover { background: rgba(21,168,168,0.06); }
+  .result-table tbody tr.filtered-out { display: none; }
+
+  .result-table .null-val {
+    color: #999;
+    font-style: italic;
+  }
+
+  .table-note {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: right;
+  }
+
+  .sql-error {
+    color: var(--orange);
+    padding: 10px 14px;
+    background: rgba(254,93,38,0.06);
+    border: 1px solid rgba(254,93,38,0.2);
+    border-radius: 8px;
+    font-size: 0.85rem;
+  }
+
+  .empty-result {
+    padding: 10px 14px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+  }
+
+  /* Typing indicator */
+  .typing-indicator {
+    display: flex;
+    gap: 4px;
+    padding: 4px 0;
+  }
+
+  .typing-indicator span {
+    width: 6px; height: 6px;
+    background: var(--teal);
+    border-radius: 50%;
+    animation: typingBounce 1.2s infinite;
+  }
+
+  .typing-indicator span:nth-child(2) { animation-delay: 0.15s; }
+  .typing-indicator span:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  /* Welcome state */
+  .welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--text-secondary);
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
+  .welcome h2 {
+    color: var(--teal);
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+
+  .welcome p {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    margin-bottom: 20px;
+  }
+
+  .welcome .examples {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .welcome .example-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.88rem;
+    color: var(--text);
+    transition: all 0.15s;
+  }
+
+  .welcome .example-btn:hover {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 1px var(--teal);
+  }
+
+  /* Input area */
+  #chat-form {
+    flex-shrink: 0;
+    padding: 12px 16px 16px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+
+  .input-wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 8px 8px 16px;
+    box-shadow: var(--shadow);
+    transition: border-color 0.15s;
+  }
+
+  .input-wrap:focus-within {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 2px rgba(21,168,168,0.15);
+  }
+
+  #user-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.925rem;
+    resize: none;
+    line-height: 1.5;
+    max-height: 150px;
+    min-height: 24px;
+    overflow-y: auto;
+    background: transparent;
+    color: var(--text);
+  }
+
+  #user-input::placeholder { color: #aaa; }
+
+  #send-btn {
+    background: var(--teal);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    width: 38px;
+    height: 38px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  #send-btn:hover { background: #119494; }
+  #send-btn:disabled { background: var(--border); cursor: not-allowed; opacity: 0.5; }
+
+  #send-btn svg {
+    width: 18px; height: 18px;
+    fill: white;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 30; box-shadow: 4px 0 20px rgba(0,0,0,0.15); }
+    .sidebar.collapsed { margin-left: 0; transform: translateX(-100%); }
+    .sidebar:not(.collapsed) { transform: translateX(0); }
+    header { padding: 12px 16px; }
+    header .brand { font-size: 1.15rem; }
+    #messages { padding: 16px 10px; }
+    .message-bubble { max-width: 92%; padding: 10px 14px; }
+    .tool-result iframe { height: 350px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="left">
+      <button class="btn-icon" onclick="toggleSidebar()" title="Toggle sidebar" id="sidebar-toggle">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="2.5" width="14" height="1.5" rx="0.75" fill="currentColor"/><rect x="1" y="7.25" width="14" height="1.5" rx="0.75" fill="currentColor"/><rect x="1" y="12" width="14" height="1.5" rx="0.75" fill="currentColor"/></svg>
+      </button>
+      <div class="brand">data<span>sight</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn-icon" onclick="toggleTheme()" title="Toggle theme" id="theme-toggle">
+        <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64a6 6 0 107.42 7.42z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="btn-icon" onclick="clearChat()" title="New conversation">New chat</button>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-content" id="tables-list">
+        <div class="sidebar-header">Tables</div>
+        <div id="tables-container">
+          <div class="no-queries">Loading schema...</div>
+        </div>
+      </div>
+      <div class="queries-section" id="queries-section">
+        <div class="sidebar-header">
+          <span>Example Queries</span>
+          <span class="query-count" id="query-count"></span>
+        </div>
+        <div class="queries-list" id="queries-list">
+          <div class="no-queries">Loading...</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Chat area -->
+    <div class="chat-area">
+      <div id="messages">
+        <div class="welcome" id="welcome">
+          <h2>Welcome to datasight</h2>
+          <p>Ask questions about your data in plain English. I can query the database, analyze results, and create visualizations.</p>
+          <p style="font-size:0.85rem;">Browse tables in the sidebar, or try one of these:</p>
+          <div class="examples">
+            <button class="example-btn" onclick="sendExample(this.textContent)">What tables are available and how many rows do they have?</button>
+            <button class="example-btn" onclick="sendExample(this.textContent)">Show me a summary of the data</button>
+            <button class="example-btn" onclick="sendExample(this.textContent)">What are the top 10 records by the largest numeric column?</button>
+          </div>
+        </div>
+      </div>
+
+      <form id="chat-form" onsubmit="return handleSubmit(event)">
+        <div class="input-wrap">
+          <textarea id="user-input" rows="1" placeholder="Ask about your data..." autofocus></textarea>
+          <button type="submit" id="send-btn" title="Send">
+            <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const sessionId = crypto.randomUUID();
+let isStreaming = false;
+let currentAssistantBubble = null;
+let currentAssistantText = '';
+let selectedTable = null;
+let allQueries = [];
+let schemaData = [];
+
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('user-input');
+const sendBtn = document.getElementById('send-btn');
+const welcomeEl = document.getElementById('welcome');
+const sidebar = document.getElementById('sidebar');
+
+// Configure marked
+marked.setOptions({
+  highlight: function(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return hljs.highlightAuto(code).value;
+  },
+  breaks: true,
+  gfm: true,
+});
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+function toggleSidebar() {
+  sidebar.classList.toggle('collapsed');
+  const btn = document.getElementById('sidebar-toggle');
+  btn.classList.toggle('active', !sidebar.classList.contains('collapsed'));
+}
+
+async function loadSchema() {
+  try {
+    const resp = await fetch('/api/schema');
+    const data = await resp.json();
+    schemaData = data.tables || [];
+    renderTables(schemaData);
+  } catch (e) {
+    document.getElementById('tables-container').innerHTML =
+      '<div class="no-queries">Failed to load schema</div>';
+  }
+}
+
+async function loadQueries() {
+  try {
+    const resp = await fetch('/api/queries');
+    const data = await resp.json();
+    allQueries = data.queries || [];
+    renderQueries(allQueries);
+  } catch (e) {
+    document.getElementById('queries-list').innerHTML =
+      '<div class="no-queries">Failed to load queries</div>';
+  }
+}
+
+function renderTables(tables) {
+  const container = document.getElementById('tables-container');
+  if (!tables.length) {
+    container.innerHTML = '<div class="no-queries">No tables found</div>';
+    return;
+  }
+
+  container.innerHTML = tables.map((t, idx) => {
+    const rowCount = t.row_count != null ? Number(t.row_count).toLocaleString() : '?';
+    const isView = t.name.startsWith('v_');
+    const icon = isView
+      ? '<svg class="table-icon" viewBox="0 0 16 16" fill="none"><path d="M8 2C4.13 2 1 3.79 1 6v4c0 2.21 3.13 4 7 4s7-1.79 7-4V6c0-2.21-3.13-4-7-4z" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M1 6c0 2.21 3.13 4 7 4s7-1.79 7-4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>'
+      : '<svg class="table-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><line x1="1" y1="5.5" x2="15" y2="5.5" stroke="currentColor" stroke-width="1.3"/><line x1="1" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1"/><line x1="6" y1="5.5" x2="6" y2="14" stroke="currentColor" stroke-width="1"/></svg>';
+
+    const cols = (t.columns || []).map(c =>
+      '<div class="column-item">' +
+        '<span class="col-name">' + escapeHtml(c.name) + '</span>' +
+        '<span class="col-type">' + escapeHtml(c.dtype) + '</span>' +
+      '</div>'
+    ).join('');
+
+    return '<div class="table-item">' +
+      '<div class="table-header" data-table="' + escapeHtml(t.name) + '" data-idx="' + idx + '" onclick="toggleTable(this)">' +
+        icon +
+        '<span class="table-name">' + escapeHtml(t.name) + '</span>' +
+        '<span class="table-rows">' + rowCount + '</span>' +
+        '<svg class="table-chevron" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
+      '</div>' +
+      '<div class="column-list" id="cols-' + idx + '">' + cols + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function toggleTable(headerEl) {
+  const idx = headerEl.dataset.idx;
+  const tableName = headerEl.dataset.table;
+  const colList = document.getElementById('cols-' + idx);
+  const wasExpanded = headerEl.classList.contains('expanded');
+
+  // Toggle expand/collapse
+  headerEl.classList.toggle('expanded');
+  colList.classList.toggle('visible');
+
+  // Update selected state
+  const allHeaders = document.querySelectorAll('.table-header');
+  allHeaders.forEach(h => h.classList.remove('selected'));
+
+  if (!wasExpanded) {
+    headerEl.classList.add('selected');
+    selectedTable = tableName;
+  } else {
+    selectedTable = null;
+  }
+
+  // Filter queries
+  filterQueries();
+}
+
+function filterQueries() {
+  if (!selectedTable) {
+    renderQueries(allQueries);
+    return;
+  }
+
+  const filtered = allQueries.filter(q => {
+    const sqlLower = (q.sql || '').toLowerCase();
+    const qLower = (q.question || '').toLowerCase();
+    const tLower = selectedTable.toLowerCase();
+    return sqlLower.includes(tLower) || qLower.includes(tLower);
+  });
+
+  renderQueries(filtered.length > 0 ? filtered : allQueries, filtered.length > 0 ? selectedTable : null);
+}
+
+function renderQueries(queries, filterLabel) {
+  const container = document.getElementById('queries-list');
+  const countEl = document.getElementById('query-count');
+
+  if (filterLabel) {
+    countEl.textContent = queries.length + ' for ' + filterLabel;
+  } else {
+    countEl.textContent = queries.length ? String(queries.length) : '';
+  }
+
+  if (!queries.length) {
+    container.innerHTML = '<div class="no-queries">No example queries</div>';
+    return;
+  }
+
+  container.innerHTML = queries.map(q => {
+    const sqlPreview = (q.sql || '').split('\n')[0].trim();
+    return '<div class="query-item" onclick="useQuery(this)" data-question="' + escapeHtml(q.question) + '">' +
+      '<div class="query-question">' + escapeHtml(q.question) + '</div>' +
+      '<div class="query-sql-preview">' + escapeHtml(sqlPreview) + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function useQuery(el) {
+  const question = el.dataset.question;
+  if (question && !isStreaming) {
+    sendMessage(question);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-grow textarea
+// ---------------------------------------------------------------------------
+inputEl.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+});
+
+inputEl.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    handleSubmit(e);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Send message
+// ---------------------------------------------------------------------------
+function handleSubmit(e) {
+  e.preventDefault();
+  const text = inputEl.value.trim();
+  if (!text || isStreaming) return false;
+  sendMessage(text);
+  return false;
+}
+
+function sendExample(text) {
+  if (isStreaming) return;
+  sendMessage(text);
+}
+
+async function sendMessage(text) {
+  if (welcomeEl) welcomeEl.style.display = 'none';
+
+  addMessage('user', text);
+
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+
+  isStreaming = true;
+  sendBtn.disabled = true;
+  currentAssistantText = '';
+  currentAssistantBubble = null;
+
+  const typingEl = addTypingIndicator();
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, session_id: sessionId }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let typingRemoved = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      let eventType = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          if (!typingRemoved) {
+            typingEl.remove();
+            typingRemoved = true;
+          }
+          const data = JSON.parse(line.slice(6));
+          handleSSEEvent(eventType, data);
+          eventType = '';
+        }
+      }
+    }
+
+    if (!typingRemoved) typingEl.remove();
+  } catch (err) {
+    console.error('Stream error:', err);
+    if (document.contains(typingEl)) typingEl.remove();
+    addMessage('assistant', 'Connection error. Please try again.');
+  }
+
+  isStreaming = false;
+  sendBtn.disabled = false;
+  currentAssistantBubble = null;
+  inputEl.focus();
+}
+
+// ---------------------------------------------------------------------------
+// SSE event handler
+// ---------------------------------------------------------------------------
+function handleSSEEvent(eventType, data) {
+  switch (eventType) {
+    case 'tool_start':  handleToolStart(data); break;
+    case 'tool_result': handleToolResult(data); break;
+    case 'token':       handleToken(data); break;
+    case 'done':        finalize(); break;
+  }
+}
+
+function handleToolStart(data) {
+  const el = document.createElement('div');
+  el.className = 'tool-indicator';
+  const toolLabel = data.tool === 'run_sql' ? 'Running SQL' : 'Creating visualization';
+  let html = '<span class="dot"></span><span>' + toolLabel + '...</span>';
+  if (data.input && data.input.sql) {
+    const sqlPreview = data.input.sql.length > 80
+      ? data.input.sql.substring(0, 80) + '...'
+      : data.input.sql;
+    html += '<span class="sql-preview">' + escapeHtml(sqlPreview) + '</span>';
+  }
+  el.innerHTML = html;
+  messagesEl.appendChild(el);
+  scrollToBottom();
+}
+
+function handleToolResult(data) {
+  const indicators = messagesEl.querySelectorAll('.tool-indicator');
+  if (indicators.length > 0) {
+    const last = indicators[indicators.length - 1];
+    const dot = last.querySelector('.dot');
+    if (dot) {
+      dot.style.animation = 'none';
+      dot.style.background = 'var(--teal)';
+      dot.style.opacity = '1';
+    }
+  }
+
+  const resultEl = document.createElement('div');
+  resultEl.className = 'tool-result';
+
+  if (data.type === 'chart') {
+    const iframe = document.createElement('iframe');
+    iframe.sandbox = 'allow-scripts allow-same-origin';
+    iframe.srcdoc = data.html;
+    iframe.style.width = '100%';
+    iframe.style.height = '480px';
+    iframe.style.border = '1px solid var(--border)';
+    iframe.style.borderRadius = 'var(--radius)';
+    iframe.style.background = 'var(--surface)';
+    iframe.addEventListener('load', () => {
+      const theme = document.documentElement.getAttribute('data-theme') || 'light';
+      try { iframe.contentWindow.postMessage({ type: 'theme-change', theme }, '*'); } catch(e) {}
+    });
+    resultEl.appendChild(iframe);
+  } else {
+    resultEl.innerHTML = data.html;
+  }
+
+  messagesEl.appendChild(resultEl);
+  scrollToBottom();
+}
+
+function handleToken(data) {
+  if (!currentAssistantBubble) {
+    const row = document.createElement('div');
+    row.className = 'message-row assistant';
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    currentAssistantBubble = bubble;
+    currentAssistantText = '';
+  }
+  currentAssistantText += data.text;
+  currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+  currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
+    hljs.highlightElement(block);
+  });
+  scrollToBottom();
+}
+
+function addCopyButtons(container) {
+  container.querySelectorAll('pre').forEach(pre => {
+    if (pre.querySelector('.copy-btn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code');
+      const text = code ? code.textContent : pre.textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+      });
+    });
+    pre.appendChild(btn);
+  });
+}
+
+function finalize() {
+  if (currentAssistantBubble && currentAssistantText) {
+    currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+    currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
+      hljs.highlightElement(block);
+    });
+    addCopyButtons(currentAssistantBubble);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+function addMessage(role, text) {
+  const row = document.createElement('div');
+  row.className = 'message-row ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'message-bubble';
+  if (role === 'user') {
+    bubble.textContent = text;
+  } else {
+    bubble.innerHTML = marked.parse(text);
+    bubble.querySelectorAll('pre code').forEach(block => {
+      hljs.highlightElement(block);
+    });
+    addCopyButtons(bubble);
+  }
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
+  scrollToBottom();
+  return bubble;
+}
+
+function addTypingIndicator() {
+  const row = document.createElement('div');
+  row.className = 'message-row assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'message-bubble';
+  bubble.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
+  scrollToBottom();
+  return row;
+}
+
+function scrollToBottom() {
+  requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Clear chat
+// ---------------------------------------------------------------------------
+async function clearChat() {
+  try {
+    await fetch('/api/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+  } catch (e) { /* ignore */ }
+
+  messagesEl.innerHTML = '';
+  if (welcomeEl) {
+    messagesEl.appendChild(welcomeEl);
+    welcomeEl.style.display = '';
+  }
+  currentAssistantBubble = null;
+  currentAssistantText = '';
+}
+
+// ---------------------------------------------------------------------------
+// Interactive tables — sort & filter
+// ---------------------------------------------------------------------------
+function sortTable(th) {
+  const table = th.closest('table');
+  const colIdx = parseInt(th.dataset.col);
+  const tbody = table.querySelector('tbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+
+  // Determine sort direction
+  const wasAsc = th.classList.contains('sort-asc');
+  table.querySelectorAll('th').forEach(h => {
+    h.classList.remove('sort-asc', 'sort-desc');
+    h.querySelector('.sort-arrow').textContent = '';
+  });
+
+  const asc = !wasAsc;
+  th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+  th.querySelector('.sort-arrow').textContent = asc ? '\u25B2' : '\u25BC';
+
+  rows.sort((a, b) => {
+    const aText = a.children[colIdx]?.textContent ?? '';
+    const bText = b.children[colIdx]?.textContent ?? '';
+    const aNum = parseFloat(aText.replace(/,/g, ''));
+    const bNum = parseFloat(bText.replace(/,/g, ''));
+    if (!isNaN(aNum) && !isNaN(bNum)) {
+      return asc ? aNum - bNum : bNum - aNum;
+    }
+    return asc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+function filterTable(input) {
+  const wrap = input.closest('.result-table-wrap');
+  const tbody = wrap.querySelector('tbody');
+  if (!tbody) return;
+  const term = input.value.toLowerCase();
+  const rows = tbody.querySelectorAll('tr');
+  let visible = 0;
+
+  rows.forEach(row => {
+    const text = row.textContent.toLowerCase();
+    const match = !term || text.includes(term);
+    row.classList.toggle('filtered-out', !match);
+    if (match) visible++;
+  });
+
+  // Update the note with filter count
+  const note = wrap.querySelector('.table-note');
+  if (note && term) {
+    const total = rows.length;
+    note.textContent = `Showing ${visible} of ${total} rows (filtered)`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('datasight-theme', theme);
+
+  // Swap highlight.js stylesheet
+  const hljsLink = document.getElementById('hljs-theme');
+  hljsLink.href = theme === 'dark'
+    ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
+    : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+
+  // Toggle icon visibility
+  document.getElementById('theme-icon-sun').style.display = theme === 'dark' ? 'block' : 'none';
+  document.getElementById('theme-icon-moon').style.display = theme === 'dark' ? 'none' : 'block';
+
+  // Broadcast theme to chart iframes
+  document.querySelectorAll('.tool-result iframe').forEach(iframe => {
+    try { iframe.contentWindow.postMessage({ type: 'theme-change', theme: theme }, '*'); } catch(e) {}
+  });
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// Auto-follow OS theme changes when user hasn't explicitly chosen
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+  if (!localStorage.getItem('datasight-theme')) {
+    applyTheme(e.matches ? 'dark' : 'light');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+loadSchema();
+loadQueries();
+</script>
+</body>
+</html>
