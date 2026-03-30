@@ -738,11 +738,87 @@
     fill: white;
   }
 
+  /* Right panel — last SQL */
+  .right-panel {
+    width: 340px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: margin-right 0.25s ease;
+  }
+
+  .right-panel.collapsed {
+    margin-right: -340px;
+  }
+
+  .right-panel .sidebar-header {
+    padding: 14px 16px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .right-panel .copy-sql-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-family: inherit;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .right-panel .copy-sql-btn:hover {
+    color: var(--text);
+    border-color: var(--teal);
+  }
+
+  .sql-display {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+
+  .sql-display::-webkit-scrollbar { width: 5px; }
+  .sql-display::-webkit-scrollbar-track { background: transparent; }
+  .sql-display::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .sql-display pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    color: var(--text);
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
+  .sql-display .no-sql {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
   /* Responsive */
   @media (max-width: 768px) {
     .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 30; box-shadow: 4px 0 20px rgba(0,0,0,0.15); }
     .sidebar.collapsed { margin-left: 0; transform: translateX(-100%); }
     .sidebar:not(.collapsed) { transform: translateX(0); }
+    .right-panel { display: none; }
     header { padding: 12px 16px; }
     header .brand { font-size: 1.15rem; }
     #messages { padding: 16px 10px; }
@@ -764,6 +840,7 @@
         <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64a6 6 0 107.42 7.42z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
       </button>
+      <button class="btn-icon" onclick="toggleRightPanel()" title="Toggle SQL panel" id="sql-panel-toggle">SQL</button>
       <button class="btn-icon" onclick="clearChat()" title="New conversation">New chat</button>
     </div>
   </header>
@@ -812,6 +889,17 @@
         </div>
       </form>
     </div>
+
+    <!-- Right panel: last SQL query -->
+    <aside class="right-panel" id="right-panel">
+      <div class="sidebar-header">
+        <span>Last SQL Query</span>
+        <button class="copy-sql-btn" onclick="copyLastSql()" title="Copy SQL">Copy</button>
+      </div>
+      <div class="sql-display" id="sql-display">
+        <span class="no-sql">No query executed yet.</span>
+      </div>
+    </aside>
   </div>
 
 <script>
@@ -825,6 +913,7 @@ let currentAssistantText = '';
 let selectedTable = null;
 let allQueries = [];
 let schemaData = [];
+let lastSql = '';
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
@@ -851,6 +940,34 @@ function toggleSidebar() {
   sidebar.classList.toggle('collapsed');
   const btn = document.getElementById('sidebar-toggle');
   btn.classList.toggle('active', !sidebar.classList.contains('collapsed'));
+}
+
+function toggleRightPanel() {
+  const panel = document.getElementById('right-panel');
+  panel.classList.toggle('collapsed');
+  document.getElementById('sql-panel-toggle').classList.toggle('active', !panel.classList.contains('collapsed'));
+}
+
+function copyLastSql() {
+  if (!lastSql) return;
+  navigator.clipboard.writeText(lastSql).then(() => {
+    const btn = document.querySelector('.copy-sql-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+}
+
+function updateSqlDisplay(sql) {
+  lastSql = sql;
+  const display = document.getElementById('sql-display');
+  const pre = document.createElement('pre');
+  const code = document.createElement('code');
+  code.className = 'language-sql';
+  code.textContent = sql;
+  hljs.highlightElement(code);
+  pre.appendChild(code);
+  display.innerHTML = '';
+  display.appendChild(pre);
 }
 
 async function loadSchema() {
@@ -1099,6 +1216,7 @@ function handleToolStart(data) {
       ? data.input.sql.substring(0, 80) + '...'
       : data.input.sql;
     html += '<span class="sql-preview">' + escapeHtml(sqlPreview) + '</span>';
+    updateSqlDisplay(data.input.sql);
   }
   el.innerHTML = html;
   messagesEl.appendChild(el);
