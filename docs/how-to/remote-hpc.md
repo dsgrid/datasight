@@ -53,6 +53,13 @@ Steps:
 
 ## Step 1: Install GizmoSQL on the HPC
 
+```{tip}
+**NREL Kestrel users:** A pre-built `gizmosql_server` binary is already
+available at `/scratch/dthom/gizmosql/gizmosql_server`. You can skip the
+installation instructions below and go straight to
+[Step 2](#step-2-create-views-over-parquet-files).
+```
+
 Download a pre-built binary from the
 [GizmoSQL releases page](https://github.com/gizmodata/gizmosql/releases).
 Choose the Linux x86-64 or ARM64 archive matching your HPC architecture,
@@ -193,8 +200,9 @@ apptainer run \
     ~/gizmosql.sif
 ```
 
-If you have the `gizmosql_server` binary on your `$PATH`, you can skip
-Apptainer and run it directly:
+If you have the `gizmosql_server` binary available (on Kestrel it lives at
+`/scratch/dthom/gizmosql/gizmosql_server`), you can skip Apptainer and run
+it directly:
 
 ```bash
 #!/bin/bash
@@ -206,8 +214,9 @@ Apptainer and run it directly:
 
 echo "GizmoSQL running on node: $(hostname)"
 
-GIZMOSQL_PASSWORD="your_password" gizmosql_server \
+/scratch/dthom/gizmosql/gizmosql_server \
     --database-filename /scratch/project/mydata.duckdb \
+    --password "your_password" \
     --print-queries
 ```
 
@@ -260,18 +269,20 @@ apptainer run \
     ~/gizmosql.sif
 ```
 
-**With a native install:**
+**With a native install** (on Kestrel, use `/scratch/dthom/gizmosql/gizmosql_server`):
 
 ```bash
 # Option A: persistent file
-GIZMOSQL_PASSWORD="your_password" gizmosql_server \
+/scratch/dthom/gizmosql/gizmosql_server \
     --database-filename /scratch/project/mydata.duckdb \
+    --password "your_password" \
     --print-queries
 
 # Option B: in-memory with init script
-GIZMOSQL_PASSWORD="your_password" gizmosql_server \
+/scratch/dthom/gizmosql/gizmosql_server \
     --database-filename :memory: \
     --init-sql-commands-file ./init.sql \
+    --password "your_password" \
     --print-queries
 ```
 
