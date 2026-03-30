@@ -2,8 +2,8 @@
 FastAPI web application for datasight.
 
 Provides a chat UI that streams LLM responses via SSE, with a sidebar
-showing database tables and example queries. Uses the Anthropic SDK
-directly for the LLM agent loop.
+showing database tables and example queries. Supports Anthropic and
+Ollama LLM backends via a common abstraction layer.
 """
 
 import asyncio
@@ -20,14 +20,18 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from loguru import logger
 
-import anthropic
-
 from datasight.chart import InteractiveChartGenerator, _build_artifact_html
 from datasight.config import (
     create_sql_runner,
     load_schema_description,
     load_example_queries,
     format_example_queries,
+)
+from datasight.llm import (
+    LLMClient,
+    TextBlock,
+    ToolUseBlock,
+    create_llm_client,
 )
 from datasight.schema import introspect_schema, format_schema_context
 
@@ -47,16 +51,16 @@ _BASE_DIR = Path(__file__).resolve().parent
 _INDEX_HTML = _BASE_DIR / "templates" / "index.html"
 
 # Runtime state (populated on startup)
-client: anthropic.AsyncAnthropic | None = None
+llm_client: LLMClient | None = None
 sql_runner: Any = None
 system_prompt: str = ""
 model: str = "claude-sonnet-4-20250514"
 chart_generator = InteractiveChartGenerator()
-sessions: dict[str, list[anthropic.types.MessageParam]] = {}
+sessions: dict[str, list[dict[str, Any]]] = {}
 schema_info: list[dict[str, Any]] = []
 example_queries_list: list[dict[str, str]] = []
 
-TOOLS: list[anthropic.types.ToolParam] = [
+TOOLS: list[dict[str, Any]] = [
     {
         "name": "run_sql",
         "description": (
@@ -214,7 +218,7 @@ async def execute_tool(name: str, input_data: dict[str, Any]) -> tuple[str, str 
     return f"Unknown tool: {name}", None
 
 
-def get_session_messages(session_id: str) -> list[anthropic.types.MessageParam]:
+def get_session_messages(session_id: str) -> list[dict[str, Any]]:
     if session_id not in sessions:
         sessions[session_id] = []
     return sessions[session_id]
@@ -226,16 +230,22 @@ def get_session_messages(session_id: str) -> list[anthropic.types.MessageParam]:
 
 
 async def _startup():
-    global client, sql_runner, system_prompt, model, schema_info, example_queries_list
+    global llm_client, sql_runner, system_prompt, model, schema_info, example_queries_list
 
     load_dotenv()
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY not set")
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    llm_provider = os.environ.get("LLM_PROVIDER", "anthropic")
 
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    if llm_provider == "ollama":
+        ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+        llm_client = create_llm_client(provider="ollama", base_url=ollama_base_url)
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            logger.error("ANTHROPIC_API_KEY not set")
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        llm_client = create_llm_client(provider="anthropic", api_key=api_key)
 
     db_mode = os.environ.get("DB_MODE", "local")
     db_path = os.environ.get("DB_PATH", "")
@@ -359,7 +369,7 @@ async def chat(request: Request):
         messages = get_session_messages(session_id)
         messages.append({"role": "user", "content": message})
 
-        assert client is not None, "Anthropic client not initialised"
+        assert llm_client is not None, "LLM client not initialised"
         max_iterations = 15
 
         total_input_tokens = 0
@@ -368,7 +378,7 @@ async def chat(request: Request):
 
         for _ in range(max_iterations):
             try:
-                response = await client.messages.create(
+                response = await llm_client.create_message(
                     model=model,
                     max_tokens=4096,
                     system=system_prompt,
@@ -376,32 +386,36 @@ async def chat(request: Request):
                     messages=messages,
                 )
             except Exception as e:
-                logger.error(f"Anthropic API error: {e}")
+                logger.error(f"LLM API error: {e}")
                 yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 return
 
             api_calls += 1
-            usage = response.usage
-            total_input_tokens += usage.input_tokens
-            total_output_tokens += usage.output_tokens
+            total_input_tokens += response.usage.input_tokens
+            total_output_tokens += response.usage.output_tokens
             logger.info(
                 f"[tokens] call={api_calls} "
-                f"input={usage.input_tokens} output={usage.output_tokens} "
+                f"input={response.usage.input_tokens} output={response.usage.output_tokens} "
                 f"cumulative_input={total_input_tokens} cumulative_output={total_output_tokens}"
             )
 
             if response.stop_reason == "tool_use":
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": [block.model_dump() for block in response.content],
-                    }
-                )
-                tool_results = []
-
+                # Serialize assistant content for session history
+                serialized = []
                 for block in response.content:
-                    if not isinstance(block, anthropic.types.ToolUseBlock):
+                    if isinstance(block, TextBlock):
+                        serialized.append({"type": "text", "text": block.text})
+                    elif isinstance(block, ToolUseBlock):
+                        serialized.append({
+                            "type": "tool_use", "id": block.id,
+                            "name": block.name, "input": block.input,
+                        })
+                messages.append({"role": "assistant", "content": serialized})
+
+                tool_results = []
+                for block in response.content:
+                    if not isinstance(block, ToolUseBlock):
                         continue
 
                     yield f"event: tool_start\ndata: {json.dumps({'tool': block.name, 'input': block.input})}\n\n"
@@ -428,7 +442,7 @@ async def chat(request: Request):
             # Final text response
             text = "".join(
                 b.text for b in response.content
-                if isinstance(b, anthropic.types.TextBlock)
+                if isinstance(b, TextBlock)
             )
             messages.append({"role": "assistant", "content": text})
 

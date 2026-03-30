@@ -29,6 +29,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ollama = [
+    "openai>=1.0,<3",
+]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",

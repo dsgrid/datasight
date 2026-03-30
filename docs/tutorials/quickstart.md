@@ -6,8 +6,10 @@ database.
 ## Prerequisites
 
 - Python 3.10+
-- An Anthropic API key ([get one here](https://console.anthropic.com/))
 - A DuckDB database file
+- **One of the following LLM backends:**
+  - An Anthropic API key ([get one here](https://console.anthropic.com/)), **or**
+  - [Ollama](https://ollama.com/) installed locally (free, no API key needed)
 
 ## Install datasight
 
@@ -15,12 +17,18 @@ database.
 pip install datasight
 ```
 
+To use Ollama as the LLM backend, install with the optional dependency:
+
+```bash
+pip install datasight[ollama]
+```
+
 Or install from source:
 
 ```bash
 git clone https://github.com/dthom/datasight.git
 cd datasight
-pip install -e .
+pip install -e ".[ollama]"
 ```
 
 ## Create a project
@@ -43,10 +51,30 @@ This creates three template files:
 
 ## Configure
 
-Edit `.env` with your Anthropic API key and database path:
+Edit `.env` with your database path and LLM settings.
+
+**Option A — Anthropic (cloud API):**
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
+DB_MODE=local
+DB_PATH=./my_database.duckdb
+```
+
+**Option B — Ollama (local, no API key):**
+
+First, install and start [Ollama](https://ollama.com/), then pull a model
+with tool-calling support:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+Then configure `.env`:
+
+```bash
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen2.5:7b
 DB_MODE=local
 DB_PATH=./my_database.duckdb
 ```

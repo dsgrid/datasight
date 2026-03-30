@@ -144,14 +144,20 @@ def run(port, host, db_mode, db_path, model, project_dir, verbose):
     logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
 
     # Resolve settings: CLI flags > env vars > defaults
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        click.echo(
-            "Error: ANTHROPIC_API_KEY is not set. Add it to .env or your environment.", err=True
-        )
-        sys.exit(1)
+    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
 
-    resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    if llm_provider == "ollama":
+        api_key = "ollama"  # not needed
+        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+    else:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            click.echo(
+                "Error: ANTHROPIC_API_KEY is not set. Add it to .env or your environment.",
+                err=True,
+            )
+            sys.exit(1)
+        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
     resolved_db_mode = db_mode or os.getenv("DB_MODE", "local")
     resolved_port = port or int(os.getenv("PORT", "8084"))
 

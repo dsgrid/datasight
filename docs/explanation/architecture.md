@@ -1,8 +1,22 @@
 # Architecture
 
-datasight uses the Anthropic SDK directly with a FastAPI web server and a
+datasight uses a FastAPI web server, a pluggable LLM backend, and a
 lightweight HTML/CSS/JS frontend. There are no heavy frameworks — the LLM
 agent loop, tool execution, and streaming are all implemented in plain Python.
+
+## LLM backends
+
+datasight supports multiple LLM providers through a common `LLMClient`
+abstraction (defined in `datasight.llm`). The backend is selected via the
+`LLM_PROVIDER` environment variable:
+
+- **`anthropic`** (default) — uses the Anthropic SDK to call Claude models via
+  the cloud API. Requires an `ANTHROPIC_API_KEY`.
+- **`ollama`** — uses Ollama's OpenAI-compatible API to run models locally. No
+  API key required. Install with `pip install datasight[ollama]`.
+
+Both backends support the same tool-calling interface (`run_sql` and
+`visualize_data`), so the rest of the application is provider-agnostic.
 
 ## System overview
 
@@ -14,9 +28,13 @@ flowchart TB
     end
 
     subgraph agent ["LLM Agent Loop"]
-        API[Anthropic Claude API]
+        LLM[LLMClient]
+        ANTH[Anthropic API]
+        OLL[Ollama local]
         SQL[run_sql tool]
         VIZ[visualize_data tool]
+        LLM -.-> ANTH
+        LLM -.-> OLL
         SQL --> RUNNER[SqlRunner]
         VIZ --> CHART[Interactive<br>ChartGenerator]
     end
@@ -27,15 +45,17 @@ flowchart TB
     end
 
     HTML <-->|SSE stream| WEB
-    WEB --> API
-    API --> SQL
-    API --> VIZ
+    WEB --> LLM
+    LLM --> SQL
+    LLM --> VIZ
     RUNNER --> DUCK
     RUNNER --> FLIGHT
 
     style WEB fill:#15a8a8,stroke:#023d60,color:#fff
     style HTML fill:#15a8a8,stroke:#023d60,color:#fff
-    style API fill:#023d60,stroke:#023d60,color:#fff
+    style LLM fill:#023d60,stroke:#023d60,color:#fff
+    style ANTH fill:#023d60,stroke:#023d60,color:#fff
+    style OLL fill:#023d60,stroke:#023d60,color:#fff
     style SQL fill:#023d60,stroke:#023d60,color:#fff
     style VIZ fill:#023d60,stroke:#023d60,color:#fff
     style RUNNER fill:#bf1363,stroke:#023d60,color:#fff
@@ -89,6 +109,10 @@ sequenceDiagram
 `datasight.schema`
 : Database introspection. Discovers tables, columns, and row counts using
   multiple strategies (DuckDB `SHOW TABLES`, `INFORMATION_SCHEMA`, SQLite).
+
+`datasight.llm`
+: LLM client abstraction with implementations for Anthropic and Ollama.
+  Converts between provider-specific message and tool formats.
 
 `datasight.chart`
 : Interactive Plotly chart generator with chart-type switching buttons.
