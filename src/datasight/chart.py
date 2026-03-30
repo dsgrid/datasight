@@ -40,6 +40,155 @@ class InteractiveChartGenerator:
             fig.update_layout(margin=dict(t=80))
         return fig
 
+    def generate_chart_from_spec(
+        self,
+        df: pd.DataFrame,
+        chart_type: str,
+        x: str | None = None,
+        y: str | None = None,
+        color: str | None = None,
+        title: str = "Chart",
+    ) -> dict[str, Any]:
+        """Build a chart from explicit LLM-specified parameters."""
+        if df.empty:
+            raise ValueError("Cannot visualize empty DataFrame")
+
+        df = _coerce_dates(df)
+
+        # Infer x/y from columns if not provided
+        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+        non_numeric_cols = [c for c in df.columns if c not in numeric_cols]
+
+        if x is None:
+            x = non_numeric_cols[0] if non_numeric_cols else df.columns[0]
+        if y is None and chart_type not in ("histogram", "pie"):
+            y = numeric_cols[0] if numeric_cols else df.columns[1] if len(df.columns) > 1 else df.columns[0]
+
+        fig = go.Figure()
+
+        if chart_type == "bar":
+            if color and color in df.columns:
+                for i, val in enumerate(df[color].unique()):
+                    sub = df[df[color] == val]
+                    fig.add_trace(go.Bar(
+                        x=sub[x], y=sub[y], name=str(val),
+                        marker_color=PALETTE[i % len(PALETTE)],
+                    ))
+                fig.update_layout(barmode="group")
+            else:
+                fig.add_trace(go.Bar(x=df[x], y=df[y], marker_color=THEME["teal"]))
+
+        elif chart_type == "horizontal_bar":
+            if color and color in df.columns:
+                for i, val in enumerate(df[color].unique()):
+                    sub = df[df[color] == val]
+                    fig.add_trace(go.Bar(
+                        y=sub[x], x=sub[y], name=str(val),
+                        orientation="h", marker_color=PALETTE[i % len(PALETTE)],
+                    ))
+                fig.update_layout(barmode="group")
+            else:
+                fig.add_trace(go.Bar(y=df[x], x=df[y], orientation="h", marker_color=THEME["orange"]))
+
+        elif chart_type == "line":
+            if color and color in df.columns:
+                for i, val in enumerate(df[color].unique()):
+                    sub = df[df[color] == val].sort_values(x)
+                    fig.add_trace(go.Scatter(
+                        x=sub[x], y=sub[y], mode="lines+markers", name=str(val),
+                        line=dict(color=PALETTE[i % len(PALETTE)]),
+                    ))
+            else:
+                sorted_df = df.sort_values(x)
+                fig.add_trace(go.Scatter(
+                    x=sorted_df[x], y=sorted_df[y], mode="lines+markers",
+                    line=dict(color=THEME["teal"]),
+                ))
+
+        elif chart_type == "scatter":
+            if color and color in df.columns:
+                for i, val in enumerate(df[color].unique()):
+                    sub = df[df[color] == val]
+                    fig.add_trace(go.Scatter(
+                        x=sub[x], y=sub[y], mode="markers", name=str(val),
+                        marker=dict(color=PALETTE[i % len(PALETTE)], size=8),
+                    ))
+            else:
+                fig.add_trace(go.Scatter(
+                    x=df[x], y=df[y], mode="markers",
+                    marker=dict(color=THEME["magenta"], size=8),
+                ))
+
+        elif chart_type == "pie":
+            labels_col = x
+            values_col = y if y else numeric_cols[0] if numeric_cols else df.columns[1]
+            fig.add_trace(go.Pie(
+                labels=df[labels_col], values=df[values_col],
+                marker=dict(colors=_cycle(PALETTE, len(df))),
+            ))
+
+        elif chart_type == "area":
+            if color and color in df.columns:
+                for i, val in enumerate(df[color].unique()):
+                    sub = df[df[color] == val].sort_values(x)
+                    fig.add_trace(go.Scatter(
+                        x=sub[x], y=sub[y], mode="lines", name=str(val),
+                        line=dict(color=PALETTE[i % len(PALETTE)]),
+                        fill="tozeroy" if i == 0 else "tonexty",
+                        stackgroup="one",
+                    ))
+            else:
+                sorted_df = df.sort_values(x)
+                fig.add_trace(go.Scatter(
+                    x=sorted_df[x], y=sorted_df[y], mode="lines",
+                    line=dict(color=THEME["teal"]), fill="tozeroy",
+                ))
+
+        elif chart_type == "histogram":
+            col = x
+            fig.add_trace(go.Histogram(x=df[col], marker_color=THEME["teal"]))
+
+        elif chart_type == "box":
+            if color and color in df.columns:
+                for i, val in enumerate(df[color].unique()):
+                    sub = df[df[color] == val]
+                    fig.add_trace(go.Box(
+                        y=sub[y] if y else sub[x], name=str(val),
+                        marker_color=PALETTE[i % len(PALETTE)],
+                    ))
+            else:
+                col = y if y else x
+                fig.add_trace(go.Box(y=df[col], marker_color=THEME["teal"]))
+
+        elif chart_type == "heatmap":
+            # Expects pivoted data or numeric matrix
+            if x and y and color:
+                pivoted = df.pivot_table(index=y, columns=x, values=color, aggfunc="sum").fillna(0)
+                fig.add_trace(go.Heatmap(
+                    z=pivoted.values, x=pivoted.columns.tolist(), y=pivoted.index.tolist(),
+                    colorscale=[[0, THEME["navy"]], [0.5, THEME["cream"]], [1, THEME["teal"]]],
+                ))
+            else:
+                num_df = df.select_dtypes(include=["number"])
+                corr = num_df.corr()
+                fig.add_trace(go.Heatmap(
+                    z=corr.values, x=corr.columns.tolist(), y=corr.index.tolist(),
+                    colorscale=[[0, THEME["navy"]], [0.5, THEME["cream"]], [1, THEME["teal"]]],
+                    zmin=-1, zmax=1,
+                ))
+        else:
+            # Fallback to heuristic
+            return self.generate_chart(df, title)
+
+        fig.update_layout(
+            title=title,
+            xaxis_title=x if chart_type not in ("pie", "histogram") else None,
+            yaxis_title=y if chart_type not in ("pie", "histogram", "horizontal_bar") else None,
+            hovermode="closest",
+        )
+        self._apply_standard_layout(fig)
+        return json.loads(pio.to_json(fig))
+
     def generate_chart(self, df: pd.DataFrame, title: str = "Chart") -> dict[str, Any]:
         if df.empty:
             raise ValueError("Cannot visualize empty DataFrame")

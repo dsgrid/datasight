@@ -78,8 +78,9 @@ TOOLS: list[anthropic.types.ToolParam] = [
         "name": "visualize_data",
         "description": (
             "Execute a SQL query and render the results as an interactive Plotly chart. "
-            "For best results, SELECT only 2-3 columns (one category/date and one numeric). "
-            "This tool runs the query itself — pass the SQL directly."
+            "This tool runs the query itself — pass the SQL directly. "
+            "Specify chart_type, x, y, and optionally color to control the visualization. "
+            "If chart_type is omitted, the system will auto-detect the best chart type."
         ),
         "input_schema": {
             "type": "object",
@@ -91,6 +92,33 @@ TOOLS: list[anthropic.types.ToolParam] = [
                 "title": {
                     "type": "string",
                     "description": "Chart title",
+                },
+                "chart_type": {
+                    "type": "string",
+                    "description": "Chart type to render",
+                    "enum": [
+                        "bar",
+                        "horizontal_bar",
+                        "line",
+                        "scatter",
+                        "pie",
+                        "area",
+                        "histogram",
+                        "box",
+                        "heatmap",
+                    ],
+                },
+                "x": {
+                    "type": "string",
+                    "description": "Column name for x-axis",
+                },
+                "y": {
+                    "type": "string",
+                    "description": "Column name for y-axis (or value axis)",
+                },
+                "color": {
+                    "type": "string",
+                    "description": "Column name for color grouping (optional)",
                 },
             },
             "required": ["sql"],
@@ -161,11 +189,20 @@ async def execute_tool(name: str, input_data: dict[str, Any]) -> tuple[str, str 
     elif name == "visualize_data":
         sql = input_data.get("sql", "")
         title = input_data.get("title", "Chart")
+        chart_type = input_data.get("chart_type")
+        x = input_data.get("x")
+        y = input_data.get("y")
+        color = input_data.get("color")
         try:
             df = await sql_runner.run_sql(sql)
             if df.empty:
                 return "Query returned no rows — nothing to visualize.", None
-            chart_dict = chart_generator.generate_chart(df, title)
+            if chart_type:
+                chart_dict = chart_generator.generate_chart_from_spec(
+                    df, chart_type=chart_type, x=x, y=y, color=color, title=title,
+                )
+            else:
+                chart_dict = chart_generator.generate_chart(df, title)
             chart_html = _build_artifact_html(chart_dict, title)
             result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
             return result_text, chart_html
