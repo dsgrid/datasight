@@ -292,6 +292,20 @@ async def get_queries():
     return {"queries": example_queries_list}
 
 
+def _log_query_cost(api_calls: int, input_tokens: int, output_tokens: int) -> None:
+    """Log token usage and estimated cost for a completed query."""
+    # Sonnet 4 pricing: $3/M input, $15/M output
+    input_cost = input_tokens * 3.0 / 1_000_000
+    output_cost = output_tokens * 15.0 / 1_000_000
+    total_cost = input_cost + output_cost
+    logger.info(
+        f"[tokens] QUERY TOTAL: api_calls={api_calls} "
+        f"input={input_tokens} output={output_tokens} "
+        f"est_cost=${total_cost:.4f} "
+        f"(input=${input_cost:.4f} output=${output_cost:.4f})"
+    )
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
@@ -311,6 +325,10 @@ async def chat(request: Request):
         assert client is not None, "Anthropic client not initialised"
         max_iterations = 15
 
+        total_input_tokens = 0
+        total_output_tokens = 0
+        api_calls = 0
+
         for _ in range(max_iterations):
             try:
                 response = await client.messages.create(
@@ -325,6 +343,16 @@ async def chat(request: Request):
                 yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 return
+
+            api_calls += 1
+            usage = response.usage
+            total_input_tokens += usage.input_tokens
+            total_output_tokens += usage.output_tokens
+            logger.info(
+                f"[tokens] call={api_calls} "
+                f"input={usage.input_tokens} output={usage.output_tokens} "
+                f"cumulative_input={total_input_tokens} cumulative_output={total_output_tokens}"
+            )
 
             if response.stop_reason == "tool_use":
                 messages.append(
@@ -373,9 +401,11 @@ async def chat(request: Request):
                 yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
                 await asyncio.sleep(0.015)
 
+            _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
             yield "event: done\ndata: {}\n\n"
             return
 
+        _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
         yield f"event: token\ndata: {json.dumps({'text': 'Reached maximum number of tool calls. Please try a simpler question.'})}\n\n"
         yield "event: done\ndata: {}\n\n"
 
