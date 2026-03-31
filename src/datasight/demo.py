@@ -48,13 +48,13 @@ sector, regulatory status. Joined to generation_fuel via plant_id_eia.
 ## Key Columns
 
 - **plant_id_eia**: Unique EIA plant identifier (joins all three tables)
-- **report_date**: First day of each month (DATE)
-- **energy_source_code**: Fuel type code (NG, BIT, SUB, SUN, WND, WAT, NUC, etc.)
-- **fuel_type_code_agg**: Broader fuel category (NG, COL, SUN, WND, NUC, HYC, etc.)
-- **prime_mover_code**: Generation technology (ST, GT, CA, CT, PV, WT, HY, etc.)
-- **net_generation_mwh**: Net electricity generated (MWh)
-- **fuel_consumed_mmbtu**: Total fuel consumed (MMBtu)
-- **state**: Two-letter state code
+- **report_date**: First day of each month (DATE) — in generation_fuel and plant_details
+- **energy_source_code**: Fuel type code (NG, BIT, SUB, SUN, WND, WAT, NUC, etc.) — in generation_fuel
+- **fuel_type_code_agg**: Broader fuel category (NG, COL, SUN, WND, NUC, HYC, etc.) — in generation_fuel
+- **prime_mover_code**: Generation technology (ST, GT, CA, CT, PV, WT, HY, etc.) — in generation_fuel
+- **net_generation_mwh**: Net electricity generated (MWh) — in generation_fuel
+- **fuel_consumed_mmbtu**: Total fuel consumed (MMBtu) — in generation_fuel
+- **state**: Two-letter state code — in plants table (NOT in generation_fuel; must JOIN plants to get state)
 
 ## Energy Source Codes
 
@@ -159,6 +159,26 @@ EXAMPLE_QUERIES = """\
     WHERE energy_source_code = 'NUC'
     GROUP BY report_date
     ORDER BY report_date
+
+- question: Solar generation over time for the top 5 generating states
+  sql: |
+    WITH top_states AS (
+        SELECT p.state, SUM(g.net_generation_mwh) AS total
+        FROM generation_fuel g
+        JOIN plants p USING (plant_id_eia)
+        WHERE g.energy_source_code = 'SUN'
+        GROUP BY p.state
+        ORDER BY total DESC
+        LIMIT 5
+    )
+    SELECT p.state, g.report_date,
+           SUM(g.net_generation_mwh) AS solar_mwh
+    FROM generation_fuel g
+    JOIN plants p USING (plant_id_eia)
+    WHERE g.energy_source_code = 'SUN'
+      AND p.state IN (SELECT state FROM top_states)
+    GROUP BY p.state, g.report_date
+    ORDER BY g.report_date, p.state
 """
 
 

@@ -13,7 +13,7 @@ abstraction (defined in `datasight.llm`). The backend is selected via the
 - **`anthropic`** (default) — uses the Anthropic SDK to call Claude models via
   the cloud API. Requires an `ANTHROPIC_API_KEY`.
 - **`ollama`** — uses Ollama's OpenAI-compatible API to run models locally. No
-  API key required. Install with `pip install datasight[ollama]`.
+  API key required. Install with `pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"`.
 
 Both backends support the same tool-calling interface (`run_sql` and
 `visualize_data`), so the rest of the application is provider-agnostic.

@@ -10,7 +10,7 @@ visualizations.
 ## Get started
 
 ```bash
-pip install datasight
+pip install git+https://github.com/dsgrid/datasight.git
 
 # Try with the built-in EIA energy demo dataset
 datasight demo ./my-project

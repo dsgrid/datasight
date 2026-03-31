@@ -23,7 +23,7 @@ in the project directory. CLI flags override `.env` values.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name (must support tool calling) |
+| `OLLAMA_MODEL` | `qwen3.5:35b-a3b` | Ollama model name (must support tool calling) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint |
 
 ### Database settings

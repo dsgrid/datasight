@@ -22,7 +22,28 @@ THEME = {
     "orange": "#fe5d26",
     "magenta": "#bf1363",
 }
-PALETTE = [THEME["teal"], THEME["orange"], THEME["magenta"], THEME["navy"]]
+PALETTE = [
+    THEME["teal"],
+    THEME["orange"],
+    THEME["magenta"],
+    THEME["navy"],
+    "#6a994e",  # green
+    "#bc4749",  # red
+    "#7209b7",  # purple
+    "#f4a261",  # sandy orange
+    "#4cc9f0",  # sky blue
+    "#e63946",  # crimson
+    "#2a9d8f",  # dark teal
+    "#e9c46a",  # gold
+    "#264653",  # dark slate
+    "#a8dadc",  # powder blue
+    "#d62828",  # bright red
+    "#457b9d",  # steel blue
+    "#8338ec",  # violet
+    "#fb8500",  # amber
+    "#06d6a0",  # mint
+    "#ef476f",  # pink
+]
 
 
 class InteractiveChartGenerator:
@@ -40,6 +61,30 @@ class InteractiveChartGenerator:
             fig.update_layout(margin=dict(t=80))
         return fig
 
+    @staticmethod
+    def _resolve_column(name: str | None, df: pd.DataFrame) -> str | None:
+        """Resolve a column name, stripping table alias prefixes if needed.
+
+        LLMs sometimes pass 'g_report_date' or 'g.report_date' instead of
+        'report_date'. Try the exact name first, then strip common alias
+        patterns to find a match.
+        """
+        if name is None:
+            return None
+        if name in df.columns:
+            return name
+        # Strip 'alias.' prefix (e.g. 'g.report_date' -> 'report_date')
+        if "." in name:
+            bare = name.split(".", 1)[1]
+            if bare in df.columns:
+                return bare
+        # Strip 'alias_' prefix (e.g. 'g_report_date' -> 'report_date')
+        if "_" in name:
+            for col in df.columns:
+                if name.endswith(col) and name[: -len(col)].rstrip("_"):
+                    return col
+        return name  # fall through — will raise a clear KeyError downstream
+
     def generate_chart_from_spec(
         self,
         df: pd.DataFrame,
@@ -54,6 +99,11 @@ class InteractiveChartGenerator:
             raise ValueError("Cannot visualize empty DataFrame")
 
         df = _coerce_dates(df)
+
+        # Resolve aliased column names (e.g. 'g_report_date' -> 'report_date')
+        x = self._resolve_column(x, df)
+        y = self._resolve_column(y, df)
+        color = self._resolve_column(color, df)
 
         # Infer x/y from columns if not provided
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()

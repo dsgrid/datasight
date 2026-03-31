@@ -14,19 +14,19 @@ database.
 ## Install datasight
 
 ```bash
-pip install datasight
+pip install git+https://github.com/dsgrid/datasight.git
 ```
 
 To use Ollama as the LLM backend, install with the optional dependency:
 
 ```bash
-pip install datasight[ollama]
+pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"
 ```
 
 Or install from source:
 
 ```bash
-git clone https://github.com/dthom/datasight.git
+git clone https://github.com/dsgrid/datasight.git
 cd datasight
 pip install -e ".[ollama]"
 ```
@@ -67,14 +67,14 @@ First, install and start [Ollama](https://ollama.com/), then pull a model
 with tool-calling support:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen3.5:35b-a3b
 ```
 
 Then configure `.env`:
 
 ```bash
 LLM_PROVIDER=ollama
-OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_MODEL=qwen3.5:35b-a3b
 DB_MODE=local
 DB_PATH=./my_database.duckdb
 ```

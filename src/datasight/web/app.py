@@ -82,7 +82,9 @@ TOOLS: list[dict[str, Any]] = [
         "name": "visualize_data",
         "description": (
             "Execute a SQL query and render the results as an interactive Plotly chart. "
-            "This tool runs the query itself — pass the SQL directly. "
+            "This tool runs the SQL query itself and creates the chart — just pass a "
+            "SELECT query. Use the SAME or similar SQL query that you used with run_sql. "
+            "Do NOT embed raw data values in the SQL — always query the database tables. "
             "Specify chart_type, x, y, and optionally color to control the visualization. "
             "If chart_type is omitted, the system will auto-detect the best chart type."
         ),
@@ -114,15 +116,15 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "x": {
                     "type": "string",
-                    "description": "Column name for x-axis",
+                    "description": "Column name for x-axis. Use the bare column name from the SELECT clause (e.g. 'report_date', not 'g.report_date').",
                 },
                 "y": {
                     "type": "string",
-                    "description": "Column name for y-axis (or value axis)",
+                    "description": "Column name for y-axis. Use the bare column name or alias from the SELECT clause (e.g. 'solar_mwh', not 'g.net_generation_mwh').",
                 },
                 "color": {
                     "type": "string",
-                    "description": "Column name for color grouping (optional)",
+                    "description": "Column name for color grouping (optional). Use the bare column name from SELECT.",
                 },
             },
             "required": ["sql"],
@@ -172,23 +174,80 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     return html
 
 
-async def execute_tool(name: str, input_data: dict[str, Any]) -> tuple[str, str | None]:
-    """Execute a tool call. Returns (result_text_for_llm, optional_html_for_ui)."""
+def _sql_error_hint(error_msg: str) -> str:
+    """Return a short hint to help the model fix common SQL errors."""
+    hints: list[str] = []
+    lower = error_msg.lower()
+    if "not found in from clause" in lower or "referenced column" in lower:
+        hints.append(
+            "HINT: The column you referenced does not exist in the table(s) in "
+            "your FROM clause. Check the schema to see which table has this "
+            "column and add a JOIN if needed. For example, 'state' is in the "
+            "plants table, not generation_fuel."
+        )
+    if "ambiguous" in lower:
+        hints.append(
+            "HINT: Qualify the column with a table alias (e.g. p.state, g.report_date)."
+        )
+    if "scalar function" in lower and "does not exist" in lower:
+        hints.append(
+            "HINT: This is DuckDB, not PostgreSQL or MySQL. Use DuckDB date functions: "
+            "DATE_TRUNC('month', col), EXTRACT(YEAR FROM col), STRFTIME(col, '%Y-%m'), "
+            "col::DATE. Do NOT use TO_DATE, DATE_FORMAT, STR_TO_DATE, or TO_CHAR."
+        )
+    if "table with name" in lower and "does not exist" in lower:
+        hints.append(
+            "HINT: Only these tables exist: generation_fuel, plants, plant_details "
+            "(and their views). CTEs and subquery aliases are not real tables — "
+            "you must include the full query, not reference a previous CTE by name."
+        )
+    if "syntax error" in lower:
+        hints.append(
+            "HINT: Write a plain SQL SELECT query against the database tables. "
+            "Do not embed raw data, XML tags, or backslash line continuations in SQL. "
+            "Do not use <tool_response> or similar tags — just write a normal SELECT."
+        )
+    return ("\n" + "\n".join(hints)) if hints else ""
+
+
+async def execute_tool(
+    name: str, input_data: dict[str, Any]
+) -> tuple[str, str | None, str | None]:
+    """Execute a tool call.
+
+    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html).
+    The third element is only set for run_sql when auto-visualization succeeds.
+    """
     if name == "run_sql":
         sql = input_data.get("sql", "")
         try:
             df = await sql_runner.run_sql(sql)
             if df.empty:
-                return "Query executed successfully. No rows returned.", None
+                return "Query executed successfully. No rows returned.", None, None
             csv = df.to_csv(index=False)
-            preview = csv if len(csv) <= 2000 else csv[:2000] + "\n(truncated)"
-            result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
+            preview = csv if len(csv) <= 1000 else csv[:1000] + "\n(truncated)"
+            result_text = (
+                f"{preview}\n\n"
+                f"Returned {len(df)} rows, {len(df.columns)} columns."
+            )
             result_html = _df_to_html_table(df)
-            return result_text, result_html
+
+            # Auto-visualize: try to generate a chart from the query results
+            auto_chart_html = None
+            if len(df) >= 2 and len(df.columns) >= 2:
+                try:
+                    chart_dict = chart_generator.generate_chart(df, title="")
+                    auto_chart_html = _build_artifact_html(chart_dict, "")
+                    result_text += "\nA chart has been automatically generated."
+                except Exception:
+                    pass  # Auto-viz is best-effort
+
+            return result_text, result_html, auto_chart_html
         except Exception as e:
             error = f"SQL error: {e}"
             logger.error(error)
-            return error, f"<p class='sql-error'>{error}</p>"
+            hint = _sql_error_hint(str(e))
+            return error + hint, f"<p class='sql-error'>{error}</p>", None
 
     elif name == "visualize_data":
         sql = input_data.get("sql", "")
@@ -200,7 +259,7 @@ async def execute_tool(name: str, input_data: dict[str, Any]) -> tuple[str, str 
         try:
             df = await sql_runner.run_sql(sql)
             if df.empty:
-                return "Query returned no rows — nothing to visualize.", None
+                return "Query returned no rows — nothing to visualize.", None, None
             if chart_type:
                 chart_dict = chart_generator.generate_chart_from_spec(
                     df, chart_type=chart_type, x=x, y=y, color=color, title=title,
@@ -209,13 +268,14 @@ async def execute_tool(name: str, input_data: dict[str, Any]) -> tuple[str, str 
                 chart_dict = chart_generator.generate_chart(df, title)
             chart_html = _build_artifact_html(chart_dict, title)
             result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
-            return result_text, chart_html
+            return result_text, chart_html, None
         except Exception as e:
             error = f"Visualization error: {e}"
             logger.error(error)
-            return error, f"<p class='sql-error'>{error}</p>"
+            hint = _sql_error_hint(str(e))
+            return error + hint, f"<p class='sql-error'>{error}</p>", None
 
-    return f"Unknown tool: {name}", None
+    return f"Unknown tool: {name}", None, None
 
 
 def get_session_messages(session_id: str) -> list[dict[str, Any]]:
@@ -238,7 +298,7 @@ async def _startup():
 
     if llm_provider == "ollama":
         ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+        model = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b")
         llm_client = create_llm_client(provider="ollama", base_url=ollama_base_url)
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -305,9 +365,11 @@ async def _startup():
         "executing SQL queries and creating visualizations.\n\n"
         "When a user asks a question:\n"
         "1. Think about what data would answer their question.\n"
-        "2. Use the run_sql tool to query the database.\n"
-        "3. Explain the results clearly.\n"
-        "4. If a visualization would help, use the visualize_data tool.\n\n"
+        "2. Use the run_sql tool to query the database. A chart will be "
+        "created automatically from the results.\n"
+        "3. Explain the results clearly.\n\n"
+        "You can also use the visualize_data tool for specific chart types, "
+        "but run_sql will auto-generate a chart so this is optional.\n\n"
         "Always use the tools to execute SQL — never write SQL inline without "
         "executing it. Use DuckDB SQL syntax.\n" + schema_text
     )
@@ -375,7 +437,6 @@ async def chat(request: Request):
         total_input_tokens = 0
         total_output_tokens = 0
         api_calls = 0
-
         for _ in range(max_iterations):
             try:
                 response = await llm_client.create_message(
@@ -420,13 +481,16 @@ async def chat(request: Request):
 
                     yield f"event: tool_start\ndata: {json.dumps({'tool': block.name, 'input': block.input})}\n\n"
 
-                    result_text, result_html = await execute_tool(block.name, block.input)
+                    result_text, result_html, auto_chart_html = await execute_tool(block.name, block.input)
 
                     if result_html:
                         is_chart = block.name == "visualize_data" and "<script" in (
                             result_html or ""
                         )
                         yield f"event: tool_result\ndata: {json.dumps({'html': result_html, 'type': 'chart' if is_chart else 'table'})}\n\n"
+
+                    if auto_chart_html:
+                        yield f"event: tool_result\ndata: {json.dumps({'html': auto_chart_html, 'type': 'chart'})}\n\n"
 
                     tool_results.append(
                         {
@@ -444,6 +508,7 @@ async def chat(request: Request):
                 b.text for b in response.content
                 if isinstance(b, TextBlock)
             )
+
             messages.append({"role": "assistant", "content": text})
 
             words = text.split(" ")

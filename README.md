@@ -9,7 +9,7 @@ queries, and generates interactive Plotly visualizations.
 ## Quick start
 
 ```bash
-pip install datasight
+pip install git+https://github.com/dsgrid/datasight.git
 
 # Create a new project
 mkdir my-project && cd my-project
@@ -54,6 +54,6 @@ datasight run
 ## Documentation
 
 ```bash
-pip install datasight[docs]
+pip install "datasight[docs] @ git+https://github.com/dsgrid/datasight.git"
 cd docs && make html
 ```

@@ -148,7 +148,7 @@ def run(port, host, db_mode, db_path, model, project_dir, verbose):
 
     if llm_provider == "ollama":
         api_key = "ollama"  # not needed
-        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
     else:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
