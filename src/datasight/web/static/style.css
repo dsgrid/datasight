@@ -503,6 +503,24 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 
 .table-filter::placeholder { color: var(--text-secondary); }
 
+.export-csv-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.export-csv-btn:hover {
+  color: var(--text);
+  border-color: var(--teal);
+}
+
 .result-table {
   width: 100%;
   border-collapse: collapse;

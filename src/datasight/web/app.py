@@ -164,6 +164,7 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     html += (
         "<div class='table-toolbar'>"
         "<input class='table-filter' placeholder='Filter rows...' oninput='filterTable(this)'>"
+        "<button class='export-csv-btn' onclick='exportTableCsv(this)'>Download CSV</button>"
         "</div>"
     )
     html += "<table class='result-table'><thead><tr>"

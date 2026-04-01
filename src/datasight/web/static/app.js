@@ -616,6 +616,43 @@ function filterTable(input) {
   }
 }
 
+function exportTableCsv(btn) {
+  const wrap = btn.closest('.result-table-wrap');
+  if (!wrap) return;
+  const table = wrap.querySelector('.result-table');
+  if (!table) return;
+
+  function csvCell(text) {
+    if (/[",\n\r]/.test(text)) {
+      return '"' + text.replace(/"/g, '""') + '"';
+    }
+    return text;
+  }
+
+  const headers = Array.from(table.querySelectorAll('thead th'))
+    .map(th => csvCell(th.textContent.trim()));
+  const lines = [headers.join(',')];
+
+  table.querySelectorAll('tbody tr').forEach(row => {
+    if (row.classList.contains('filtered-out')) return;
+    const cells = Array.from(row.querySelectorAll('td'))
+      .map(td => csvCell(td.textContent.trim()));
+    lines.push(cells.join(','));
+  });
+
+  const csv = lines.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'datasight-export.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+
+  btn.textContent = 'Downloaded!';
+  setTimeout(() => { btn.textContent = 'Download CSV'; }, 1500);
+}
+
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
