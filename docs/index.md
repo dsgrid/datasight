@@ -35,6 +35,7 @@ tutorials/demo-dataset
 
 how-to/schema-description
 how-to/example-queries
+how-to/visualizations
 how-to/remote-hpc
 ```
 
