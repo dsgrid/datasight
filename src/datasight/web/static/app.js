@@ -1145,6 +1145,39 @@ function renderBookmarks(bookmarks) {
 }
 
 // ---------------------------------------------------------------------------
+// Sidebar resize
+// ---------------------------------------------------------------------------
+(function() {
+  const handle = document.getElementById('sidebar-resize-handle');
+  const sidebar = document.getElementById('sidebar');
+  if (!handle || !sidebar) return;
+  let dragging = false;
+
+  handle.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    dragging = true;
+    handle.classList.add('active');
+    sidebar.style.transition = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+
+  function onMouseMove(e) {
+    if (!dragging) return;
+    const newWidth = Math.max(200, Math.min(e.clientX, window.innerWidth * 0.6));
+    document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
+  }
+
+  function onMouseUp() {
+    dragging = false;
+    handle.classList.remove('active');
+    sidebar.style.transition = '';
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  }
+})();
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));

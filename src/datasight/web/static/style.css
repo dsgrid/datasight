@@ -146,10 +146,27 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   overflow: hidden;
   flex-shrink: 0;
   transition: margin-left 0.25s ease;
+  position: relative;
 }
 
 .sidebar.collapsed {
   margin-left: calc(-1 * var(--sidebar-width));
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.active {
+  background: var(--teal);
 }
 
 .sidebar-header {
