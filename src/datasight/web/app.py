@@ -716,6 +716,62 @@ async def preview_table(table_name: str):
         return {"html": None, "error": str(e)}
 
 
+@app.get("/api/column-stats/{table_name}/{column_name}")
+async def column_stats(table_name: str, column_name: str):
+    """Return basic statistics for a column."""
+    valid_tables = {t["name"] for t in schema_info}
+    if table_name not in valid_tables:
+        return {"stats": None, "error": "Unknown table"}
+    # Validate column name against schema
+    table_info = next((t for t in schema_info if t["name"] == table_name), None)
+    if not table_info:
+        return {"stats": None, "error": "Unknown table"}
+    valid_cols = {c["name"] for c in table_info["columns"]}
+    if column_name not in valid_cols:
+        return {"stats": None, "error": "Unknown column"}
+    col_info = next(c for c in table_info["columns"] if c["name"] == column_name)
+    try:
+        # Build stats query based on column type
+        dtype = col_info["dtype"].lower()
+        is_numeric = any(
+            t in dtype for t in ("int", "float", "double", "decimal", "numeric", "real")
+        )
+        if is_numeric:
+            sql = (
+                f'SELECT COUNT(DISTINCT "{column_name}") AS distinct_count, '
+                f'SUM(CASE WHEN "{column_name}" IS NULL THEN 1 ELSE 0 END) AS null_count, '
+                f'MIN("{column_name}") AS min_val, MAX("{column_name}") AS max_val, '
+                f'ROUND(AVG("{column_name}")::NUMERIC, 2) AS avg_val '
+                f'FROM "{table_name}"'
+            )
+        else:
+            sql = (
+                f'SELECT COUNT(DISTINCT "{column_name}") AS distinct_count, '
+                f'SUM(CASE WHEN "{column_name}" IS NULL THEN 1 ELSE 0 END) AS null_count, '
+                f'MIN("{column_name}") AS min_val, MAX("{column_name}") AS max_val '
+                f'FROM "{table_name}"'
+            )
+        df = await sql_runner.run_sql(sql)
+        row = df.iloc[0]
+        stats: dict[str, Any] = {
+            "distinct": int(row["distinct_count"]),
+            "nulls": int(row["null_count"]),
+            "min": None if pd.isna(row["min_val"]) else row["min_val"],
+            "max": None if pd.isna(row["max_val"]) else row["max_val"],
+        }
+        if is_numeric and "avg_val" in row.index:
+            stats["avg"] = None if pd.isna(row["avg_val"]) else float(row["avg_val"])
+        # Convert non-serializable types
+        for k, v in stats.items():
+            if hasattr(v, "item"):
+                stats[k] = v.item()
+            elif hasattr(v, "isoformat"):
+                stats[k] = str(v)
+        return {"stats": stats}
+    except Exception as e:
+        return {"stats": None, "error": str(e)}
+
+
 @app.post("/api/query-log/toggle")
 async def toggle_query_log():
     """Enable or disable query logging at runtime."""

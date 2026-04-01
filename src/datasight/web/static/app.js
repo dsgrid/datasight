@@ -308,9 +308,10 @@ function renderTables(tables) {
       : '<svg class="table-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><line x1="1" y1="5.5" x2="15" y2="5.5" stroke="currentColor" stroke-width="1.3"/><line x1="1" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1"/><line x1="6" y1="5.5" x2="6" y2="14" stroke="currentColor" stroke-width="1"/></svg>';
 
     const cols = (t.columns || []).map(c =>
-      '<div class="column-item">' +
+      '<div class="column-item" onclick="toggleColumnStats(this, \'' + escapeHtml(t.name) + '\', \'' + escapeHtml(c.name) + '\')">' +
         '<span class="col-name">' + escapeHtml(c.name) + '</span>' +
         '<span class="col-type">' + escapeHtml(c.dtype) + '</span>' +
+        '<div class="col-stats"></div>' +
       '</div>'
     ).join('');
 
@@ -353,6 +354,33 @@ function toggleTable(headerEl) {
 
   // Filter queries
   filterQueries();
+}
+
+async function toggleColumnStats(el, tableName, colName) {
+  const statsEl = el.querySelector('.col-stats');
+  if (statsEl.innerHTML) {
+    statsEl.innerHTML = '';
+    return;
+  }
+  statsEl.innerHTML = '<span class="col-stats-loading">Loading...</span>';
+  try {
+    const resp = await fetch('/api/column-stats/' + encodeURIComponent(tableName) + '/' + encodeURIComponent(colName));
+    const data = await resp.json();
+    if (data.stats) {
+      const s = data.stats;
+      const parts = [];
+      if (s.distinct != null) parts.push('<span>Distinct: <b>' + s.distinct + '</b></span>');
+      if (s.nulls != null) parts.push('<span>Nulls: <b>' + s.nulls + '</b></span>');
+      if (s.min != null) parts.push('<span>Min: <b>' + escapeHtml(String(s.min)) + '</b></span>');
+      if (s.max != null) parts.push('<span>Max: <b>' + escapeHtml(String(s.max)) + '</b></span>');
+      if (s.avg != null) parts.push('<span>Avg: <b>' + s.avg + '</b></span>');
+      statsEl.innerHTML = parts.join('') || '<span>No stats</span>';
+    } else {
+      statsEl.innerHTML = '';
+    }
+  } catch (e) {
+    statsEl.innerHTML = '';
+  }
 }
 
 async function previewTable(tableName, btn) {

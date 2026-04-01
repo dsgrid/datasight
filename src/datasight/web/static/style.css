@@ -286,11 +286,29 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 
 .column-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
   padding: 3px 0;
   font-size: 0.78rem;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
 }
+.column-item:hover { background: rgba(21,168,168,0.04); }
+
+.col-stats {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  padding: 2px 0 4px;
+}
+.col-stats:empty { display: none; }
+.col-stats b { color: var(--text); font-weight: 500; }
+.col-stats-loading { color: var(--text-secondary); font-style: italic; }
 
 .col-name {
   font-family: 'JetBrains Mono', monospace;
