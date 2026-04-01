@@ -10,6 +10,7 @@ let allQueries = [];
 let schemaData = [];
 let lastSql = '';
 let queryLogEnabled = false;
+let sessionQueries = [];
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
@@ -72,26 +73,83 @@ async function loadQueryLogState() {
   }
 }
 
-function copyLastSql() {
-  if (!lastSql) return;
-  navigator.clipboard.writeText(lastSql).then(() => {
-    const btn = document.querySelector('.copy-sql-btn');
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-  });
-}
-
 function updateSqlDisplay(sql) {
   lastSql = sql;
-  const display = document.getElementById('sql-display');
-  const pre = document.createElement('pre');
-  const code = document.createElement('code');
-  code.className = 'language-sql';
-  code.textContent = sql;
-  hljs.highlightElement(code);
-  pre.appendChild(code);
-  display.innerHTML = '';
-  display.appendChild(pre);
+}
+
+function handleToolDone(data) {
+  sessionQueries.unshift(data);
+  renderQueryHistory();
+}
+
+function renderQueryHistory() {
+  const container = document.getElementById('query-history');
+  if (sessionQueries.length === 0) {
+    container.innerHTML = '<span class="no-sql">No queries yet.</span>';
+    return;
+  }
+  container.innerHTML = '';
+  sessionQueries.forEach((q, i) => {
+    const card = document.createElement('div');
+    card.className = 'query-card' + (q.error ? ' error' : '');
+
+    const header = document.createElement('div');
+    header.className = 'query-card-header';
+
+    const pill = document.createElement('span');
+    pill.className = 'query-card-pill';
+    pill.textContent = q.tool === 'visualize_data' ? 'Chart' : 'SQL';
+    header.appendChild(pill);
+
+    const meta = document.createElement('span');
+    meta.className = 'query-card-meta';
+    const parts = [];
+    if (q.execution_time_ms != null) parts.push(Math.round(q.execution_time_ms) + ' ms');
+    if (q.row_count != null) parts.push(q.row_count + ' rows');
+    if (q.error) parts.push('error');
+    meta.textContent = '· ' + parts.join(' · ');
+    header.appendChild(meta);
+
+    card.appendChild(header);
+
+    const sqlPre = document.createElement('pre');
+    sqlPre.className = 'query-card-sql';
+    const sqlCode = document.createElement('code');
+    sqlCode.className = 'language-sql';
+    sqlCode.textContent = q.sql || '';
+    hljs.highlightElement(sqlCode);
+    sqlPre.appendChild(sqlCode);
+    sqlPre.onclick = () => sqlPre.classList.toggle('expanded');
+    card.appendChild(sqlPre);
+
+    const actions = document.createElement('div');
+    actions.className = 'query-card-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'query-card-btn';
+    copyBtn.textContent = 'Copy';
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(q.sql || '').then(() => {
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+      });
+    };
+    actions.appendChild(copyBtn);
+
+    const rerunBtn = document.createElement('button');
+    rerunBtn.className = 'query-card-btn';
+    rerunBtn.textContent = 'Rerun';
+    rerunBtn.onclick = (e) => {
+      e.stopPropagation();
+      inputEl.value = 'Run this SQL query:\n' + q.sql;
+      inputEl.focus();
+    };
+    actions.appendChild(rerunBtn);
+
+    card.appendChild(actions);
+    container.appendChild(card);
+  });
 }
 
 async function loadSchema() {
@@ -325,6 +383,7 @@ function handleSSEEvent(eventType, data) {
   switch (eventType) {
     case 'tool_start':  handleToolStart(data); break;
     case 'tool_result': handleToolResult(data); break;
+    case 'tool_done':   handleToolDone(data); break;
     case 'token':       handleToken(data); break;
     case 'done':        finalize(); break;
   }
@@ -495,6 +554,9 @@ async function clearChat() {
   }
   currentAssistantBubble = null;
   currentAssistantText = '';
+  sessionQueries = [];
+  lastSql = '';
+  renderQueryHistory();
 }
 
 // ---------------------------------------------------------------------------

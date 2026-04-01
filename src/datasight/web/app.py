@@ -292,11 +292,11 @@ async def execute_tool(
     *,
     session_id: str = "",
     user_question: str = "",
-) -> tuple[str, str | None, str | None]:
+) -> tuple[str, str | None, str | None, dict[str, Any]]:
     """Execute a tool call.
 
-    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html).
-    The third element is only set for run_sql when auto-visualization succeeds.
+    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html, meta).
+    *meta* carries timing and result info for the query history panel.
     """
     if name == "run_sql":
         sql = input_data.get("sql", "")
@@ -314,13 +314,22 @@ async def execute_tool(
                     row_count=len(df),
                     column_count=len(df.columns),
                 )
+            meta = {
+                "tool": name,
+                "sql": sql,
+                "execution_time_ms": round(elapsed_ms, 1),
+                "row_count": len(df),
+                "column_count": len(df.columns),
+                "error": None,
+            }
             if df.empty:
-                return "Query executed successfully. No rows returned.", None, None
+                meta["row_count"] = 0
+                return "Query executed successfully. No rows returned.", None, None, meta
             csv = df.to_csv(index=False)
             preview = csv if len(csv) <= 1000 else csv[:1000] + "\n(truncated)"
             result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
             result_html = _df_to_html_table(df)
-            return result_text, result_html, None
+            return result_text, result_html, None, meta
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             error = f"SQL error: {e}"
@@ -334,8 +343,16 @@ async def execute_tool(
                     execution_time_ms=elapsed_ms,
                     error=str(e),
                 )
+            meta = {
+                "tool": name,
+                "sql": sql,
+                "execution_time_ms": round(elapsed_ms, 1),
+                "row_count": None,
+                "column_count": None,
+                "error": str(e),
+            }
             hint = _sql_error_hint(str(e))
-            return error + hint, f"<p class='sql-error'>{error}</p>", None
+            return error + hint, f"<p class='sql-error'>{error}</p>", None, meta
 
     elif name == "visualize_data":
         sql = input_data.get("sql", "")
@@ -355,8 +372,17 @@ async def execute_tool(
                     row_count=len(df),
                     column_count=len(df.columns),
                 )
+            meta = {
+                "tool": name,
+                "sql": sql,
+                "execution_time_ms": round(elapsed_ms, 1),
+                "row_count": len(df),
+                "column_count": len(df.columns),
+                "error": None,
+            }
             if df.empty:
-                return "Query returned no rows — nothing to visualize.", None, None
+                meta["row_count"] = 0
+                return "Query returned no rows — nothing to visualize.", None, None, meta
             resolved = _resolve_plotly_spec(plotly_spec, df)
             layout = resolved.get("layout", {})
             if "title" not in layout:
@@ -364,7 +390,7 @@ async def execute_tool(
                 resolved["layout"] = layout
             chart_html = _build_artifact_html(resolved, title)
             result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
-            return result_text, chart_html, None
+            return result_text, chart_html, None, meta
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             error = f"Visualization error: {e}"
@@ -378,10 +404,18 @@ async def execute_tool(
                     execution_time_ms=elapsed_ms,
                     error=str(e),
                 )
+            meta = {
+                "tool": name,
+                "sql": sql,
+                "execution_time_ms": round(elapsed_ms, 1),
+                "row_count": None,
+                "column_count": None,
+                "error": str(e),
+            }
             hint = _sql_error_hint(str(e))
-            return error + hint, f"<p class='sql-error'>{error}</p>", None
+            return error + hint, f"<p class='sql-error'>{error}</p>", None, meta
 
-    return f"Unknown tool: {name}", None, None
+    return f"Unknown tool: {name}", None, None, {}
 
 
 def get_session_messages(session_id: str) -> list[dict[str, Any]]:
@@ -628,7 +662,7 @@ async def chat(request: Request):
 
                     yield f"event: tool_start\ndata: {json.dumps({'tool': block.name, 'input': block.input})}\n\n"
 
-                    result_text, result_html, auto_chart_html = await execute_tool(
+                    result_text, result_html, auto_chart_html, meta = await execute_tool(
                         block.name,
                         block.input,
                         session_id=session_id,
@@ -643,6 +677,9 @@ async def chat(request: Request):
 
                     if auto_chart_html:
                         yield f"event: tool_result\ndata: {json.dumps({'html': auto_chart_html, 'type': 'chart'})}\n\n"
+
+                    if meta:
+                        yield f"event: tool_done\ndata: {json.dumps(meta)}\n\n"
 
                     tool_results.append(
                         {
