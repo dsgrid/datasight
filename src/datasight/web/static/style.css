@@ -257,6 +257,33 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 
 .column-list.visible { display: block; }
 
+.preview-btn {
+  margin-bottom: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.preview-btn:hover { color: var(--teal); border-color: var(--teal); }
+
+.table-preview {
+  margin-top: 8px;
+  max-height: 300px;
+  overflow: auto;
+  font-size: 0.7rem;
+}
+.table-preview .result-table-wrap { border: none; background: transparent; }
+.table-preview .table-toolbar { display: none; }
+.table-preview .table-pagination { display: none; }
+.table-preview .result-table { font-size: 0.7rem; }
+.table-preview .result-table th,
+.table-preview .result-table td { padding: 3px 8px; }
+
 .column-item {
   display: flex;
   align-items: baseline;

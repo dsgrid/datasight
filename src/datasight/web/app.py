@@ -701,6 +701,21 @@ async def get_queries():
     return {"queries": example_queries_list}
 
 
+@app.get("/api/preview/{table_name}")
+async def preview_table(table_name: str):
+    """Return an HTML table preview of the first 10 rows."""
+    # Validate table name against known schema to prevent SQL injection
+    valid_names = {t["name"] for t in schema_info}
+    if table_name not in valid_names:
+        return {"html": None, "error": "Unknown table"}
+    try:
+        df = await sql_runner.run_sql(f'SELECT * FROM "{table_name}" LIMIT 10')
+        html = _df_to_html_table(df, max_rows=10)
+        return {"html": html}
+    except Exception as e:
+        return {"html": None, "error": str(e)}
+
+
 @app.post("/api/query-log/toggle")
 async def toggle_query_log():
     """Enable or disable query logging at runtime."""

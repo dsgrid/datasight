@@ -321,7 +321,11 @@ function renderTables(tables) {
         '<span class="table-rows">' + rowCount + '</span>' +
         '<svg class="table-chevron" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
       '</div>' +
-      '<div class="column-list" id="cols-' + idx + '">' + cols + '</div>' +
+      '<div class="column-list" id="cols-' + idx + '">' +
+        '<button class="preview-btn" onclick="event.stopPropagation(); previewTable(\'' + escapeHtml(t.name) + '\', this)">Preview rows</button>' +
+        '<div class="table-preview" id="preview-' + idx + '"></div>' +
+        cols +
+      '</div>' +
     '</div>';
   }).join('');
 }
@@ -349,6 +353,28 @@ function toggleTable(headerEl) {
 
   // Filter queries
   filterQueries();
+}
+
+async function previewTable(tableName, btn) {
+  const previewEl = btn.nextElementSibling;
+  if (previewEl.innerHTML) {
+    previewEl.innerHTML = '';
+    btn.textContent = 'Preview rows';
+    return;
+  }
+  btn.textContent = 'Loading...';
+  try {
+    const resp = await fetch('/api/preview/' + encodeURIComponent(tableName));
+    const data = await resp.json();
+    if (data.html) {
+      previewEl.innerHTML = data.html;
+      btn.textContent = 'Hide preview';
+    } else {
+      btn.textContent = 'Preview rows';
+    }
+  } catch (e) {
+    btn.textContent = 'Preview rows';
+  }
 }
 
 function filterQueries() {
