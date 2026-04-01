@@ -157,10 +157,9 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     if df.empty:
         return "<p class='empty-result'>Query returned no rows.</p>"
 
-    truncated = len(df) > max_rows
     display_df = df.head(max_rows)
 
-    html = "<div class='result-table-wrap'>"
+    html = f"<div class='result-table-wrap' data-total-rows='{len(df)}'>"
     html += (
         "<div class='table-toolbar'>"
         "<input class='table-filter' placeholder='Filter rows...' oninput='filterTable(this)'>"
@@ -181,10 +180,7 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
                 html += f"<td>{val}</td>"
         html += "</tr>"
     html += "</tbody></table>"
-    if truncated:
-        html += f"<p class='table-note'>Showing {max_rows} of {len(df)} rows</p>"
-    else:
-        html += f"<p class='table-note'>{len(df)} row{'s' if len(df) != 1 else ''}, {len(df.columns)} column{'s' if len(df.columns) != 1 else ''}</p>"
+    html += "<div class='table-pagination'></div>"
     html += "</div>"
     return html
 

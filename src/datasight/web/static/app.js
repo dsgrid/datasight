@@ -437,6 +437,8 @@ function handleToolResult(data) {
     resultEl.appendChild(iframe);
   } else {
     resultEl.innerHTML = data.html;
+    const tableWrap = resultEl.querySelector('.result-table-wrap');
+    if (tableWrap) paginateTable(tableWrap);
   }
 
   messagesEl.appendChild(resultEl);
@@ -562,6 +564,75 @@ async function clearChat() {
 // ---------------------------------------------------------------------------
 // Interactive tables — sort & filter
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------------------
+const PAGE_SIZE = 25;
+
+function paginateTable(wrap) {
+  const tbody = wrap.querySelector('tbody');
+  if (!tbody) return;
+  wrap.dataset.page = '0';
+  applyPage(wrap);
+}
+
+function applyPage(wrap) {
+  const tbody = wrap.querySelector('tbody');
+  if (!tbody) return;
+  const page = parseInt(wrap.dataset.page || '0');
+  const rows = Array.from(tbody.querySelectorAll('tr:not(.filtered-out)'));
+  const totalRows = rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const start = page * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+
+  // Hide/show all tbody rows based on pagination
+  const allRows = tbody.querySelectorAll('tr');
+  let visibleIdx = 0;
+  allRows.forEach(row => {
+    if (row.classList.contains('filtered-out')) {
+      row.classList.add('paginated-out');
+      return;
+    }
+    if (visibleIdx >= start && visibleIdx < end) {
+      row.classList.remove('paginated-out');
+    } else {
+      row.classList.add('paginated-out');
+    }
+    visibleIdx++;
+  });
+
+  // Render pagination controls
+  const container = wrap.querySelector('.table-pagination');
+  if (!container) return;
+
+  const totalDataRows = parseInt(wrap.dataset.totalRows || totalRows);
+  const displayedRows = Math.min(totalDataRows, allRows.length);
+
+  if (totalRows <= PAGE_SIZE) {
+    // No pagination needed — just show row count
+    container.innerHTML = '<span class="page-info">' + totalRows + ' row' + (totalRows !== 1 ? 's' : '') +
+      (totalDataRows > displayedRows ? ' (showing ' + displayedRows + ' of ' + totalDataRows + ')' : '') + '</span>';
+    return;
+  }
+
+  const showing = Math.min(end, totalRows) - start;
+  container.innerHTML =
+    '<button class="page-btn"' + (page === 0 ? ' disabled' : '') +
+      ' onclick="goToPage(this,' + (page - 1) + ')">Prev</button>' +
+    '<span class="page-info">Page ' + (page + 1) + ' of ' + totalPages +
+      ' (' + totalRows + ' rows)</span>' +
+    '<button class="page-btn"' + (page >= totalPages - 1 ? ' disabled' : '') +
+      ' onclick="goToPage(this,' + (page + 1) + ')">Next</button>';
+}
+
+function goToPage(btn, page) {
+  const wrap = btn.closest('.result-table-wrap');
+  if (!wrap) return;
+  wrap.dataset.page = String(page);
+  applyPage(wrap);
+}
+
 function sortTable(th) {
   const table = th.closest('table');
   const colIdx = parseInt(th.dataset.col);
@@ -591,6 +662,8 @@ function sortTable(th) {
   });
 
   rows.forEach(r => tbody.appendChild(r));
+  const wrap = th.closest('.result-table-wrap');
+  if (wrap) { wrap.dataset.page = '0'; applyPage(wrap); }
 }
 
 function filterTable(input) {
@@ -599,21 +672,16 @@ function filterTable(input) {
   if (!tbody) return;
   const term = input.value.toLowerCase();
   const rows = tbody.querySelectorAll('tr');
-  let visible = 0;
 
   rows.forEach(row => {
     const text = row.textContent.toLowerCase();
     const match = !term || text.includes(term);
     row.classList.toggle('filtered-out', !match);
-    if (match) visible++;
   });
 
-  // Update the note with filter count
-  const note = wrap.querySelector('.table-note');
-  if (note && term) {
-    const total = rows.length;
-    note.textContent = `Showing ${visible} of ${total} rows (filtered)`;
-  }
+  // Reset to first page and re-paginate
+  wrap.dataset.page = '0';
+  applyPage(wrap);
 }
 
 function exportTableCsv(btn) {
