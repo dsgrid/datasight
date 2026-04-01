@@ -210,15 +210,24 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
           d.type = newType;
           delete d.mode;
         }}
-        // Remove pie-specific keys
+        // Map pie keys to cartesian keys if needed
+        if (!d.x && d.labels) {{ d.x = d.labels; }}
+        if (!d.y && d.values) {{ d.y = d.values; }}
+        // Give each bar a distinct color (like pie slices)
+        if (newType === 'bar' && d.x && !d.marker) {{
+          var colors = ['#636efa','#ef553b','#00cc96','#ab63fa','#ffa15a','#19d3f3','#ff6692','#b6e880','#ff97ff','#fecb52'];
+          d.marker = {{ color: d.x.map(function(_, i) {{ return colors[i % colors.length]; }}) }};
+        }}
         delete d.labels;
         delete d.values;
         return d;
       }});
-      Plotly.react(chartEl, newData, Object.assign({{}}, layout, {{
+      var newLayout = Object.assign({{}}, layout, {{
         xaxis: Object.assign(layout.xaxis || {{}}, {{ visible: true }}),
         yaxis: Object.assign(layout.yaxis || {{}}, {{ visible: true }})
-      }}));
+      }});
+      if (newData.length === 1) newLayout.showlegend = false;
+      Plotly.react(chartEl, newData, newLayout);
     }}
     currentType = newType;
   }}
