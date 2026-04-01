@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from loguru import logger
 
-from datasight.chart import InteractiveChartGenerator, _build_artifact_html
+from datasight.chart import _build_artifact_html
 from datasight.config import (
     create_sql_runner,
     load_schema_description,
@@ -39,6 +39,7 @@ from datasight.schema import introspect_schema, format_schema_context
 # App setup
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):  # noqa: ARG001
     await _startup()
@@ -55,7 +56,6 @@ llm_client: LLMClient | None = None
 sql_runner: Any = None
 system_prompt: str = ""
 model: str = "claude-sonnet-4-20250514"
-chart_generator = InteractiveChartGenerator()
 sessions: dict[str, list[dict[str, Any]]] = {}
 schema_info: list[dict[str, Any]] = []
 example_queries_list: list[dict[str, str]] = []
@@ -81,53 +81,60 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "visualize_data",
         "description": (
-            "Execute a SQL query and render the results as an interactive Plotly chart. "
-            "This tool runs the SQL query itself and creates the chart — just pass a "
-            "SELECT query. Use the SAME or similar SQL query that you used with run_sql. "
-            "Do NOT embed raw data values in the SQL — always query the database tables. "
-            "Specify chart_type, x, y, and optionally color to control the visualization. "
-            "If chart_type is omitted, the system will auto-detect the best chart type."
+            "Execute a SQL query and render the results as an interactive Plotly.js chart. "
+            "You provide a full Plotly spec with 'data' (array of trace objects) and "
+            "'layout' (layout object). This supports ANY Plotly.js chart type: bar, line, "
+            "scatter, pie, choropleth maps, scattergeo, treemaps, sunburst, sankey diagrams, "
+            "funnel, 3D scatter/surface, candlestick, waterfall, parallel coordinates, "
+            "heatmap, histogram, box, violin, and more. "
+            "Use column names from your SQL query as placeholders in the spec — string values "
+            "matching column names will be replaced with actual data arrays from the query results. "
+            'For example: "locations": "state_code" becomes "locations": ["CA", "TX", ...]. '
+            'For literal values that happen to match a column name, wrap them: {"literal": "value"}. '
+            "The layout object is passed through as-is to Plotly. "
+            "Use the SAME or similar SQL query that you used with run_sql. "
+            "Do NOT embed raw data values in the SQL — always query the database tables."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "sql": {
                     "type": "string",
-                    "description": "SQL SELECT query to visualize",
+                    "description": "SQL SELECT query to fetch data for visualization",
                 },
                 "title": {
                     "type": "string",
                     "description": "Chart title",
                 },
-                "chart_type": {
-                    "type": "string",
-                    "description": "Chart type to render",
-                    "enum": [
-                        "bar",
-                        "horizontal_bar",
-                        "line",
-                        "scatter",
-                        "pie",
-                        "area",
-                        "histogram",
-                        "box",
-                        "heatmap",
-                    ],
-                },
-                "x": {
-                    "type": "string",
-                    "description": "Column name for x-axis. Use the bare column name from the SELECT clause (e.g. 'report_date', not 'g.report_date').",
-                },
-                "y": {
-                    "type": "string",
-                    "description": "Column name for y-axis. Use the bare column name or alias from the SELECT clause (e.g. 'solar_mwh', not 'g.net_generation_mwh').",
-                },
-                "color": {
-                    "type": "string",
-                    "description": "Column name for color grouping (optional). Use the bare column name from SELECT.",
+                "plotly_spec": {
+                    "type": "object",
+                    "description": (
+                        "A Plotly.js specification with 'data' and 'layout' keys. "
+                        "In 'data' traces, string values matching column names from the SQL query "
+                        "will be replaced with arrays of actual values. "
+                        "Example bar chart: "
+                        '{"data": [{"type": "bar", "x": "category", "y": "total"}], '
+                        '"layout": {}}. '
+                        "Example choropleth: "
+                        '{"data": [{"type": "choropleth", "locationmode": "USA-states", '
+                        '"locations": "state_code", "z": "total_mwh", '
+                        '"colorscale": {"literal": "Viridis"}}], '
+                        '"layout": {"geo": {"scope": "usa"}}}'
+                    ),
+                    "properties": {
+                        "data": {
+                            "type": "array",
+                            "description": "Array of Plotly trace objects",
+                        },
+                        "layout": {
+                            "type": "object",
+                            "description": "Plotly layout object",
+                        },
+                    },
+                    "required": ["data"],
                 },
             },
-            "required": ["sql"],
+            "required": ["sql", "plotly_spec"],
         },
     },
 ]
@@ -186,9 +193,7 @@ def _sql_error_hint(error_msg: str) -> str:
             "plants table, not generation_fuel."
         )
     if "ambiguous" in lower:
-        hints.append(
-            "HINT: Qualify the column with a table alias (e.g. p.state, g.report_date)."
-        )
+        hints.append("HINT: Qualify the column with a table alias (e.g. p.state, g.report_date).")
     if "scalar function" in lower and "does not exist" in lower:
         hints.append(
             "HINT: This is DuckDB, not PostgreSQL or MySQL. Use DuckDB date functions: "
@@ -210,6 +215,70 @@ def _sql_error_hint(error_msg: str) -> str:
     return ("\n" + "\n".join(hints)) if hints else ""
 
 
+def _coerce_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """Try to parse object columns that look like dates into datetime."""
+    df = df.copy()
+    for col in df.select_dtypes(include=["object"]).columns:
+        sample = df[col].dropna().head(5)
+        if sample.empty:
+            continue
+        try:
+            parsed = pd.to_datetime(sample, format="mixed")
+            if parsed.notna().all():
+                df[col] = pd.to_datetime(df[col], format="mixed")
+        except (ValueError, TypeError):
+            continue
+    return df
+
+
+def _resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
+    """Replace column name references in a Plotly spec with actual data arrays.
+
+    In trace objects within spec["data"], any string value that matches a column
+    name in the DataFrame (including aliased names like 'g.col' or 'g_col') is
+    replaced with the list of values from that column. Objects wrapped as
+    {"literal": value} are unwrapped and passed through as-is. The "layout" key
+    is passed through unchanged. Date columns are coerced to ISO strings for
+    JSON serialization.
+    """
+    df = _coerce_dates(df)
+    columns = set(df.columns)
+
+    def _resolve_value(val: Any) -> Any:
+        if isinstance(val, dict):
+            # {"literal": X} -> X (escape hatch for values that happen to match column names)
+            if "literal" in val and len(val) == 1:
+                return val["literal"]
+            return {k: _resolve_value(v) for k, v in val.items()}
+        if isinstance(val, list):
+            return [_resolve_value(item) for item in val]
+        if isinstance(val, str) and val in columns:
+            series = df[val]
+            # Convert datetimes to ISO strings for JSON
+            if pd.api.types.is_datetime64_any_dtype(series):
+                return series.dt.strftime("%Y-%m-%dT%H:%M:%S").tolist()
+            return series.tolist()
+        return val
+
+    resolved: dict[str, Any] = {}
+    # Resolve column references in data traces
+    if "data" in spec:
+        resolved["data"] = []
+        for trace in spec["data"]:
+            resolved_trace = {}
+            for key, val in trace.items():
+                # "type" should never be resolved as a column name
+                if key == "type":
+                    resolved_trace[key] = val
+                else:
+                    resolved_trace[key] = _resolve_value(val)
+            resolved["data"].append(resolved_trace)
+    # Pass layout through as-is
+    if "layout" in spec:
+        resolved["layout"] = spec["layout"]
+    return resolved
+
+
 async def execute_tool(
     name: str, input_data: dict[str, Any]
 ) -> tuple[str, str | None, str | None]:
@@ -226,23 +295,9 @@ async def execute_tool(
                 return "Query executed successfully. No rows returned.", None, None
             csv = df.to_csv(index=False)
             preview = csv if len(csv) <= 1000 else csv[:1000] + "\n(truncated)"
-            result_text = (
-                f"{preview}\n\n"
-                f"Returned {len(df)} rows, {len(df.columns)} columns."
-            )
+            result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
             result_html = _df_to_html_table(df)
-
-            # Auto-visualize: try to generate a chart from the query results
-            auto_chart_html = None
-            if len(df) >= 2 and len(df.columns) >= 2:
-                try:
-                    chart_dict = chart_generator.generate_chart(df, title="")
-                    auto_chart_html = _build_artifact_html(chart_dict, "")
-                    result_text += "\nA chart has been automatically generated."
-                except Exception:
-                    pass  # Auto-viz is best-effort
-
-            return result_text, result_html, auto_chart_html
+            return result_text, result_html, None
         except Exception as e:
             error = f"SQL error: {e}"
             logger.error(error)
@@ -252,21 +307,17 @@ async def execute_tool(
     elif name == "visualize_data":
         sql = input_data.get("sql", "")
         title = input_data.get("title", "Chart")
-        chart_type = input_data.get("chart_type")
-        x = input_data.get("x")
-        y = input_data.get("y")
-        color = input_data.get("color")
+        plotly_spec = input_data.get("plotly_spec", {})
         try:
             df = await sql_runner.run_sql(sql)
             if df.empty:
                 return "Query returned no rows — nothing to visualize.", None, None
-            if chart_type:
-                chart_dict = chart_generator.generate_chart_from_spec(
-                    df, chart_type=chart_type, x=x, y=y, color=color, title=title,
-                )
-            else:
-                chart_dict = chart_generator.generate_chart(df, title)
-            chart_html = _build_artifact_html(chart_dict, title)
+            resolved = _resolve_plotly_spec(plotly_spec, df)
+            layout = resolved.get("layout", {})
+            if "title" not in layout:
+                layout["title"] = title
+                resolved["layout"] = layout
+            chart_html = _build_artifact_html(resolved, title)
             result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
             return result_text, chart_html, None
         except Exception as e:
@@ -367,9 +418,14 @@ async def _startup():
         "1. Think about what data would answer their question.\n"
         "2. Use the run_sql tool to query the database. A chart will be "
         "created automatically from the results.\n"
-        "3. Explain the results clearly.\n\n"
-        "You can also use the visualize_data tool for specific chart types, "
-        "but run_sql will auto-generate a chart so this is optional.\n\n"
+        "3. If the user wants a specific visualization, use the visualize_data tool "
+        "with a Plotly.js spec. You can create ANY Plotly chart type: bar, line, scatter, "
+        "pie, choropleth maps, treemaps, sunburst, sankey, funnel, 3D plots, waterfall, "
+        "parallel coordinates, candlestick, heatmap, and more.\n"
+        "4. Explain the results clearly.\n\n"
+        "In visualize_data Plotly specs, set trace values to column name strings and they "
+        "will be replaced with actual data arrays from the SQL results. "
+        'Use {"literal": value} to pass values that should NOT be treated as column references.\n\n'
         "Always use the tools to execute SQL — never write SQL inline without "
         "executing it. Use DuckDB SQL syntax.\n" + schema_text
     )
@@ -468,10 +524,14 @@ async def chat(request: Request):
                     if isinstance(block, TextBlock):
                         serialized.append({"type": "text", "text": block.text})
                     elif isinstance(block, ToolUseBlock):
-                        serialized.append({
-                            "type": "tool_use", "id": block.id,
-                            "name": block.name, "input": block.input,
-                        })
+                        serialized.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
+                        )
                 messages.append({"role": "assistant", "content": serialized})
 
                 tool_results = []
@@ -481,7 +541,9 @@ async def chat(request: Request):
 
                     yield f"event: tool_start\ndata: {json.dumps({'tool': block.name, 'input': block.input})}\n\n"
 
-                    result_text, result_html, auto_chart_html = await execute_tool(block.name, block.input)
+                    result_text, result_html, auto_chart_html = await execute_tool(
+                        block.name, block.input
+                    )
 
                     if result_html:
                         is_chart = block.name == "visualize_data" and "<script" in (
@@ -504,10 +566,7 @@ async def chat(request: Request):
                 continue
 
             # Final text response
-            text = "".join(
-                b.text for b in response.content
-                if isinstance(b, TextBlock)
-            )
+            text = "".join(b.text for b in response.content if isinstance(b, TextBlock))
 
             messages.append({"role": "assistant", "content": text})
 
