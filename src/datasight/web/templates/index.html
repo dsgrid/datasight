@@ -28,6 +28,10 @@
       </button>
       <div class="brand">data<span>sight</span></div>
     </div>
+    <div class="view-tabs">
+      <button class="view-tab active" onclick="switchView('chat')" id="tab-chat">Chat</button>
+      <button class="view-tab" onclick="switchView('dashboard')" id="tab-dashboard">Dashboard</button>
+    </div>
     <div class="actions">
       <button class="btn-icon" onclick="toggleTheme()" title="Toggle theme" id="theme-toggle">
         <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
@@ -84,6 +88,15 @@
           </button>
         </div>
       </form>
+    </div>
+
+    <!-- Dashboard area (hidden by default) -->
+    <div class="dashboard-area" id="dashboard" style="display:none">
+      <div class="dashboard-empty" id="dashboard-empty">
+        <p>No pinned items yet.</p>
+        <p style="font-size:0.85rem;">Pin charts and tables from the chat to build your dashboard.</p>
+      </div>
+      <div class="dashboard-grid" id="dashboard-grid"></div>
     </div>
 
     <!-- Right panel: query history -->

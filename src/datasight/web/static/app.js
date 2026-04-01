@@ -11,6 +11,9 @@ let schemaData = [];
 let lastSql = '';
 let queryLogEnabled = false;
 let sessionQueries = [];
+let pinnedItems = [];
+let pinnedIdCounter = 0;
+let currentView = 'chat';
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
@@ -43,6 +46,104 @@ function toggleRightPanel() {
   const panel = document.getElementById('right-panel');
   panel.classList.toggle('collapsed');
   document.getElementById('sql-panel-toggle').classList.toggle('active', !panel.classList.contains('collapsed'));
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+function switchView(view) {
+  currentView = view;
+  const chatArea = document.querySelector('.chat-area');
+  const dashboard = document.getElementById('dashboard');
+  document.getElementById('tab-chat').classList.toggle('active', view === 'chat');
+  document.getElementById('tab-dashboard').classList.toggle('active', view === 'dashboard');
+  chatArea.style.display = view === 'chat' ? '' : 'none';
+  dashboard.style.display = view === 'dashboard' ? '' : 'none';
+  if (view === 'dashboard') broadcastThemeToDashboard();
+}
+
+function pinResult(btn) {
+  const resultEl = btn.closest('.tool-result');
+  if (!resultEl) return;
+  const iframe = resultEl.querySelector('iframe');
+  const type = iframe ? 'chart' : 'table';
+  const html = iframe ? iframe.srcdoc : resultEl.querySelector('.result-table-wrap').outerHTML;
+  pinnedIdCounter++;
+  pinnedItems.push({ id: pinnedIdCounter, type, html });
+  updateDashboardBadge();
+  renderDashboard();
+  btn.textContent = 'Pinned!';
+  setTimeout(() => { btn.textContent = 'Pin'; }, 1200);
+}
+
+function unpinItem(id) {
+  pinnedItems = pinnedItems.filter(item => item.id !== id);
+  updateDashboardBadge();
+  renderDashboard();
+}
+
+function updateDashboardBadge() {
+  const tab = document.getElementById('tab-dashboard');
+  const existing = tab.querySelector('.badge');
+  if (existing) existing.remove();
+  if (pinnedItems.length > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = pinnedItems.length;
+    tab.appendChild(badge);
+  }
+}
+
+function renderDashboard() {
+  const grid = document.getElementById('dashboard-grid');
+  const empty = document.getElementById('dashboard-empty');
+  grid.innerHTML = '';
+
+  if (pinnedItems.length === 0) {
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  pinnedItems.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'dashboard-card';
+
+    if (item.type === 'chart') {
+      const iframe = document.createElement('iframe');
+      iframe.sandbox = 'allow-scripts allow-same-origin';
+      iframe.srcdoc = item.html;
+      iframe.addEventListener('load', () => {
+        const theme = document.documentElement.getAttribute('data-theme') || 'light';
+        try { iframe.contentWindow.postMessage({ type: 'theme-change', theme }, '*'); } catch(e) {}
+      });
+      card.appendChild(iframe);
+    } else {
+      const tableDiv = document.createElement('div');
+      tableDiv.innerHTML = item.html;
+      const tableWrap = tableDiv.querySelector('.result-table-wrap');
+      if (tableWrap) paginateTable(tableWrap);
+      card.appendChild(tableDiv);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'dashboard-card-actions';
+    const unpinBtn = document.createElement('button');
+    unpinBtn.className = 'unpin-btn';
+    unpinBtn.textContent = 'Unpin';
+    unpinBtn.onclick = () => unpinItem(item.id);
+    actions.appendChild(unpinBtn);
+    card.appendChild(actions);
+
+    grid.appendChild(card);
+  });
+}
+
+function broadcastThemeToDashboard() {
+  const theme = document.documentElement.getAttribute('data-theme') || 'light';
+  document.querySelectorAll('#dashboard-grid iframe').forEach(iframe => {
+    try { iframe.contentWindow.postMessage({ type: 'theme-change', theme }, '*'); } catch(e) {}
+  });
 }
 
 async function toggleQueryLog() {
@@ -421,6 +522,12 @@ function handleToolResult(data) {
   const resultEl = document.createElement('div');
   resultEl.className = 'tool-result';
 
+  const pinBtn = document.createElement('button');
+  pinBtn.className = 'pin-btn';
+  pinBtn.textContent = 'Pin';
+  pinBtn.onclick = () => pinResult(pinBtn);
+  resultEl.appendChild(pinBtn);
+
   if (data.type === 'chart') {
     const iframe = document.createElement('iframe');
     iframe.sandbox = 'allow-scripts allow-same-origin';
@@ -738,8 +845,8 @@ function applyTheme(theme) {
   document.getElementById('theme-icon-sun').style.display = theme === 'dark' ? 'block' : 'none';
   document.getElementById('theme-icon-moon').style.display = theme === 'dark' ? 'none' : 'block';
 
-  // Broadcast theme to chart iframes
-  document.querySelectorAll('.tool-result iframe').forEach(iframe => {
+  // Broadcast theme to chart iframes (chat + dashboard)
+  document.querySelectorAll('.tool-result iframe, #dashboard-grid iframe').forEach(iframe => {
     try { iframe.contentWindow.postMessage({ type: 'theme-change', theme: theme }, '*'); } catch(e) {}
   });
 }
