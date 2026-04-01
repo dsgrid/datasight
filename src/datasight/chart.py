@@ -24,14 +24,16 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: 'Space Grotesk', system-ui, sans-serif; background: transparent; transition: background 0.2s; }}
   #chart {{ width: 100%; height: 100vh; }}
-  #toggle-btn {{
-    position: absolute; top: 6px; right: 6px; z-index: 10;
+  .chart-btn {{
+    position: absolute; top: 6px; z-index: 10;
     width: 28px; height: 28px; border-radius: 4px;
     border: 1px solid rgba(128,128,128,0.3); background: rgba(128,128,128,0.1);
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     font-size: 14px; color: inherit; opacity: 0.6; transition: opacity 0.15s;
   }}
-  #toggle-btn:hover {{ opacity: 1; }}
+  .chart-btn:hover {{ opacity: 1; }}
+  #toggle-btn {{ right: 6px; }}
+  #save-btn {{ right: 38px; font-size: 12px; }}
   #controls {{
     display: none; padding: 8px 12px; border-bottom: 1px solid rgba(128,128,128,0.2);
     background: rgba(128,128,128,0.05);
@@ -49,7 +51,8 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
 </style>
 </head>
 <body>
-<button id="toggle-btn" onclick="toggleControls()" title="Chart controls">&#9881;</button>
+<button class="chart-btn" id="save-btn" onclick="saveSpec()" title="Save Plotly JSON">&#11123;</button>
+<button class="chart-btn" id="toggle-btn" onclick="toggleControls()" title="Chart controls">&#9881;</button>
 <div id="controls">
   <div class="ctrl-group">
     <label>Type</label>
@@ -214,6 +217,17 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
     var update = {{}};
     update[axis + 'axis.title'] = val;
     Plotly.relayout('chart', update);
+  }}
+
+  function saveSpec() {{
+    var json = JSON.stringify(spec, null, 2);
+    var blob = new Blob([json], {{ type: 'application/json' }});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'plotly-spec.json';
+    a.click();
+    URL.revokeObjectURL(url);
   }}
 </script>
 </body>
