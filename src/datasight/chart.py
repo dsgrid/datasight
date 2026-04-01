@@ -22,58 +22,64 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
 <script src="{PLOTLY_CDN}"></script>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: 'Space Grotesk', system-ui, sans-serif; background: transparent; transition: background 0.2s; }}
-  #chart {{ width: 100%; height: 100vh; }}
+  body {{ font-family: 'Space Grotesk', system-ui, sans-serif; background: transparent; transition: background 0.2s; display: flex; flex-direction: column; height: 100vh; }}
+  #chart {{ width: 100%; flex: 1; min-height: 0; }}
+  #toolbar {{
+    display: flex; align-items: center; gap: 4px; padding: 4px 8px;
+    border-bottom: 1px solid rgba(128,128,128,0.2); background: rgba(128,128,128,0.05);
+    flex-shrink: 0;
+  }}
   .chart-btn {{
-    position: absolute; top: 6px; z-index: 10;
     width: 28px; height: 28px; border-radius: 4px;
     border: 1px solid rgba(128,128,128,0.3); background: rgba(128,128,128,0.1);
     cursor: pointer; display: flex; align-items: center; justify-content: center;
-    font-size: 14px; color: inherit; opacity: 0.6; transition: opacity 0.15s;
+    font-size: 14px; color: inherit; opacity: 0.6; transition: opacity 0.15s; flex-shrink: 0;
   }}
   .chart-btn:hover {{ opacity: 1; }}
-  #toggle-btn {{ right: 6px; }}
-  #save-btn {{ right: 38px; font-size: 12px; }}
+  #save-btn {{ font-size: 12px; }}
+  .toolbar-sep {{ flex: 1; }}
   #controls {{
-    display: none; padding: 8px 12px; border-bottom: 1px solid rgba(128,128,128,0.2);
-    background: rgba(128,128,128,0.05);
-    gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px;
+    display: none; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px;
   }}
   #controls.visible {{ display: flex; }}
   #controls label {{ color: inherit; opacity: 0.7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }}
   #controls select, #controls input {{
     border: 1px solid rgba(128,128,128,0.3); border-radius: 4px;
     padding: 3px 6px; font-family: inherit; font-size: 12px;
-    background: transparent; color: inherit; outline: none;
+    background: var(--ctrl-bg, transparent); color: inherit; outline: none;
   }}
+  #controls select option {{ background: var(--ctrl-bg, white); color: var(--ctrl-color, #1a1a1a); }}
   #controls select:focus, #controls input:focus {{ border-color: #15a8a8; }}
   .ctrl-group {{ display: flex; align-items: center; gap: 4px; }}
 </style>
 </head>
 <body>
-<button class="chart-btn" id="save-btn" onclick="saveSpec()" title="Save Plotly JSON">&#11123;</button>
-<button class="chart-btn" id="toggle-btn" onclick="toggleControls()" title="Chart controls">&#9881;</button>
-<div id="controls">
-  <div class="ctrl-group">
-    <label>Type</label>
-    <select id="chart-type" onchange="changeChartType(this.value)">
-      <option value="bar">Bar</option>
-      <option value="line">Line</option>
-      <option value="scatter">Scatter</option>
-      <option value="pie">Pie</option>
-    </select>
-  </div>
-  <div class="ctrl-group">
-    <label>Title</label>
-    <input id="chart-title" type="text" placeholder="Chart title" oninput="updateTitle(this.value)">
-  </div>
-  <div class="ctrl-group">
-    <label>X axis</label>
-    <input id="x-label" type="text" placeholder="X axis label" oninput="updateAxisLabel('x', this.value)">
-  </div>
-  <div class="ctrl-group">
-    <label>Y axis</label>
-    <input id="y-label" type="text" placeholder="Y axis label" oninput="updateAxisLabel('y', this.value)">
+<div id="toolbar">
+  <button class="chart-btn" id="save-btn" onclick="saveSpec()" title="Save Plotly JSON">&#11123;</button>
+  <button class="chart-btn" id="toggle-btn" onclick="toggleControls()" title="Chart controls">&#9881;</button>
+  <div class="toolbar-sep"></div>
+  <div id="controls">
+    <div class="ctrl-group">
+      <label>Type</label>
+      <select id="chart-type" onchange="changeChartType(this.value)">
+        <option value="bar">Bar</option>
+        <option value="line">Line</option>
+        <option value="scatter">Scatter</option>
+        <option value="pie">Pie</option>
+      </select>
+    </div>
+    <div class="ctrl-group">
+      <label>Title</label>
+      <input id="chart-title" type="text" placeholder="Chart title" oninput="updateTitle(this.value)">
+    </div>
+    <div class="ctrl-group">
+      <label>X axis</label>
+      <input id="x-label" type="text" placeholder="X axis label" oninput="updateAxisLabel('x', this.value)">
+    </div>
+    <div class="ctrl-group">
+      <label>Y axis</label>
+      <input id="y-label" type="text" placeholder="Y axis label" oninput="updateAxisLabel('y', this.value)">
+    </div>
   </div>
 </div>
 <div id="chart"></div>
@@ -117,6 +123,10 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
       'yaxis.zerolinecolor': t.yaxis.zerolinecolor,
     }});
     document.body.style.background = t.paper_bgcolor;
+    document.body.style.color = t.font.color;
+    document.documentElement.style.colorScheme = theme;
+    document.body.style.setProperty('--ctrl-bg', theme === 'dark' ? '#21262d' : 'white');
+    document.body.style.setProperty('--ctrl-color', t.font.color);
   }}
 
   // Listen for theme changes from parent
@@ -139,6 +149,10 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
   layout.xaxis = Object.assign(layout.xaxis || {{}}, t.xaxis);
   layout.yaxis = Object.assign(layout.yaxis || {{}}, t.yaxis);
   document.body.style.background = t.paper_bgcolor;
+  document.body.style.color = t.font.color;
+  document.documentElement.style.colorScheme = initialTheme;
+  document.body.style.setProperty('--ctrl-bg', initialTheme === 'dark' ? '#21262d' : 'white');
+  document.body.style.setProperty('--ctrl-color', t.font.color);
 
   Plotly.newPlot('chart', data, layout, {{
     responsive: true,

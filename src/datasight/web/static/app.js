@@ -523,12 +523,6 @@ function handleToolResult(data) {
   const resultEl = document.createElement('div');
   resultEl.className = 'tool-result';
 
-  const pinBtn = document.createElement('button');
-  pinBtn.className = 'pin-btn';
-  pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
-  pinBtn.onclick = () => pinResult(pinBtn);
-  resultEl.appendChild(pinBtn);
-
   if (data.type === 'chart') {
     const iframe = document.createElement('iframe');
     iframe.sandbox = 'allow-scripts allow-same-origin';
@@ -544,10 +538,18 @@ function handleToolResult(data) {
     });
     resultEl.appendChild(iframe);
   } else {
-    resultEl.innerHTML = data.html;
+    const tableContainer = document.createElement('div');
+    tableContainer.innerHTML = data.html;
+    while (tableContainer.firstChild) resultEl.appendChild(tableContainer.firstChild);
     const tableWrap = resultEl.querySelector('.result-table-wrap');
     if (tableWrap) paginateTable(tableWrap);
   }
+
+  const pinBtn = document.createElement('button');
+  pinBtn.className = 'pin-btn';
+  pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
+  pinBtn.onclick = () => pinResult(pinBtn);
+  resultEl.appendChild(pinBtn);
 
   messagesEl.appendChild(resultEl);
   scrollToBottom();

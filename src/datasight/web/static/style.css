@@ -411,14 +411,10 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 .unpin-btn svg { flex-shrink: 0; }
 
 /* Pin button on tool results */
-.tool-result {
-  position: relative;
-}
-
 .pin-btn {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: 4px;
+  right: 8px;
   z-index: 5;
   display: inline-flex;
   align-items: center;
@@ -435,7 +431,6 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   transition: all 0.2s;
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
-
 .tool-result:hover .pin-btn { opacity: 1; }
 .pin-btn:hover {
   color: var(--teal);
@@ -594,6 +589,7 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 
 /* Tool results (tables + charts) */
 .tool-result {
+  position: relative;
   max-width: 900px;
   margin: 0 auto 16px;
   width: 100%;
