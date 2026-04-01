@@ -512,7 +512,7 @@ async function sendMessage(text) {
     let buffer = '';
     let typingRemoved = false;
 
-    while (true) {
+    while (true) { // eslint-disable-line no-constant-condition
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -837,7 +837,6 @@ function applyPage(wrap) {
     return;
   }
 
-  const showing = Math.min(end, totalRows) - start;
   container.innerHTML =
     '<button class="page-btn"' + (page === 0 ? ' disabled' : '') +
       ' onclick="goToPage(this,' + (page - 1) + ')">Prev</button>' +
