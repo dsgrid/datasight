@@ -417,6 +417,8 @@ function sendExample(text) {
 
 async function sendMessage(text) {
   if (welcomeEl) welcomeEl.style.display = 'none';
+  const oldSuggestions = messagesEl.querySelector('.suggestions');
+  if (oldSuggestions) oldSuggestions.remove();
 
   addMessage('user', text);
 
@@ -490,6 +492,7 @@ function handleSSEEvent(eventType, data) {
     case 'tool_done':   handleToolDone(data); break;
     case 'token':       handleToken(data); break;
     case 'done':        finalize(); break;
+    case 'suggestions': handleSuggestions(data); break;
   }
 }
 
@@ -603,6 +606,28 @@ function finalize() {
     });
     addCopyButtons(currentAssistantBubble);
   }
+}
+
+function handleSuggestions(data) {
+  const suggestions = data.suggestions;
+  if (!suggestions || suggestions.length === 0) return;
+  // Remove any previous suggestions
+  const old = messagesEl.querySelector('.suggestions');
+  if (old) old.remove();
+  const wrap = document.createElement('div');
+  wrap.className = 'suggestions';
+  suggestions.forEach(text => {
+    const btn = document.createElement('button');
+    btn.className = 'suggestion-btn';
+    btn.textContent = text;
+    btn.onclick = () => {
+      wrap.remove();
+      sendExample(text);
+    };
+    wrap.appendChild(btn);
+  });
+  messagesEl.appendChild(wrap);
+  scrollToBottom();
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +962,9 @@ async function loadConversation(sid) {
           addMessage('assistant', evt.data.text);
           currentAssistantBubble = null;
           currentAssistantText = '';
+          break;
+        case 'suggestions':
+          handleSuggestions(evt.data);
           break;
       }
     }

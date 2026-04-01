@@ -877,6 +877,33 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   box-shadow: 0 0 0 1px var(--teal);
 }
 
+/* Follow-up suggestions */
+.suggestions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0 12px;
+  max-width: 900px;
+  margin: 0 auto;
+  animation: fadeIn 0.3s ease;
+}
+.suggestion-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.suggestion-btn:hover {
+  color: var(--teal);
+  border-color: var(--teal);
+  background: rgba(21,168,168,0.06);
+}
+
 /* Input area */
 #chat-form {
   flex-shrink: 0;

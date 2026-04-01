@@ -9,6 +9,7 @@ Ollama LLM backends via a common abstraction layer.
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -483,6 +484,34 @@ def get_session_messages(session_id: str) -> list[dict[str, Any]]:
     return conversations.get(session_id)["messages"]
 
 
+async def _generate_suggestions(
+    messages: list[dict[str, Any]],
+) -> list[str]:
+    """Ask the LLM for 2-3 follow-up question suggestions."""
+    assert llm_client is not None
+    # Build a compact context: just the last user message and assistant reply
+    recent = [m for m in messages[-4:] if isinstance(m.get("content"), str)]
+    if not recent:
+        return []
+    response = await llm_client.create_message(
+        model=model,
+        max_tokens=200,
+        system=(
+            "Based on the conversation, suggest 2-3 short follow-up questions the user "
+            "might ask next. Return ONLY a JSON array of strings, nothing else. "
+            'Example: ["What is the trend over time?", "Break this down by category"]'
+        ),
+        tools=[],
+        messages=recent,
+    )
+    text = "".join(b.text for b in response.content if isinstance(b, TextBlock)).strip()
+    # Parse JSON array from response
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if not match:
+        return []
+    return json.loads(match.group())
+
+
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
@@ -809,6 +838,16 @@ async def chat(request: Request):
 
             _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
             yield "event: done\ndata: {}\n\n"
+
+            # Generate follow-up suggestions (non-blocking, best-effort)
+            try:
+                suggestions = await _generate_suggestions(messages)
+                if suggestions:
+                    evt_log.append({"event": "suggestions", "data": {"suggestions": suggestions}})
+                    conversations.save(session_id)
+                    yield f"event: suggestions\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
+            except Exception:
+                pass  # suggestions are optional
             return
 
         _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
