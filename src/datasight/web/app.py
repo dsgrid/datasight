@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from datasight.chart import _build_artifact_html
@@ -50,6 +51,9 @@ app = FastAPI(title="datasight", lifespan=lifespan)
 
 _BASE_DIR = Path(__file__).resolve().parent
 _INDEX_HTML = _BASE_DIR / "templates" / "index.html"
+_STATIC_DIR = _BASE_DIR / "static"
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 # Runtime state (populated on startup)
 llm_client: LLMClient | None = None
