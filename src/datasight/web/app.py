@@ -105,6 +105,10 @@ class ConversationStore:
         if path.exists():
             path.unlink()
 
+    def clear_all(self) -> None:
+        for sid in list(self._cache.keys()):
+            self.delete(sid)
+
     def list_all(self) -> list[dict[str, Any]]:
         result = []
         for sid, data in self._cache.items():
@@ -121,12 +125,56 @@ class ConversationStore:
         return result
 
 
+class BookmarkStore:
+    """Persist bookmarked queries as a JSON file."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._bookmarks: list[dict[str, Any]] = []
+        self._next_id = 1
+        if self._path.exists():
+            try:
+                self._bookmarks = json.loads(self._path.read_text())
+                if self._bookmarks:
+                    self._next_id = max(b["id"] for b in self._bookmarks) + 1
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._bookmarks, indent=2))
+
+    def list_all(self) -> list[dict[str, Any]]:
+        return list(self._bookmarks)
+
+    def add(self, sql: str, tool: str = "run_sql", name: str = "") -> dict[str, Any]:
+        # Avoid duplicates
+        for b in self._bookmarks:
+            if b["sql"] == sql:
+                return b
+        bookmark = {"id": self._next_id, "sql": sql, "tool": tool, "name": name}
+        self._next_id += 1
+        self._bookmarks.append(bookmark)
+        self._save()
+        return bookmark
+
+    def delete(self, bookmark_id: int) -> None:
+        self._bookmarks = [b for b in self._bookmarks if b["id"] != bookmark_id]
+        self._save()
+
+    def clear(self) -> None:
+        self._bookmarks = []
+        self._next_id = 1
+        self._save()
+
+
 # Runtime state (populated on startup)
 llm_client: LLMClient | None = None
 sql_runner: Any = None
 system_prompt: str = ""
 model: str = "claude-sonnet-4-20250514"
 conversations: ConversationStore | None = None
+bookmarks: BookmarkStore | None = None
 schema_info: list[dict[str, Any]] = []
 example_queries_list: list[dict[str, str]] = []
 query_logger: QueryLogger | None = None
@@ -526,7 +574,8 @@ async def _startup():
         schema_info, \
         example_queries_list, \
         query_logger, \
-        conversations
+        conversations, \
+        bookmarks
 
     load_dotenv()
 
@@ -562,6 +611,7 @@ async def _startup():
     project_dir = os.environ.get("DATASIGHT_PROJECT_DIR", ".")
 
     conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
+    bookmarks = BookmarkStore(Path(project_dir) / ".datasight" / "bookmarks.json")
 
     log_enabled = os.environ.get("QUERY_LOG_ENABLED", "false").lower() == "true"
     log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
@@ -667,6 +717,51 @@ async def get_query_log(n: int = 50):
     if query_logger is None:
         return {"entries": [], "enabled": False}
     return {"entries": query_logger.read_recent(n), "enabled": query_logger.enabled}
+
+
+@app.get("/api/bookmarks")
+async def list_bookmarks():
+    """Return all bookmarked queries."""
+    assert bookmarks is not None
+    return {"bookmarks": bookmarks.list_all()}
+
+
+@app.post("/api/bookmarks")
+async def add_bookmark(request: Request):
+    """Add a bookmarked query."""
+    assert bookmarks is not None
+    body = await request.json()
+    sql = body.get("sql", "").strip()
+    tool = body.get("tool", "run_sql")
+    name = body.get("name", "").strip()
+    if not sql:
+        return {"error": "sql is required"}
+    bookmark = bookmarks.add(sql, tool, name)
+    return {"bookmark": bookmark}
+
+
+@app.delete("/api/bookmarks/{bookmark_id}")
+async def remove_bookmark(bookmark_id: int):
+    """Remove a bookmarked query."""
+    assert bookmarks is not None
+    bookmarks.delete(bookmark_id)
+    return {"ok": True}
+
+
+@app.delete("/api/bookmarks")
+async def clear_bookmarks():
+    """Remove all bookmarks."""
+    assert bookmarks is not None
+    bookmarks.clear()
+    return {"ok": True}
+
+
+@app.delete("/api/conversations")
+async def clear_conversations():
+    """Remove all conversations."""
+    assert conversations is not None
+    conversations.clear_all()
+    return {"ok": True}
 
 
 def _log_query_cost(api_calls: int, input_tokens: int, output_tokens: int) -> None:

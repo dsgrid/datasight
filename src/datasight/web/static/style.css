@@ -160,7 +160,23 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   letter-spacing: 0.06em;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
+.sidebar-clear-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.65rem;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sidebar-clear-btn:hover { opacity: 1; color: var(--error-text, #e55); }
 
 .sidebar-content {
   flex: 1;
@@ -364,6 +380,49 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   color: var(--text-secondary);
 }
 
+/* Bookmarks */
+#bookmarks-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+#bookmarks-list::-webkit-scrollbar { width: 5px; }
+#bookmarks-list::-webkit-scrollbar-track { background: transparent; }
+#bookmarks-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.bookmark-item {
+  position: relative;
+  padding: 6px 28px 6px 12px;
+  border-bottom: 1px solid rgba(0,0,0,0.03);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.bookmark-item:hover { background: rgba(21,168,168,0.04); }
+.bookmark-name {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bookmark-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.bookmark-item:hover .bookmark-delete { opacity: 0.6; }
+.bookmark-delete:hover { opacity: 1; color: var(--error-text, #e55); }
+
 /* Chat area */
 .chat-area {
   flex: 1;
@@ -478,6 +537,34 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 }
 
 .pin-btn svg, .unpin-btn svg { flex-shrink: 0; }
+
+.bookmark-btn {
+  position: absolute;
+  top: 4px;
+  right: 80px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+.tool-result:hover .bookmark-btn { opacity: 1; }
+.bookmark-btn:hover {
+  color: #e8a317;
+  border-color: #e8a317;
+  background: rgba(232,163,23,0.08);
+  box-shadow: 0 2px 8px rgba(232,163,23,0.15);
+}
 
 /* Messages area */
 #messages {

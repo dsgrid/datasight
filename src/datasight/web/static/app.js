@@ -250,6 +250,20 @@ function renderQueryHistory() {
     };
     actions.appendChild(rerunBtn);
 
+    if (q.sql) {
+      const bookmarkBtn = document.createElement('button');
+      bookmarkBtn.className = 'query-card-btn';
+      bookmarkBtn.textContent = '★';
+      bookmarkBtn.title = 'Bookmark this query';
+      bookmarkBtn.onclick = (e) => {
+        e.stopPropagation();
+        bookmarkQuery(q.sql, q.tool, '');
+        bookmarkBtn.textContent = '★!';
+        setTimeout(() => { bookmarkBtn.textContent = '★'; }, 1200);
+      };
+      actions.appendChild(bookmarkBtn);
+    }
+
     card.appendChild(actions);
     container.appendChild(card);
   });
@@ -556,6 +570,20 @@ function handleToolResult(data) {
   pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
   pinBtn.onclick = () => pinResult(pinBtn);
   resultEl.appendChild(pinBtn);
+
+  if (lastSql) {
+    const sql = lastSql;
+    const name = data.title || '';
+    const bmBtn = document.createElement('button');
+    bmBtn.className = 'bookmark-btn';
+    bmBtn.innerHTML = '★ Bookmark';
+    bmBtn.onclick = () => {
+      bookmarkQuery(sql, data.type === 'chart' ? 'visualize_data' : 'run_sql', name);
+      bmBtn.innerHTML = '★ Saved!';
+      setTimeout(() => { bmBtn.innerHTML = '★ Bookmark'; }, 1200);
+    };
+    resultEl.appendChild(bmBtn);
+  }
 
   messagesEl.appendChild(resultEl);
   scrollToBottom();
@@ -988,6 +1016,82 @@ async function restoreSession() {
 }
 
 // ---------------------------------------------------------------------------
+// Bookmarks
+// ---------------------------------------------------------------------------
+async function bookmarkQuery(sql, tool, name) {
+  try {
+    await fetch('/api/bookmarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, tool: tool || 'run_sql', name: name || '' }),
+    });
+    loadBookmarks();
+  } catch (e) { /* ignore */ }
+}
+
+async function deleteBookmark(id) {
+  try {
+    await fetch('/api/bookmarks/' + id, { method: 'DELETE' });
+    loadBookmarks();
+  } catch (e) { /* ignore */ }
+}
+
+async function clearAllBookmarks() {
+  try {
+    await fetch('/api/bookmarks', { method: 'DELETE' });
+    loadBookmarks();
+  } catch (e) { /* ignore */ }
+}
+
+async function clearAllConversations() {
+  try {
+    await fetch('/api/conversations', { method: 'DELETE' });
+    loadConversations();
+  } catch (e) { /* ignore */ }
+}
+
+async function loadBookmarks() {
+  try {
+    const resp = await fetch('/api/bookmarks');
+    const data = await resp.json();
+    renderBookmarks(data.bookmarks || []);
+  } catch (e) { /* ignore */ }
+}
+
+function renderBookmarks(bookmarks) {
+  const container = document.getElementById('bookmarks-list');
+  if (!container) return;
+  if (bookmarks.length === 0) {
+    container.innerHTML = '<div class="no-queries">No bookmarks yet.</div>';
+    return;
+  }
+  container.innerHTML = '';
+  bookmarks.forEach(b => {
+    const item = document.createElement('div');
+    item.className = 'bookmark-item';
+    item.title = b.sql;
+    item.onclick = () => {
+      inputEl.value = 'Run this SQL query:\n' + b.sql;
+      inputEl.focus();
+    };
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'bookmark-name';
+    nameEl.textContent = b.name || b.sql.substring(0, 60);
+    item.appendChild(nameEl);
+
+    const del = document.createElement('button');
+    del.className = 'bookmark-delete';
+    del.textContent = '×';
+    del.title = 'Remove bookmark';
+    del.onclick = (e) => { e.stopPropagation(); deleteBookmark(b.id); };
+    item.appendChild(del);
+
+    container.appendChild(item);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
@@ -995,4 +1099,5 @@ loadSchema();
 loadQueries();
 loadQueryLogState();
 loadConversations();
+loadBookmarks();
 restoreSession();
