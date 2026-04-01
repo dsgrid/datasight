@@ -57,6 +57,22 @@ Because the AI builds the Plotly spec directly, it has access to the full
 Plotly.js API -- any trace type, layout option, or configuration that Plotly
 supports.
 
+## Customize charts in the UI
+
+Once a chart is rendered, you can modify it directly using the toolbar at the
+top of the chart iframe:
+
+- **Chart type** — switch between bar, line, scatter, and pie using the
+  dropdown. Data is automatically remapped (e.g. pie labels become bar x-axis
+  values).
+- **Title and axis labels** — edit the chart title, x-axis, and y-axis labels
+  using the text inputs.
+- **Save spec** — click the download icon to save the Plotly JSON
+  specification. This is useful for embedding charts in Jupyter notebooks or
+  other tools.
+
+Open the controls by clicking the gear icon (⚙) in the chart toolbar.
+
 ## Tips for better visualizations
 
 **Be specific about the chart type.** "Show revenue by month" will work, but

@@ -57,6 +57,18 @@ A datasight project directory contains:
 | `schema_description.md` | No | Domain context for the AI ([guide](../how-to/schema-description.md)). Always a local file, even when using Flight SQL. |
 | `queries.yaml` | No | Example question/SQL pairs ([guide](../how-to/example-queries.md)). Always a local file, even when using Flight SQL. |
 | `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../how-to/query-log.md)) |
+| `.datasight/` | No | Auto-created directory for app state (see below) |
+
+### `.datasight/` directory
+
+datasight stores persistent state in a `.datasight/` directory inside the
+project directory. This is created automatically and should be added to
+`.gitignore`.
+
+| Path | Description |
+|------|-------------|
+| `.datasight/conversations/` | Saved chat conversations as JSON files. Each file contains the message history and UI event log for replay. |
+| `.datasight/bookmarks.json` | Bookmarked SQL queries with names. |
 
 ## Precedence
 

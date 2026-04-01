@@ -33,6 +33,7 @@ tutorials/demo-dataset
 :maxdepth: 2
 :caption: How-to guides
 
+how-to/web-ui
 how-to/schema-description
 how-to/example-queries
 how-to/visualizations
