@@ -418,7 +418,7 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 .pin-btn {
   position: absolute;
   top: 6px;
-  right: 6px;
+  left: 6px;
   z-index: 5;
   display: inline-flex;
   align-items: center;
