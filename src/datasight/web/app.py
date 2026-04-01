@@ -57,12 +57,75 @@ _STATIC_DIR = _BASE_DIR / "static"
 
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
+# ---------------------------------------------------------------------------
+# Conversation persistence
+# ---------------------------------------------------------------------------
+
+
+class ConversationStore:
+    """Persist conversations as JSON files in a directory."""
+
+    def __init__(self, directory: Path) -> None:
+        self._dir = directory
+        self._dir.mkdir(parents=True, exist_ok=True)
+        # In-memory cache (loaded lazily)
+        self._cache: dict[str, dict[str, Any]] = {}
+        self._load_all()
+
+    def _path(self, session_id: str) -> Path:
+        return self._dir / f"{session_id}.json"
+
+    def _load_all(self) -> None:
+        for f in self._dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                self._cache[f.stem] = data
+            except (json.JSONDecodeError, OSError):
+                continue
+
+    def get(self, session_id: str) -> dict[str, Any]:
+        if session_id not in self._cache:
+            self._cache[session_id] = {
+                "title": "Untitled",
+                "messages": [],
+                "events": [],
+            }
+        return self._cache[session_id]
+
+    def save(self, session_id: str) -> None:
+        data = self._cache.get(session_id)
+        if not data:
+            return
+        self._path(session_id).write_text(json.dumps(data))
+
+    def delete(self, session_id: str) -> None:
+        self._cache.pop(session_id, None)
+        path = self._path(session_id)
+        if path.exists():
+            path.unlink()
+
+    def list_all(self) -> list[dict[str, Any]]:
+        result = []
+        for sid, data in self._cache.items():
+            events = data.get("events", [])
+            if not events:
+                continue
+            result.append(
+                {
+                    "session_id": sid,
+                    "title": data.get("title", "Untitled"),
+                    "message_count": sum(1 for e in events if e["event"] == "user_message"),
+                }
+            )
+        return result
+
+
 # Runtime state (populated on startup)
 llm_client: LLMClient | None = None
 sql_runner: Any = None
 system_prompt: str = ""
 model: str = "claude-sonnet-4-20250514"
-sessions: dict[str, list[dict[str, Any]]] = {}
+conversations: ConversationStore | None = None
 schema_info: list[dict[str, Any]] = []
 example_queries_list: list[dict[str, str]] = []
 query_logger: QueryLogger | None = None
@@ -416,9 +479,8 @@ async def execute_tool(
 
 
 def get_session_messages(session_id: str) -> list[dict[str, Any]]:
-    if session_id not in sessions:
-        sessions[session_id] = []
-    return sessions[session_id]
+    assert conversations is not None
+    return conversations.get(session_id)["messages"]
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +496,8 @@ async def _startup():
         model, \
         schema_info, \
         example_queries_list, \
-        query_logger
+        query_logger, \
+        conversations
 
     load_dotenv()
 
@@ -468,6 +531,8 @@ async def _startup():
     )
 
     project_dir = os.environ.get("DATASIGHT_PROJECT_DIR", ".")
+
+    conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
 
     log_enabled = os.environ.get("QUERY_LOG_ENABLED", "false").lower() == "true"
     log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
@@ -589,6 +654,21 @@ def _log_query_cost(api_calls: int, input_tokens: int, output_tokens: int) -> No
     )
 
 
+@app.get("/api/conversations")
+async def list_conversations():
+    """Return a list of all conversations with titles."""
+    assert conversations is not None
+    return {"conversations": list(reversed(conversations.list_all()))}
+
+
+@app.get("/api/conversations/{session_id}")
+async def get_conversation(session_id: str):
+    """Return the event log for a conversation (for replay)."""
+    assert conversations is not None
+    data = conversations.get(session_id)
+    return {"events": data["events"], "title": data.get("title", "Untitled")}
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
@@ -604,6 +684,16 @@ async def chat(request: Request):
     async def generate():
         messages = get_session_messages(session_id)
         messages.append({"role": "user", "content": message})
+
+        # Record events for conversation replay
+        assert conversations is not None
+        conv = conversations.get(session_id)
+        evt_log = conv["events"]
+        evt_log.append({"event": "user_message", "data": {"text": message}})
+        # Set title from first user message
+        if conv["title"] == "Untitled":
+            conv["title"] = message[:80] + ("..." if len(message) > 80 else "")
+        conversations.save(session_id)
 
         assert llm_client is not None, "LLM client not initialised"
         max_iterations = 15
@@ -622,6 +712,8 @@ async def chat(request: Request):
                 )
             except Exception as e:
                 logger.error(f"LLM API error: {e}")
+                evt_log.append({"event": "assistant_message", "data": {"text": f"Error: {e}"}})
+                conversations.save(session_id)
                 yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 return
@@ -657,7 +749,9 @@ async def chat(request: Request):
                     if not isinstance(block, ToolUseBlock):
                         continue
 
-                    yield f"event: tool_start\ndata: {json.dumps({'tool': block.name, 'input': block.input})}\n\n"
+                    tool_start_data = {"tool": block.name, "input": block.input}
+                    evt_log.append({"event": "tool_start", "data": tool_start_data})
+                    yield f"event: tool_start\ndata: {json.dumps(tool_start_data)}\n\n"
 
                     result_text, result_html, auto_chart_html, meta = await execute_tool(
                         block.name,
@@ -670,13 +764,24 @@ async def chat(request: Request):
                         is_chart = block.name == "visualize_data" and "<script" in (
                             result_html or ""
                         )
-                        yield f"event: tool_result\ndata: {json.dumps({'html': result_html, 'type': 'chart' if is_chart else 'table'})}\n\n"
+                        result_title = block.input.get("title", message) if is_chart else message
+                        tr_data = {
+                            "html": result_html,
+                            "type": "chart" if is_chart else "table",
+                            "title": result_title,
+                        }
+                        evt_log.append({"event": "tool_result", "data": tr_data})
+                        yield f"event: tool_result\ndata: {json.dumps(tr_data)}\n\n"
 
                     if auto_chart_html:
-                        yield f"event: tool_result\ndata: {json.dumps({'html': auto_chart_html, 'type': 'chart'})}\n\n"
+                        ac_data = {"html": auto_chart_html, "type": "chart"}
+                        evt_log.append({"event": "tool_result", "data": ac_data})
+                        yield f"event: tool_result\ndata: {json.dumps(ac_data)}\n\n"
 
                     if meta:
+                        evt_log.append({"event": "tool_done", "data": meta})
                         yield f"event: tool_done\ndata: {json.dumps(meta)}\n\n"
+                        conversations.save(session_id)
 
                     tool_results.append(
                         {
@@ -693,6 +798,8 @@ async def chat(request: Request):
             text = "".join(b.text for b in response.content if isinstance(b, TextBlock))
 
             messages.append({"role": "assistant", "content": text})
+            evt_log.append({"event": "assistant_message", "data": {"text": text}})
+            conversations.save(session_id)
 
             words = text.split(" ")
             for i, word in enumerate(words):
@@ -705,7 +812,10 @@ async def chat(request: Request):
             return
 
         _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
-        yield f"event: token\ndata: {json.dumps({'text': 'Reached maximum number of tool calls. Please try a simpler question.'})}\n\n"
+        max_iter_text = "Reached maximum number of tool calls. Please try a simpler question."
+        evt_log.append({"event": "assistant_message", "data": {"text": max_iter_text}})
+        conversations.save(session_id)
+        yield f"event: token\ndata: {json.dumps({'text': max_iter_text})}\n\n"
         yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -715,6 +825,6 @@ async def chat(request: Request):
 async def clear_session(request: Request):
     body = await request.json()
     session_id = body.get("session_id", "default")
-    if session_id in sessions:
-        del sessions[session_id]
+    assert conversations is not None
+    conversations.delete(session_id)
     return {"ok": True}

@@ -264,7 +264,7 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 }
 
 /* Queries section */
-.queries-section {
+.queries-section, .conversations-section {
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -324,6 +324,44 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   color: var(--text-secondary);
   text-align: center;
   font-style: italic;
+}
+
+/* Conversation history */
+#conversations-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+#conversations-list::-webkit-scrollbar { width: 5px; }
+#conversations-list::-webkit-scrollbar-track { background: transparent; }
+#conversations-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.conversation-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 8px 16px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  border-bottom: 1px solid rgba(0,0,0,0.03);
+  transition: background 0.1s;
+  color: var(--text);
+}
+.conversation-item:hover { background: rgba(21,168,168,0.04); }
+.conversation-item.active { background: rgba(21,168,168,0.08); border-left: 2px solid var(--teal); }
+.conversation-title {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conversation-meta {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
 }
 
 /* Chat area */

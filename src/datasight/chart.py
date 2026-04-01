@@ -239,7 +239,8 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = 'plotly-spec.json';
+    var title = (layout.title && (typeof layout.title === 'string' ? layout.title : layout.title.text)) || 'plotly-spec';
+    a.download = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60) + '.json';
     a.click();
     URL.revokeObjectURL(url);
   }}

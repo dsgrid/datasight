@@ -1,7 +1,8 @@
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-const sessionId = crypto.randomUUID();
+let sessionId = localStorage.getItem('datasight-session') || crypto.randomUUID();
+localStorage.setItem('datasight-session', sessionId);
 let isStreaming = false;
 let currentAssistantBubble = null;
 let currentAssistantText = '';
@@ -112,7 +113,7 @@ function renderDashboard() {
 
     if (item.type === 'chart') {
       const iframe = document.createElement('iframe');
-      iframe.sandbox = 'allow-scripts allow-same-origin';
+      iframe.sandbox = 'allow-scripts allow-same-origin allow-downloads';
       iframe.srcdoc = item.html;
       iframe.addEventListener('load', () => {
         const theme = document.documentElement.getAttribute('data-theme') || 'light';
@@ -476,6 +477,7 @@ async function sendMessage(text) {
   sendBtn.disabled = false;
   currentAssistantBubble = null;
   inputEl.focus();
+  loadConversations();
 }
 
 // ---------------------------------------------------------------------------
@@ -522,10 +524,11 @@ function handleToolResult(data) {
 
   const resultEl = document.createElement('div');
   resultEl.className = 'tool-result';
+  if (data.title) resultEl.dataset.title = data.title;
 
   if (data.type === 'chart') {
     const iframe = document.createElement('iframe');
-    iframe.sandbox = 'allow-scripts allow-same-origin';
+    iframe.sandbox = 'allow-scripts allow-same-origin allow-downloads';
     iframe.srcdoc = data.html;
     iframe.style.width = '100%';
     iframe.style.height = '480px';
@@ -647,17 +650,17 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function slugify(str) {
+  return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60) || 'datasight';
+}
+
 // ---------------------------------------------------------------------------
 // Clear chat
 // ---------------------------------------------------------------------------
 async function clearChat() {
-  try {
-    await fetch('/api/clear', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-  } catch (e) { /* ignore */ }
+  // Start a fresh session (old one remains accessible from history)
+  sessionId = crypto.randomUUID();
+  localStorage.setItem('datasight-session', sessionId);
 
   messagesEl.innerHTML = '';
   if (welcomeEl) {
@@ -669,6 +672,7 @@ async function clearChat() {
   sessionQueries = [];
   lastSql = '';
   renderQueryHistory();
+  loadConversations();
 }
 
 // ---------------------------------------------------------------------------
@@ -823,7 +827,9 @@ function exportTableCsv(btn) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'datasight-export.csv';
+  const resultEl = wrap.closest('.tool-result');
+  const title = (resultEl && resultEl.dataset.title) ? slugify(resultEl.dataset.title) : 'datasight-export';
+  a.download = title + '.csv';
   a.click();
   URL.revokeObjectURL(url);
 
@@ -867,9 +873,98 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 });
 
 // ---------------------------------------------------------------------------
+// Conversations
+// ---------------------------------------------------------------------------
+async function loadConversations() {
+  try {
+    const resp = await fetch('/api/conversations');
+    const data = await resp.json();
+    renderConversations(data.conversations || []);
+  } catch (e) { /* ignore */ }
+}
+
+function renderConversations(conversations) {
+  const container = document.getElementById('conversations-list');
+  if (!container) return;
+  if (conversations.length === 0) {
+    container.innerHTML = '<div class="no-queries">No conversations yet.</div>';
+    return;
+  }
+  container.innerHTML = conversations.map(c => {
+    const active = c.session_id === sessionId ? ' active' : '';
+    const msgs = c.message_count + ' message' + (c.message_count !== 1 ? 's' : '');
+    return '<button class="conversation-item' + active + '" onclick="loadConversation(\'' +
+      c.session_id + '\')" title="' + escapeHtml(c.title) + '">' +
+      '<span class="conversation-title">' + escapeHtml(c.title) + '</span>' +
+      '<span class="conversation-meta">' + msgs + '</span></button>';
+  }).join('');
+}
+
+async function loadConversation(sid) {
+  if (sid === sessionId && messagesEl.querySelector('.message-row')) return;
+  try {
+    const resp = await fetch('/api/conversations/' + sid);
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) return;
+
+    // Switch to this session
+    sessionId = sid;
+    localStorage.setItem('datasight-session', sessionId);
+
+    // Clear current UI
+    messagesEl.innerHTML = '';
+    currentAssistantBubble = null;
+    currentAssistantText = '';
+    sessionQueries = [];
+    lastSql = '';
+
+    // Replay events
+    for (const evt of data.events) {
+      switch (evt.event) {
+        case 'user_message':
+          addMessage('user', evt.data.text);
+          break;
+        case 'tool_start':
+          handleToolStart(evt.data);
+          break;
+        case 'tool_result':
+          handleToolResult(evt.data);
+          break;
+        case 'tool_done':
+          handleToolDone(evt.data);
+          break;
+        case 'assistant_message':
+          addMessage('assistant', evt.data.text);
+          currentAssistantBubble = null;
+          currentAssistantText = '';
+          break;
+      }
+    }
+
+    renderQueryHistory();
+    loadConversations();
+    if (currentView !== 'chat') switchView('chat');
+  } catch (e) {
+    console.error('Failed to load conversation:', e);
+  }
+}
+
+async function restoreSession() {
+  try {
+    const resp = await fetch('/api/conversations/' + sessionId);
+    const data = await resp.json();
+    if (data.events && data.events.length > 0) {
+      await loadConversation(sessionId);
+    }
+  } catch (e) { /* no prior session */ }
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 loadSchema();
 loadQueries();
 loadQueryLogState();
+loadConversations();
+restoreSession();
