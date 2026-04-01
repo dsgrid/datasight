@@ -44,6 +44,8 @@ in the project directory. CLI flags override `.env` values.
 | `SCHEMA_DESCRIPTION_PATH` | `./schema_description.md` | Schema description file |
 | `EXAMPLE_QUERIES_PATH` | `./queries.yaml` | Example queries file |
 | `PORT` | `8084` | Web UI port |
+| `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../how-to/query-log.md)) |
+| `QUERY_LOG_PATH` | `./query_log.jsonl` | Path to query log file |
 
 ## Project files
 
@@ -54,6 +56,7 @@ A datasight project directory contains:
 | `.env` | Yes | API key and connection settings |
 | `schema_description.md` | No | Domain context for the AI ([guide](../how-to/schema-description.md)). Always a local file, even when using Flight SQL. |
 | `queries.yaml` | No | Example question/SQL pairs ([guide](../how-to/example-queries.md)). Always a local file, even when using Flight SQL. |
+| `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../how-to/query-log.md)) |
 
 ## Precedence
 

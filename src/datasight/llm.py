@@ -95,9 +95,13 @@ class AnthropicLLMClient:
             if isinstance(block, anthropic.types.TextBlock):
                 content.append(TextBlock(text=block.text))
             elif isinstance(block, anthropic.types.ToolUseBlock):
-                content.append(ToolUseBlock(
-                    id=block.id, name=block.name, input=block.input,
-                ))
+                content.append(
+                    ToolUseBlock(
+                        id=block.id,
+                        name=block.name,
+                        input=block.input,
+                    )
+                )
 
         stop = "tool_use" if response.stop_reason == "tool_use" else "end_turn"
         usage = Usage(
@@ -116,14 +120,16 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
     """Convert Anthropic-style tool definitions to OpenAI function-calling format."""
     result = []
     for tool in tools:
-        result.append({
-            "type": "function",
-            "function": {
-                "name": tool["name"],
-                "description": tool.get("description", ""),
-                "parameters": tool.get("input_schema", {}),
-            },
-        })
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("input_schema", {}),
+                },
+            }
+        )
     return result
 
 
@@ -144,11 +150,13 @@ def _convert_messages_to_openai(
             # Tool results
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "tool_result":
-                    out.append({
-                        "role": "tool",
-                        "tool_call_id": item["tool_use_id"],
-                        "content": item.get("content", ""),
-                    })
+                    out.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": item["tool_use_id"],
+                            "content": item.get("content", ""),
+                        }
+                    )
 
         elif role == "assistant" and isinstance(content, str):
             out.append({"role": "assistant", "content": content})
@@ -162,14 +170,16 @@ def _convert_messages_to_openai(
                     if block.get("type") == "text":
                         text_parts.append(block["text"])
                     elif block.get("type") == "tool_use":
-                        tool_calls.append({
-                            "id": block["id"],
-                            "type": "function",
-                            "function": {
-                                "name": block["name"],
-                                "arguments": json.dumps(block["input"]),
-                            },
-                        })
+                        tool_calls.append(
+                            {
+                                "id": block["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": block["name"],
+                                    "arguments": json.dumps(block["input"]),
+                                },
+                            }
+                        )
 
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if text_parts:
@@ -227,9 +237,13 @@ class OllamaLLMClient:
                 args = json.loads(tc.function.arguments)
             except (json.JSONDecodeError, TypeError):
                 args = {}
-            content.append(ToolUseBlock(
-                id=tc.id, name=tc.function.name, input=args,
-            ))
+            content.append(
+                ToolUseBlock(
+                    id=tc.id,
+                    name=tc.function.name,
+                    input=args,
+                )
+            )
 
         stop = "tool_use" if tool_calls else "end_turn"
         usage = Usage(

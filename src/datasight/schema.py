@@ -91,7 +91,9 @@ def format_schema_context(
     parts.append("- When the user asks for 'top N', use a CTE or subquery to find the top N")
     parts.append("  first, then filter the main query to only include those results.")
     parts.append("- Use DuckDB SQL syntax. For dates use: DATE_TRUNC('month', col),")
-    parts.append("  EXTRACT(YEAR FROM col), STRFTIME(col, '%Y-%m'). Do NOT use TO_DATE or TO_CHAR.")
+    parts.append(
+        "  EXTRACT(YEAR FROM col), STRFTIME(col, '%Y-%m'). Do NOT use TO_DATE or TO_CHAR."
+    )
     parts.append("- For visualizations: bar charts for comparisons, line charts for trends,")
     parts.append("  pie/donut for composition. Always label axes with units.")
     parts.append("")

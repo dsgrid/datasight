@@ -218,7 +218,9 @@ def download_demo_dataset(
         WHERE EXTRACT(YEAR FROM report_date) >= {min_year}
     """)
     row = conn.execute("SELECT COUNT(*) FROM generation_fuel").fetchone()
-    logger.info(f"  generation_fuel: {row[0]:,} rows" if row else "  generation_fuel: unknown rows")
+    logger.info(
+        f"  generation_fuel: {row[0]:,} rows" if row else "  generation_fuel: unknown rows"
+    )
 
     logger.info("Downloading EIA plant entity data...")
     conn.execute(f"""

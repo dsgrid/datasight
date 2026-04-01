@@ -42,6 +42,7 @@ dev = [
     "myst-parser>=5.0,<6",
     "sphinxcontrib-mermaid>=1.0,<2",
     "ty>=0.0.26",
+    "pre-commit>=4.0,<5",
 ]
 
 [project.scripts]

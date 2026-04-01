@@ -127,7 +127,8 @@ def demo(project_dir: str, min_year: int):
     help="Project directory containing .env and config files.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def run(port, host, db_mode, db_path, model, project_dir, verbose):
+@click.option("--query-log", is_flag=True, help="Enable SQL query logging to query_log.jsonl.")
+def run(port, host, db_mode, db_path, model, project_dir, verbose, query_log):
     """Start the datasight web UI."""
     project_dir = str(Path(project_dir).resolve())
 
@@ -180,6 +181,8 @@ def run(port, host, db_mode, db_path, model, project_dir, verbose):
     os.environ["DB_MODE"] = resolved_db_mode
     os.environ["DB_PATH"] = resolved_db_path
     os.environ["DATASIGHT_PROJECT_DIR"] = project_dir
+    if query_log:
+        os.environ["QUERY_LOG_ENABLED"] = "true"
 
     flight_uri = os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337")
 
@@ -201,3 +204,89 @@ def run(port, host, db_mode, db_path, model, project_dir, verbose):
         port=resolved_port,
         log_level="warning",
     )
+
+
+@cli.command(name="log")
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing query_log.jsonl.",
+)
+@click.option("--tail", "tail_n", type=int, default=20, help="Show last N entries (default: 20).")
+@click.option("--errors", is_flag=True, help="Show only failed queries.")
+@click.option("--full", is_flag=True, help="Show full SQL and user question.")
+def log_cmd(project_dir, tail_n, errors, full):
+    """Display the SQL query log in a formatted table."""
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+
+    from datasight.query_log import QueryLogger
+
+    project_dir = str(Path(project_dir).resolve())
+    log_path = os.path.join(project_dir, "query_log.jsonl")
+
+    if not os.path.exists(log_path):
+        click.echo(f"No query log found at {log_path}")
+        click.echo("Run 'datasight run --query-log' to enable logging.")
+        return
+
+    ql = QueryLogger(path=log_path, enabled=False)
+    entries = ql.read_recent(tail_n)
+
+    if errors:
+        entries = [e for e in entries if e.get("error")]
+
+    if not entries:
+        click.echo("No matching log entries.")
+        return
+
+    console = Console()
+    table = Table(show_lines=True)
+    table.add_column("Timestamp", style="dim", no_wrap=True)
+    table.add_column("Tool", no_wrap=True)
+    table.add_column("SQL", min_width=40, overflow="fold")
+    table.add_column("Time", justify="right", no_wrap=True)
+    table.add_column("Rows", justify="right", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+
+    if full:
+        table.add_column("Question", overflow="fold")
+
+    total = len(entries)
+    failed = 0
+    for entry in entries:
+        ts = entry.get("timestamp", "")
+        # Trim to seconds, drop timezone
+        if "T" in ts:
+            ts = ts.replace("T", " ")[:19]
+
+        tool = entry.get("tool", "")
+        sql = entry.get("sql", "")
+        if not full and len(sql) > 120:
+            sql = sql[:120] + " ..."
+
+        elapsed = entry.get("execution_time_ms")
+        time_str = f"{elapsed:.0f}ms" if elapsed is not None else ""
+
+        row_count = entry.get("row_count")
+        rows_str = str(row_count) if row_count is not None else ""
+
+        error = entry.get("error")
+        if error:
+            failed += 1
+            status = Text("ERR", style="bold red")
+        else:
+            status = Text("OK", style="green")
+
+        row = [ts, tool, sql, time_str, rows_str, status]
+        if full:
+            row.append(entry.get("user_question", ""))
+        table.add_row(*row)
+
+    console.print(table)
+
+    succeeded = total - failed
+    summary = f"{total} queries ({succeeded} succeeded, {failed} failed)"
+    console.print(f"\n[dim]{summary}[/dim]")

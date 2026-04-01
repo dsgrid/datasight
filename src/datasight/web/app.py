@@ -9,6 +9,7 @@ Ollama LLM backends via a common abstraction layer.
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from datasight.llm import (
     ToolUseBlock,
     create_llm_client,
 )
+from datasight.query_log import QueryLogger
 from datasight.schema import introspect_schema, format_schema_context
 
 # ---------------------------------------------------------------------------
@@ -63,6 +65,7 @@ model: str = "claude-sonnet-4-20250514"
 sessions: dict[str, list[dict[str, Any]]] = {}
 schema_info: list[dict[str, Any]] = []
 example_queries_list: list[dict[str, str]] = []
+query_logger: QueryLogger | None = None
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -284,7 +287,11 @@ def _resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, An
 
 
 async def execute_tool(
-    name: str, input_data: dict[str, Any]
+    name: str,
+    input_data: dict[str, Any],
+    *,
+    session_id: str = "",
+    user_question: str = "",
 ) -> tuple[str, str | None, str | None]:
     """Execute a tool call.
 
@@ -293,8 +300,20 @@ async def execute_tool(
     """
     if name == "run_sql":
         sql = input_data.get("sql", "")
+        t0 = time.perf_counter()
         try:
             df = await sql_runner.run_sql(sql)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if query_logger:
+                query_logger.log(
+                    session_id=session_id,
+                    user_question=user_question,
+                    tool=name,
+                    sql=sql,
+                    execution_time_ms=elapsed_ms,
+                    row_count=len(df),
+                    column_count=len(df.columns),
+                )
             if df.empty:
                 return "Query executed successfully. No rows returned.", None, None
             csv = df.to_csv(index=False)
@@ -303,8 +322,18 @@ async def execute_tool(
             result_html = _df_to_html_table(df)
             return result_text, result_html, None
         except Exception as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             error = f"SQL error: {e}"
             logger.error(error)
+            if query_logger:
+                query_logger.log(
+                    session_id=session_id,
+                    user_question=user_question,
+                    tool=name,
+                    sql=sql,
+                    execution_time_ms=elapsed_ms,
+                    error=str(e),
+                )
             hint = _sql_error_hint(str(e))
             return error + hint, f"<p class='sql-error'>{error}</p>", None
 
@@ -312,8 +341,20 @@ async def execute_tool(
         sql = input_data.get("sql", "")
         title = input_data.get("title", "Chart")
         plotly_spec = input_data.get("plotly_spec", {})
+        t0 = time.perf_counter()
         try:
             df = await sql_runner.run_sql(sql)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            if query_logger:
+                query_logger.log(
+                    session_id=session_id,
+                    user_question=user_question,
+                    tool=name,
+                    sql=sql,
+                    execution_time_ms=elapsed_ms,
+                    row_count=len(df),
+                    column_count=len(df.columns),
+                )
             if df.empty:
                 return "Query returned no rows — nothing to visualize.", None, None
             resolved = _resolve_plotly_spec(plotly_spec, df)
@@ -325,8 +366,18 @@ async def execute_tool(
             result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
             return result_text, chart_html, None
         except Exception as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             error = f"Visualization error: {e}"
             logger.error(error)
+            if query_logger:
+                query_logger.log(
+                    session_id=session_id,
+                    user_question=user_question,
+                    tool=name,
+                    sql=sql,
+                    execution_time_ms=elapsed_ms,
+                    error=str(e),
+                )
             hint = _sql_error_hint(str(e))
             return error + hint, f"<p class='sql-error'>{error}</p>", None
 
@@ -345,7 +396,14 @@ def get_session_messages(session_id: str) -> list[dict[str, Any]]:
 
 
 async def _startup():
-    global llm_client, sql_runner, system_prompt, model, schema_info, example_queries_list
+    global \
+        llm_client, \
+        sql_runner, \
+        system_prompt, \
+        model, \
+        schema_info, \
+        example_queries_list, \
+        query_logger
 
     load_dotenv()
 
@@ -379,6 +437,13 @@ async def _startup():
     )
 
     project_dir = os.environ.get("DATASIGHT_PROJECT_DIR", ".")
+
+    log_enabled = os.environ.get("QUERY_LOG_ENABLED", "false").lower() == "true"
+    log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
+    query_logger = QueryLogger(path=log_path, enabled=log_enabled)
+    if log_enabled:
+        logger.info(f"Query logging enabled: {log_path}")
+
     schema_desc_path = os.environ.get("SCHEMA_DESCRIPTION_PATH")
     example_queries_path = os.environ.get("EXAMPLE_QUERIES_PATH")
 
@@ -459,6 +524,24 @@ async def get_schema():
 async def get_queries():
     """Return example queries."""
     return {"queries": example_queries_list}
+
+
+@app.post("/api/query-log/toggle")
+async def toggle_query_log():
+    """Enable or disable query logging at runtime."""
+    if query_logger is None:
+        return {"enabled": False}
+    query_logger.enabled = not query_logger.enabled
+    logger.info(f"Query logging {'enabled' if query_logger.enabled else 'disabled'}")
+    return {"enabled": query_logger.enabled}
+
+
+@app.get("/api/query-log")
+async def get_query_log(n: int = 50):
+    """Return recent query log entries."""
+    if query_logger is None:
+        return {"entries": [], "enabled": False}
+    return {"entries": query_logger.read_recent(n), "enabled": query_logger.enabled}
 
 
 def _log_query_cost(api_calls: int, input_tokens: int, output_tokens: int) -> None:
@@ -546,7 +629,10 @@ async def chat(request: Request):
                     yield f"event: tool_start\ndata: {json.dumps({'tool': block.name, 'input': block.input})}\n\n"
 
                     result_text, result_html, auto_chart_html = await execute_tool(
-                        block.name, block.input
+                        block.name,
+                        block.input,
+                        session_id=session_id,
+                        user_question=message,
                     )
 
                     if result_html:

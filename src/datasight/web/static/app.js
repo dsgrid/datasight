@@ -9,6 +9,7 @@ let selectedTable = null;
 let allQueries = [];
 let schemaData = [];
 let lastSql = '';
+let queryLogEnabled = false;
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
@@ -41,6 +42,34 @@ function toggleRightPanel() {
   const panel = document.getElementById('right-panel');
   panel.classList.toggle('collapsed');
   document.getElementById('sql-panel-toggle').classList.toggle('active', !panel.classList.contains('collapsed'));
+}
+
+async function toggleQueryLog() {
+  try {
+    const resp = await fetch('/api/query-log/toggle', { method: 'POST' });
+    const data = await resp.json();
+    queryLogEnabled = data.enabled;
+    updateQueryLogButton();
+  } catch (e) {
+    console.error('Failed to toggle query log:', e);
+  }
+}
+
+function updateQueryLogButton() {
+  const btn = document.getElementById('query-log-toggle');
+  btn.classList.toggle('active', queryLogEnabled);
+  btn.title = queryLogEnabled ? 'Query logging ON — click to disable' : 'Query logging OFF — click to enable';
+}
+
+async function loadQueryLogState() {
+  try {
+    const resp = await fetch('/api/query-log?n=0');
+    const data = await resp.json();
+    queryLogEnabled = data.enabled;
+    updateQueryLogButton();
+  } catch (e) {
+    // Ignore — button defaults to off
+  }
 }
 
 function copyLastSql() {
@@ -566,3 +595,4 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 loadSchema();
 loadQueries();
+loadQueryLogState();
