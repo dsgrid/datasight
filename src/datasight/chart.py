@@ -2,7 +2,7 @@
 Plotly chart renderer.
 
 Builds a self-contained HTML page that renders a Plotly.js chart
-inside an iframe, with light/dark theme support.
+inside an iframe, with light/dark theme support and customization controls.
 """
 
 import json
@@ -24,14 +24,64 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: 'Space Grotesk', system-ui, sans-serif; background: transparent; transition: background 0.2s; }}
   #chart {{ width: 100%; height: 100vh; }}
+  #toggle-btn {{
+    position: absolute; top: 6px; right: 6px; z-index: 10;
+    width: 28px; height: 28px; border-radius: 4px;
+    border: 1px solid rgba(128,128,128,0.3); background: rgba(128,128,128,0.1);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: inherit; opacity: 0.6; transition: opacity 0.15s;
+  }}
+  #toggle-btn:hover {{ opacity: 1; }}
+  #controls {{
+    display: none; padding: 8px 12px; border-bottom: 1px solid rgba(128,128,128,0.2);
+    background: rgba(128,128,128,0.05);
+    gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px;
+  }}
+  #controls.visible {{ display: flex; }}
+  #controls label {{ color: inherit; opacity: 0.7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }}
+  #controls select, #controls input {{
+    border: 1px solid rgba(128,128,128,0.3); border-radius: 4px;
+    padding: 3px 6px; font-family: inherit; font-size: 12px;
+    background: transparent; color: inherit; outline: none;
+  }}
+  #controls select:focus, #controls input:focus {{ border-color: #15a8a8; }}
+  .ctrl-group {{ display: flex; align-items: center; gap: 4px; }}
 </style>
 </head>
 <body>
+<button id="toggle-btn" onclick="toggleControls()" title="Chart controls">&#9881;</button>
+<div id="controls">
+  <div class="ctrl-group">
+    <label>Type</label>
+    <select id="chart-type" onchange="changeChartType(this.value)">
+      <option value="bar">Bar</option>
+      <option value="line">Line</option>
+      <option value="scatter">Scatter</option>
+      <option value="pie">Pie</option>
+    </select>
+  </div>
+  <div class="ctrl-group">
+    <label>Title</label>
+    <input id="chart-title" type="text" placeholder="Chart title" oninput="updateTitle(this.value)">
+  </div>
+  <div class="ctrl-group">
+    <label>X axis</label>
+    <input id="x-label" type="text" placeholder="X axis label" oninput="updateAxisLabel('x', this.value)">
+  </div>
+  <div class="ctrl-group">
+    <label>Y axis</label>
+    <input id="y-label" type="text" placeholder="Y axis label" oninput="updateAxisLabel('y', this.value)">
+  </div>
+</div>
 <div id="chart"></div>
 <script>
   var spec = {chart_json};
   var data = spec.data || [];
   var layout = spec.layout || {{}};
+
+  // Store original trace data for type switching
+  var origTraces = JSON.parse(JSON.stringify(data));
+  var currentType = (data[0] && data[0].type) || 'bar';
 
   var themes = {{
     light: {{
@@ -93,6 +143,78 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
     modeBarButtonsToRemove: ['lasso2d', 'select2d'],
     displaylogo: false
   }});
+
+  // Populate controls with current values
+  var typeSelect = document.getElementById('chart-type');
+  var mapped = currentType === 'scatter' && data[0] && data[0].mode === 'lines' ? 'line' : currentType;
+  if (typeSelect.querySelector('option[value="' + mapped + '"]')) {{
+    typeSelect.value = mapped;
+  }}
+  document.getElementById('chart-title').value = (typeof layout.title === 'string' ? layout.title : (layout.title && layout.title.text) || '');
+  document.getElementById('x-label').value = (layout.xaxis && layout.xaxis.title && (typeof layout.xaxis.title === 'string' ? layout.xaxis.title : layout.xaxis.title.text)) || '';
+  document.getElementById('y-label').value = (layout.yaxis && layout.yaxis.title && (typeof layout.yaxis.title === 'string' ? layout.yaxis.title : layout.yaxis.title.text)) || '';
+
+  function toggleControls() {{
+    var c = document.getElementById('controls');
+    c.classList.toggle('visible');
+    Plotly.Plots.resize(document.getElementById('chart'));
+  }}
+
+  function changeChartType(newType) {{
+    var chartEl = document.getElementById('chart');
+    var traces = origTraces;
+    var indices = traces.map(function(_, i) {{ return i; }});
+
+    if (newType === 'pie') {{
+      // Switch to pie: use first trace's x as labels, y as values
+      var pieData = traces.map(function(tr) {{
+        return {{
+          type: 'pie',
+          labels: tr.x || tr.labels || [],
+          values: tr.y || tr.values || [],
+          name: tr.name
+        }};
+      }});
+      Plotly.react(chartEl, pieData, Object.assign({{}}, layout, {{
+        xaxis: {{ visible: false }},
+        yaxis: {{ visible: false }}
+      }}));
+    }} else {{
+      // Restore original traces with new type
+      var newData = traces.map(function(tr) {{
+        var d = JSON.parse(JSON.stringify(tr));
+        if (newType === 'line') {{
+          d.type = 'scatter';
+          d.mode = 'lines';
+        }} else if (newType === 'scatter') {{
+          d.type = 'scatter';
+          d.mode = 'markers';
+        }} else {{
+          d.type = newType;
+          delete d.mode;
+        }}
+        // Remove pie-specific keys
+        delete d.labels;
+        delete d.values;
+        return d;
+      }});
+      Plotly.react(chartEl, newData, Object.assign({{}}, layout, {{
+        xaxis: Object.assign(layout.xaxis || {{}}, {{ visible: true }}),
+        yaxis: Object.assign(layout.yaxis || {{}}, {{ visible: true }})
+      }}));
+    }}
+    currentType = newType;
+  }}
+
+  function updateTitle(val) {{
+    Plotly.relayout('chart', {{ title: val }});
+  }}
+
+  function updateAxisLabel(axis, val) {{
+    var update = {{}};
+    update[axis + 'axis.title'] = val;
+    Plotly.relayout('chart', update);
+  }}
 </script>
 </body>
 </html>"""
