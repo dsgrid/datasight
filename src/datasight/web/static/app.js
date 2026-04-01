@@ -72,8 +72,9 @@ function pinResult(btn) {
   pinnedItems.push({ id: pinnedIdCounter, type, html });
   updateDashboardBadge();
   renderDashboard();
-  btn.textContent = 'Pinned!';
-  setTimeout(() => { btn.textContent = 'Pin'; }, 1200);
+  const pinIcon = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg>';
+  btn.innerHTML = pinIcon + ' Pinned!';
+  setTimeout(() => { btn.innerHTML = pinIcon + ' Pin'; }, 1200);
 }
 
 function unpinItem(id) {
@@ -130,7 +131,7 @@ function renderDashboard() {
     actions.className = 'dashboard-card-actions';
     const unpinBtn = document.createElement('button');
     unpinBtn.className = 'unpin-btn';
-    unpinBtn.textContent = 'Unpin';
+    unpinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg> Unpin';
     unpinBtn.onclick = () => unpinItem(item.id);
     actions.appendChild(unpinBtn);
     card.appendChild(actions);
@@ -524,7 +525,7 @@ function handleToolResult(data) {
 
   const pinBtn = document.createElement('button');
   pinBtn.className = 'pin-btn';
-  pinBtn.textContent = 'Pin';
+  pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
   pinBtn.onclick = () => pinResult(pinBtn);
   resultEl.appendChild(pinBtn);
 

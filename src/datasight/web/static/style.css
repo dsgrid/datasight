@@ -388,21 +388,27 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 }
 
 .unpin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
+  border-radius: 6px;
+  padding: 4px 10px;
   font-family: inherit;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s;
 }
 
 .unpin-btn:hover {
   color: var(--orange);
   border-color: var(--orange);
+  background: rgba(254,93,38,0.08);
 }
+
+.unpin-btn svg { flex-shrink: 0; }
 
 /* Pin button on tool results */
 .tool-result {
@@ -411,23 +417,34 @@ header .actions { display: flex; gap: 8px; align-items: center; }
 
 .pin-btn {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 6px;
+  right: 6px;
   z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
+  border-radius: 6px;
+  padding: 4px 10px;
   font-family: inherit;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: all 0.15s;
+  transition: all 0.2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
 .tool-result:hover .pin-btn { opacity: 1; }
-.pin-btn:hover { color: var(--teal); border-color: var(--teal); }
+.pin-btn:hover {
+  color: var(--teal);
+  border-color: var(--teal);
+  background: rgba(21,168,168,0.08);
+  box-shadow: 0 2px 8px rgba(21,168,168,0.15);
+}
+
+.pin-btn svg, .unpin-btn svg { flex-shrink: 0; }
 
 /* Messages area */
 #messages {
