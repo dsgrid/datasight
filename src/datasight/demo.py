@@ -60,8 +60,7 @@ sector, regulatory status. Joined to generation_fuel via plant_id_eia.
 
 - NG = Natural Gas
 - BIT/SUB/LIG/RC = Coal (fuel_type_code_agg = COL)
-- NUC = Nuclear
-- SUN = Solar, WND = Wind, WAT = Hydro
+- SUN = Solar, WND = Wind, WAT = Hydro (fuel_type_code_agg = HYC)
 - DFO = Distillate Fuel Oil, RFO = Residual Fuel Oil
 - GEO = Geothermal
 - WDS/BLQ = Wood/Biomass, LFG = Landfill Gas
@@ -150,15 +149,15 @@ EXAMPLE_QUERIES = """\
     QUALIFY ROW_NUMBER() OVER (PARTITION BY p.state ORDER BY gas_mwh DESC) = 1
     ORDER BY gas_mwh DESC
 
-- question: Monthly capacity factor for nuclear plants
+- question: Monthly hydroelectric generation and plant count
   sql: |
-    SELECT report_date,
-           SUM(net_generation_mwh) AS nuclear_mwh,
-           COUNT(DISTINCT plant_id_eia) AS plant_count
-    FROM generation_fuel
-    WHERE energy_source_code = 'NUC'
-    GROUP BY report_date
-    ORDER BY report_date
+    SELECT g.report_date,
+           SUM(g.net_generation_mwh) AS hydro_mwh,
+           COUNT(DISTINCT g.plant_id_eia) AS plant_count
+    FROM generation_fuel g
+    WHERE g.fuel_type_code_agg = 'HYC'
+    GROUP BY g.report_date
+    ORDER BY g.report_date
 
 - question: Solar generation over time for the top 5 generating states
   sql: |

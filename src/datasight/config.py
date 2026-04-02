@@ -6,6 +6,7 @@ from environment settings.
 """
 
 import os
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -69,7 +70,10 @@ def load_example_queries(path: str | None, project_dir: str) -> list[dict[str, s
     valid = []
     for entry in data:
         if isinstance(entry, dict) and "question" in entry and "sql" in entry:
-            valid.append({"question": entry["question"], "sql": entry["sql"].strip()})
+            item: dict[str, Any] = {"question": entry["question"], "sql": entry["sql"].strip()}
+            if "expected" in entry:
+                item["expected"] = entry["expected"]
+            valid.append(item)
     return valid
 
 

@@ -63,6 +63,29 @@ one numeric) produce the cleanest visualizations.
 **Aim for 5-15 examples.** Too few gives the AI little to work with. Too many
 dilutes the signal and bloats the system prompt.
 
+## Add expected results for verification
+
+Each entry can include an `expected` block used by `datasight verify` to
+validate that the AI generates correct SQL. See
+[Verify and validate queries](verification.md) for full details.
+
+```yaml
+- question: What are the top 5 states by solar generation?
+  sql: |
+    SELECT state, SUM(mwh) AS total
+    FROM generation
+    GROUP BY state
+    ORDER BY total DESC
+    LIMIT 5
+  expected:
+    row_count: 5
+    columns: [state, total]
+    contains: ["CA"]
+```
+
+Available checks: `row_count`, `min_row_count`, `max_row_count`, `columns`,
+`contains`, `not_contains`.
+
 ## File location
 
 By default, datasight looks for `queries.yaml` in the project directory.

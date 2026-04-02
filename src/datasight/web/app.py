@@ -178,6 +178,78 @@ bookmarks: BookmarkStore | None = None
 schema_info: list[dict[str, Any]] = []
 example_queries_list: list[dict[str, str]] = []
 query_logger: QueryLogger | None = None
+confirm_sql: bool = False
+explain_sql: bool = False
+clarify_sql: bool = True
+_schema_text: str = ""
+
+# Pending SQL confirmations: request_id -> asyncio.Event + result
+_pending_confirms: dict[str, dict[str, Any]] = {}
+
+
+def _rebuild_system_prompt() -> None:
+    """Rebuild the system prompt (e.g. after toggling explain_sql)."""
+    global system_prompt
+    base_prompt = (
+        "You are datasight, an expert data analyst assistant. You help users "
+        "explore and understand data stored in a DuckDB database by writing and "
+        "executing SQL queries and creating visualizations.\n\n"
+        "When a user asks a question:\n"
+        "1. Think about what data would answer their question.\n"
+        "2. Use the run_sql tool to query the database. A chart will be "
+        "created automatically from the results.\n"
+        "3. If the user wants a specific visualization, use the visualize_data tool "
+        "with a Plotly.js spec. You can create ANY Plotly chart type: bar, line, scatter, "
+        "pie, choropleth maps, treemaps, sunburst, sankey, funnel, 3D plots, waterfall, "
+        "parallel coordinates, candlestick, heatmap, and more.\n"
+        "4. Explain the results clearly.\n\n"
+        "In visualize_data Plotly specs, set trace values to column name strings and they "
+        "will be replaced with actual data arrays from the SQL results. "
+        'Use {"literal": value} to pass values that should NOT be treated as column references.\n\n'
+        "Always use the tools to execute SQL — never write SQL inline without "
+        "executing it. Use DuckDB SQL syntax.\n"
+    )
+    if explain_sql:
+        base_prompt += (
+            "\nIMPORTANT: Before executing any SQL query, you MUST first provide a "
+            "brief plain-English explanation of the query. Explain: which tables are "
+            "queried, what joins are used, what filters are applied, what aggregations "
+            "are performed, and what the output represents. Keep the explanation concise "
+            "(2-4 sentences). This helps the user verify the query logic is correct.\n"
+        )
+    if clarify_sql:
+        base_prompt += (
+            "\nIMPORTANT — MANDATORY CLARIFICATION RULES:\n"
+            "Before writing any SQL, you MUST check the user's question against these "
+            "rules. If ANY rule is triggered, you MUST stop and ask the user to clarify "
+            "BEFORE calling any tool. Do not make assumptions.\n\n"
+            "1. **Temporal granularity**: If the question involves trends, changes, or "
+            "time (phrases like 'over time', 'trend', 'growth', 'by year/month', "
+            "'historically') and does NOT explicitly state the granularity (daily, "
+            "weekly, monthly, quarterly, yearly), you MUST ask: 'What time granularity "
+            "— monthly or yearly?' (or other options that fit the data).\n"
+            "2. **Aggregation scope**: If the question says 'top', 'largest', 'biggest', "
+            "'most' without specifying a count, you MUST ask: 'How many? (e.g. top 5, "
+            "top 10, all)'.\n"
+            "3. **Metric choice**: If 'largest', 'biggest', 'most' could refer to "
+            "different numeric columns, you MUST ask which metric.\n"
+            "4. **Filter boundaries**: If the question uses relative terms like 'recent', "
+            "'old', 'high', 'low' without numeric thresholds or date ranges, you MUST ask "
+            "for specifics.\n"
+            "5. **Grouping level**: If the question references a category and multiple "
+            "columns could serve as the grouping key, you MUST ask which one.\n\n"
+            "When asking a clarifying question, use this EXACT format — a short question "
+            "followed by options as a markdown list with bold labels:\n"
+            "```\n"
+            "What time granularity would you like?\n"
+            "- **Monthly** — one row per month\n"
+            "- **Yearly** — one row per year\n"
+            "```\n"
+            "Always use this list format for options. Keep descriptions short (under 10 words).\n"
+            "If NONE of these rules are triggered, proceed directly with the query.\n"
+        )
+    system_prompt = base_prompt + _schema_text
+
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -575,7 +647,11 @@ async def _startup():
         example_queries_list, \
         query_logger, \
         conversations, \
-        bookmarks
+        bookmarks, \
+        confirm_sql, \
+        explain_sql, \
+        clarify_sql, \
+        _schema_text
 
     load_dotenv()
 
@@ -613,6 +689,10 @@ async def _startup():
     conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
     bookmarks = BookmarkStore(Path(project_dir) / ".datasight" / "bookmarks.json")
 
+    confirm_sql = os.environ.get("CONFIRM_SQL", "false").lower() == "true"
+    explain_sql = os.environ.get("EXPLAIN_SQL", "false").lower() == "true"
+    clarify_sql = os.environ.get("CLARIFY_SQL", "true").lower() == "true"
+
     log_enabled = os.environ.get("QUERY_LOG_ENABLED", "false").lower() == "true"
     log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
     query_logger = QueryLogger(path=log_path, enabled=log_enabled)
@@ -646,33 +726,15 @@ async def _startup():
     else:
         logger.warning("No tables discovered in the database")
 
-    schema_text = format_schema_context(tables, user_desc)
+    _schema_text = format_schema_context(tables, user_desc)
 
     example_queries = load_example_queries(example_queries_path, project_dir)
     example_queries_list = example_queries
     if example_queries:
-        schema_text += format_example_queries(example_queries)
+        _schema_text += format_example_queries(example_queries)
         logger.info(f"Loaded {len(example_queries)} example queries")
 
-    system_prompt = (
-        "You are datasight, an expert data analyst assistant. You help users "
-        "explore and understand data stored in a DuckDB database by writing and "
-        "executing SQL queries and creating visualizations.\n\n"
-        "When a user asks a question:\n"
-        "1. Think about what data would answer their question.\n"
-        "2. Use the run_sql tool to query the database. A chart will be "
-        "created automatically from the results.\n"
-        "3. If the user wants a specific visualization, use the visualize_data tool "
-        "with a Plotly.js spec. You can create ANY Plotly chart type: bar, line, scatter, "
-        "pie, choropleth maps, treemaps, sunburst, sankey, funnel, 3D plots, waterfall, "
-        "parallel coordinates, candlestick, heatmap, and more.\n"
-        "4. Explain the results clearly.\n\n"
-        "In visualize_data Plotly specs, set trace values to column name strings and they "
-        "will be replaced with actual data arrays from the SQL results. "
-        'Use {"literal": value} to pass values that should NOT be treated as column references.\n\n'
-        "Always use the tools to execute SQL — never write SQL inline without "
-        "executing it. Use DuckDB SQL syntax.\n" + schema_text
-    )
+    _rebuild_system_prompt()
 
     port = os.environ.get("PORT", "8084")
     logger.info(f"datasight ready (model={model}, db_mode={db_mode})")
@@ -827,6 +889,61 @@ async def clear_bookmarks():
     return {"ok": True}
 
 
+@app.get("/api/settings")
+async def get_settings():
+    """Return current feature toggles."""
+    return {
+        "confirm_sql": confirm_sql,
+        "explain_sql": explain_sql,
+        "clarify_sql": clarify_sql,
+    }
+
+
+@app.post("/api/settings")
+async def update_settings(request: Request):
+    """Update feature toggles."""
+    global confirm_sql, explain_sql, clarify_sql, system_prompt
+    body = await request.json()
+    need_rebuild = False
+    if "confirm_sql" in body:
+        confirm_sql = bool(body["confirm_sql"])
+    if "explain_sql" in body:
+        old = explain_sql
+        explain_sql = bool(body["explain_sql"])
+        if old != explain_sql:
+            need_rebuild = True
+    if "clarify_sql" in body:
+        old = clarify_sql
+        clarify_sql = bool(body["clarify_sql"])
+        if old != clarify_sql:
+            need_rebuild = True
+    if need_rebuild:
+        _rebuild_system_prompt()
+    logger.info(
+        f"Settings updated: confirm_sql={confirm_sql}, "
+        f"explain_sql={explain_sql}, clarify_sql={clarify_sql}"
+    )
+    return {"confirm_sql": confirm_sql, "explain_sql": explain_sql, "clarify_sql": clarify_sql}
+
+
+@app.post("/api/sql-confirm/{request_id}")
+async def sql_confirm(request_id: str, request: Request):
+    """Approve, edit, or reject a pending SQL confirmation."""
+    body = await request.json()
+    action = body.get("action", "reject")  # approve, edit, reject
+    edited_sql = body.get("sql")
+
+    pending = _pending_confirms.get(request_id)
+    if not pending:
+        return {"error": "No pending confirmation with that ID"}
+
+    pending["action"] = action
+    if action == "edit" and edited_sql:
+        pending["sql"] = edited_sql
+    pending["event"].set()
+    return {"ok": True}
+
+
 @app.delete("/api/conversations")
 async def clear_conversations():
     """Remove all conversations."""
@@ -939,18 +1056,80 @@ async def chat(request: Request):
                         )
                 messages.append({"role": "assistant", "content": serialized})
 
+                # Stream any text blocks (e.g. SQL explanations) before tool execution
+                for block in response.content:
+                    if isinstance(block, TextBlock) and block.text.strip():
+                        for word_i, word in enumerate(block.text.split(" ")):
+                            chunk = word if word_i == 0 else " " + word
+                            yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
+                        evt_log.append(
+                            {"event": "assistant_message", "data": {"text": block.text}}
+                        )
+                        # Signal end of explanation text before tool results
+                        yield "event: explanation_done\ndata: {}\n\n"
+
                 tool_results = []
                 for block in response.content:
                     if not isinstance(block, ToolUseBlock):
                         continue
 
-                    tool_start_data = {"tool": block.name, "input": block.input}
+                    tool_input = dict(block.input)
+
+                    # SQL confirmation flow
+                    if confirm_sql and block.name in ("run_sql", "visualize_data"):
+                        import uuid as _uuid
+
+                        request_id = _uuid.uuid4().hex[:12]
+                        confirm_event = asyncio.Event()
+                        _pending_confirms[request_id] = {
+                            "event": confirm_event,
+                            "action": None,
+                            "sql": None,
+                        }
+                        confirm_data = {
+                            "request_id": request_id,
+                            "tool": block.name,
+                            "sql": tool_input.get("sql", ""),
+                        }
+                        yield f"event: sql_confirm\ndata: {json.dumps(confirm_data)}\n\n"
+
+                        # Wait for user decision (timeout after 5 minutes)
+                        try:
+                            await asyncio.wait_for(confirm_event.wait(), timeout=300)
+                        except asyncio.TimeoutError:
+                            _pending_confirms.pop(request_id, None)
+                            tool_results.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": "SQL confirmation timed out.",
+                                }
+                            )
+                            continue
+
+                        decision = _pending_confirms.pop(request_id, {})
+                        action = decision.get("action", "reject")
+
+                        if action == "reject":
+                            yield "event: sql_rejected\ndata: {}\n\n"
+                            tool_results.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": "User rejected this SQL query. Ask what they'd like changed.",
+                                }
+                            )
+                            continue
+                        elif action == "edit" and decision.get("sql"):
+                            tool_input["sql"] = decision["sql"]
+
+                    tool_start_data = {"tool": block.name, "input": tool_input}
                     evt_log.append({"event": "tool_start", "data": tool_start_data})
                     yield f"event: tool_start\ndata: {json.dumps(tool_start_data)}\n\n"
 
                     result_text, result_html, auto_chart_html, meta = await execute_tool(
                         block.name,
-                        block.input,
+                        tool_input,
                         session_id=session_id,
                         user_question=message,
                     )
@@ -959,7 +1138,7 @@ async def chat(request: Request):
                         is_chart = block.name == "visualize_data" and "<script" in (
                             result_html or ""
                         )
-                        result_title = block.input.get("title", message) if is_chart else message
+                        result_title = tool_input.get("title", message) if is_chart else message
                         tr_data = {
                             "html": result_html,
                             "type": "chart" if is_chart else "table",

@@ -128,7 +128,24 @@ def demo(project_dir: str, min_year: int):
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.option("--query-log", is_flag=True, help="Enable SQL query logging to query_log.jsonl.")
-def run(port, host, db_mode, db_path, model, project_dir, verbose, query_log):
+@click.option("--confirm-sql", is_flag=True, help="Require user approval before executing SQL.")
+@click.option("--explain-sql", is_flag=True, help="Show plain-English SQL explanations.")
+@click.option(
+    "--no-clarify", is_flag=True, help="Disable clarifying questions for ambiguous queries."
+)
+def run(
+    port,
+    host,
+    db_mode,
+    db_path,
+    model,
+    project_dir,
+    verbose,
+    query_log,
+    confirm_sql,
+    explain_sql,
+    no_clarify,
+):
     """Start the datasight web UI."""
     project_dir = str(Path(project_dir).resolve())
 
@@ -183,6 +200,12 @@ def run(port, host, db_mode, db_path, model, project_dir, verbose, query_log):
     os.environ["DATASIGHT_PROJECT_DIR"] = project_dir
     if query_log:
         os.environ["QUERY_LOG_ENABLED"] = "true"
+    if confirm_sql:
+        os.environ["CONFIRM_SQL"] = "true"
+    if explain_sql:
+        os.environ["EXPLAIN_SQL"] = "true"
+    if no_clarify:
+        os.environ["CLARIFY_SQL"] = "false"
 
     flight_uri = os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337")
 
@@ -204,6 +227,271 @@ def run(port, host, db_mode, db_path, model, project_dir, verbose, query_log):
         port=resolved_port,
         log_level="warning",
     )
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and queries.yaml.",
+)
+@click.option("--model", default=None, help="Model name (overrides .env).")
+@click.option(
+    "--queries",
+    "queries_path",
+    type=click.Path(),
+    default=None,
+    help="Path to queries YAML file (default: queries.yaml in project dir).",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def verify(project_dir, model, queries_path, verbose):
+    """Verify LLM-generated SQL against expected results.
+
+    Runs each question from queries.yaml through the full LLM pipeline,
+    executes the generated SQL, and compares results against expected values.
+    Use this to validate correctness across different models and providers.
+
+    Add expected results to queries.yaml entries:
+
+    \b
+      - question: "Top 3 states by generation"
+        sql: |
+          SELECT state, SUM(mwh) AS total
+          FROM generation GROUP BY state
+          ORDER BY total DESC LIMIT 3
+        expected:
+          row_count: 3
+          columns: [state, total]
+          contains: ["CA", "TX"]
+    """
+    import asyncio
+
+    project_dir = str(Path(project_dir).resolve())
+
+    # Load .env
+    env_path = os.path.join(project_dir, ".env")
+    if os.path.exists(env_path):
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+
+    # Logging
+    level = "DEBUG" if verbose else "WARNING"
+    logger.remove()
+    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+
+    # Load queries
+    from datasight.config import load_example_queries
+
+    queries = load_example_queries(queries_path, project_dir)
+    if not queries:
+        click.echo("No queries found. Add questions to queries.yaml first.", err=True)
+        sys.exit(1)
+
+    # Resolve LLM
+    from datasight.config import create_sql_runner, load_schema_description
+    from datasight.llm import create_llm_client
+    from datasight.schema import introspect_schema, format_schema_context
+
+    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+
+    if llm_provider == "ollama":
+        api_key = "ollama"
+        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
+    else:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
+            sys.exit(1)
+        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+
+    db_mode = os.getenv("DB_MODE", "local")
+    raw_db_path = os.getenv("DB_PATH", "database.duckdb")
+    if db_mode == "local":
+        resolved_db_path = (
+            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
+        )
+        if not os.path.exists(resolved_db_path):
+            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+            sys.exit(1)
+    else:
+        resolved_db_path = raw_db_path
+
+    click.echo("datasight verify")
+    click.echo(f"  Model:    {resolved_model}")
+    click.echo(f"  Database: {db_mode} — {resolved_db_path}")
+    click.echo(f"  Queries:  {len(queries)}")
+    click.echo()
+
+    async def _run():
+        from datasight.config import format_example_queries
+        from datasight.verify import run_ambiguity_analysis, run_verification
+
+        llm_client = create_llm_client(
+            provider=llm_provider,
+            api_key=api_key,
+            base_url=os.getenv("OLLAMA_BASE_URL"),
+        )
+        sql_runner = create_sql_runner(
+            db_mode=db_mode,
+            db_path=resolved_db_path,
+            flight_uri=os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337"),
+            flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
+            flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
+            flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
+        )
+
+        # Build system prompt (same as web app)
+        tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+        user_desc = load_schema_description(None, project_dir)
+        schema_text = format_schema_context(tables, user_desc)
+        schema_text += format_example_queries(queries)
+
+        sys_prompt = (
+            "You are datasight, an expert data analyst assistant. You help users "
+            "explore and understand data stored in a DuckDB database by writing and "
+            "executing SQL queries.\n\n"
+            "When a user asks a question:\n"
+            "1. Think about what data would answer their question.\n"
+            "2. Use the run_sql tool to query the database.\n"
+            "3. Explain the results clearly.\n\n"
+            "Always use the tools to execute SQL — never write SQL inline without "
+            "executing it. Use DuckDB SQL syntax.\n" + schema_text
+        )
+
+        # Phase 1: Ambiguity analysis
+        ambiguity_results = await run_ambiguity_analysis(
+            queries=queries,
+            schema_context=schema_text,
+            llm_client=llm_client,
+            model=resolved_model,
+        )
+
+        # Phase 2: SQL verification
+        results = await run_verification(
+            queries=queries,
+            llm_client=llm_client,
+            model=resolved_model,
+            system_prompt=sys_prompt,
+            run_sql=sql_runner.run_sql,
+        )
+        return results, ambiguity_results
+
+    results, ambiguity_results = asyncio.run(_run())
+
+    # Print results
+    from rich.console import Console
+    from rich.table import Table
+    from rich.text import Text
+
+    console = Console()
+
+    # --- Ambiguity warnings ---
+    ambiguous_count = sum(1 for a in ambiguity_results if a.is_ambiguous)
+    if ambiguous_count:
+        amb_table = Table(
+            show_lines=True,
+            title=f"Ambiguity Analysis ({ambiguous_count} warning{'s' if ambiguous_count != 1 else ''})",
+            title_style="bold yellow",
+        )
+        amb_table.add_column("#", style="dim", no_wrap=True, width=3)
+        amb_table.add_column("Question", min_width=25, overflow="fold")
+        amb_table.add_column("Ambiguities", overflow="fold")
+        amb_table.add_column("Suggested Revision", overflow="fold")
+
+        for i, a in enumerate(ambiguity_results, 1):
+            if not a.is_ambiguous:
+                continue
+            issues = "\n".join(f"- {x}" for x in a.ambiguities) if a.ambiguities else ""
+            revision = a.suggested_revision or ""
+            amb_table.add_row(
+                str(i),
+                a.question,
+                Text(issues, style="yellow"),
+                Text(revision, style="green") if revision else Text("—", style="dim"),
+            )
+        console.print(amb_table)
+        console.print()
+
+    # --- Verification results ---
+    table = Table(show_lines=True, title="Verification Results")
+    table.add_column("#", style="dim", no_wrap=True, width=3)
+    table.add_column("Question", min_width=30, overflow="fold")
+    table.add_column("Status", no_wrap=True, width=6)
+    table.add_column("Checks", overflow="fold")
+    table.add_column("Time", justify="right", no_wrap=True, width=8)
+    table.add_column("Iters", justify="right", no_wrap=True, width=5)
+
+    total = len(results)
+    passed = 0
+    failed = 0
+
+    for i, r in enumerate(results, 1):
+        if r.passed:
+            passed += 1
+            status = Text("PASS", style="bold green")
+        else:
+            failed += 1
+            status = Text("FAIL", style="bold red")
+
+        if r.error:
+            checks_text = Text(r.error, style="red")
+        elif r.checks:
+            parts = []
+            for c in r.checks:
+                mark = "✓" if c.passed else "✗"
+                parts.append(f"{mark} {c.name}: {c.detail}")
+            checks_text = "\n".join(parts)
+        else:
+            checks_text = Text("no checks", style="dim")
+
+        time_str = f"{r.execution_time_ms:.0f}ms"
+        question = r.question
+        if len(question) > 60:
+            question = question[:57] + "..."
+
+        table.add_row(str(i), question, status, checks_text, time_str, str(r.llm_iterations))
+
+    console.print(table)
+
+    # SQL comparison — show diffs for failed queries (full SQL) and passed (abbreviated)
+    has_diffs = False
+    for i, r in enumerate(results, 1):
+        if not r.generated_sql or r.generated_sql.strip() == r.reference_sql.strip():
+            continue
+        if not has_diffs:
+            console.print()
+            has_diffs = True
+        label_style = "red" if not r.passed else "dim"
+        console.print(f"[{label_style}]Query {i}: {r.question}[/{label_style}]")
+        ref = r.reference_sql.strip()
+        gen = r.generated_sql.strip()
+        if r.passed:
+            # Abbreviated for passing queries
+            console.print(f"  [dim]Reference:[/dim] {ref[:120]}{'...' if len(ref) > 120 else ''}")
+            console.print(f"  [dim]Generated:[/dim] {gen[:120]}{'...' if len(gen) > 120 else ''}")
+        else:
+            # Full SQL for failing queries
+            console.print("  [dim]Reference:[/dim]")
+            for line in ref.splitlines():
+                console.print(f"    {line}")
+            console.print("  [dim]Generated:[/dim]")
+            for line in gen.splitlines():
+                console.print(f"    {line}")
+        console.print()
+
+    # Summary
+    summary_parts = []
+    summary_style = "bold green" if failed == 0 else "bold red"
+    summary_parts.append(
+        f"[{summary_style}]{passed}/{total} passed[/{summary_style}] ({failed} failed)"
+    )
+    if ambiguous_count:
+        summary_parts.append(f"[yellow]{ambiguous_count} ambiguous[/yellow]")
+    console.print("\n" + ", ".join(summary_parts))
+
+    sys.exit(0 if failed == 0 else 1)
 
 
 @cli.command(name="log")

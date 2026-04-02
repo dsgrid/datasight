@@ -11,6 +11,10 @@ let allQueries = [];
 let schemaData = [];
 let lastSql = '';
 let queryLogEnabled = false;
+let confirmSqlEnabled = false;
+let explainSqlEnabled = false;
+let clarifySqlEnabled = false;
+let pendingConfirmResolve = null;
 let sessionQueries = [];
 let pinnedItems = [];
 let pinnedIdCounter = 0;
@@ -173,6 +177,80 @@ async function loadQueryLogState() {
     updateQueryLogButton();
   } catch (e) {
     // Ignore — button defaults to off
+  }
+}
+
+async function loadSettings() {
+  try {
+    const resp = await fetch('/api/settings');
+    const data = await resp.json();
+    confirmSqlEnabled = data.confirm_sql;
+    explainSqlEnabled = data.explain_sql;
+    clarifySqlEnabled = data.clarify_sql;
+    updateSettingsButtons();
+  } catch (e) { /* ignore */ }
+}
+
+async function toggleConfirmSql() {
+  confirmSqlEnabled = !confirmSqlEnabled;
+  updateSettingsButtons();
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_sql: confirmSqlEnabled }),
+    });
+  } catch (e) {
+    confirmSqlEnabled = !confirmSqlEnabled;
+    updateSettingsButtons();
+  }
+}
+
+async function toggleExplainSql() {
+  explainSqlEnabled = !explainSqlEnabled;
+  updateSettingsButtons();
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ explain_sql: explainSqlEnabled }),
+    });
+  } catch (e) {
+    explainSqlEnabled = !explainSqlEnabled;
+    updateSettingsButtons();
+  }
+}
+
+async function toggleClarifySql() {
+  clarifySqlEnabled = !clarifySqlEnabled;
+  updateSettingsButtons();
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clarify_sql: clarifySqlEnabled }),
+    });
+  } catch (e) {
+    clarifySqlEnabled = !clarifySqlEnabled;
+    updateSettingsButtons();
+  }
+}
+
+function updateSettingsButtons() {
+  const confirmBtn = document.getElementById('confirm-sql-toggle');
+  const explainBtn = document.getElementById('explain-sql-toggle');
+  if (confirmBtn) {
+    confirmBtn.classList.toggle('active', confirmSqlEnabled);
+    confirmBtn.title = confirmSqlEnabled ? 'SQL approval ON — click to disable' : 'SQL approval OFF — click to enable';
+  }
+  if (explainBtn) {
+    explainBtn.classList.toggle('active', explainSqlEnabled);
+    explainBtn.title = explainSqlEnabled ? 'SQL explanations ON — click to disable' : 'SQL explanations OFF — click to enable';
+  }
+  const clarifyBtn = document.getElementById('clarify-sql-toggle');
+  if (clarifyBtn) {
+    clarifyBtn.classList.toggle('active', clarifySqlEnabled);
+    clarifyBtn.title = clarifySqlEnabled ? 'Clarify ambiguous queries ON — click to disable' : 'Clarify ambiguous queries OFF — click to enable';
   }
 }
 
@@ -555,12 +633,89 @@ async function sendMessage(text) {
 // ---------------------------------------------------------------------------
 function handleSSEEvent(eventType, data) {
   switch (eventType) {
-    case 'tool_start':  handleToolStart(data); break;
-    case 'tool_result': handleToolResult(data); break;
-    case 'tool_done':   handleToolDone(data); break;
-    case 'token':       handleToken(data); break;
-    case 'done':        finalize(); break;
-    case 'suggestions': handleSuggestions(data); break;
+    case 'tool_start':       handleToolStart(data); break;
+    case 'tool_result':      handleToolResult(data); break;
+    case 'tool_done':        handleToolDone(data); break;
+    case 'token':            handleToken(data); break;
+    case 'done':             finalize(); break;
+    case 'suggestions':      handleSuggestions(data); break;
+    case 'sql_confirm':      handleSqlConfirm(data); break;
+    case 'sql_rejected':     handleSqlRejected(); break;
+    case 'explanation_done': handleExplanationDone(); break;
+  }
+}
+
+function handleSqlConfirm(data) {
+  // Finalize any in-progress explanation text
+  if (currentAssistantBubble && currentAssistantText) {
+    currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+    currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
+      hljs.highlightElement(block);
+    });
+    addCopyButtons(currentAssistantBubble);
+    currentAssistantBubble = null;
+    currentAssistantText = '';
+  }
+
+  const el = document.createElement('div');
+  el.className = 'sql-confirm-dialog';
+  el.innerHTML =
+    '<div class="sql-confirm-header">' +
+      '<span class="dot" style="animation:none;background:var(--yellow);opacity:1"></span>' +
+      '<span>Review SQL before execution</span>' +
+    '</div>' +
+    '<textarea class="sql-confirm-editor" spellcheck="false">' + escapeHtml(data.sql) + '</textarea>' +
+    '<div class="sql-confirm-actions">' +
+      '<button class="sql-confirm-btn approve" onclick="respondSqlConfirm(this,\'' + data.request_id + '\',\'approve\')">Approve</button>' +
+      '<button class="sql-confirm-btn edit" onclick="respondSqlConfirm(this,\'' + data.request_id + '\',\'edit\')">Approve with edits</button>' +
+      '<button class="sql-confirm-btn reject" onclick="respondSqlConfirm(this,\'' + data.request_id + '\',\'reject\')">Reject</button>' +
+    '</div>';
+  messagesEl.appendChild(el);
+  scrollToBottom();
+
+  // Focus the textarea and apply syntax highlighting
+  const textarea = el.querySelector('.sql-confirm-editor');
+  textarea.focus();
+}
+
+async function respondSqlConfirm(btn, requestId, action) {
+  const dialog = btn.closest('.sql-confirm-dialog');
+  const textarea = dialog.querySelector('.sql-confirm-editor');
+  const sql = textarea.value;
+
+  // Disable buttons
+  dialog.querySelectorAll('button').forEach(b => b.disabled = true);
+
+  const label = action === 'approve' ? 'Approved' : action === 'edit' ? 'Approved (edited)' : 'Rejected';
+  const style = action === 'reject' ? 'color:var(--red)' : 'color:var(--teal)';
+  dialog.querySelector('.sql-confirm-actions').innerHTML =
+    '<span style="' + style + ';font-size:0.85rem">' + label + '</span>';
+
+  try {
+    await fetch('/api/sql-confirm/' + requestId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, sql }),
+    });
+  } catch (e) {
+    console.error('Failed to confirm SQL:', e);
+  }
+}
+
+function handleSqlRejected() {
+  // Visual feedback already handled by respondSqlConfirm
+}
+
+function handleExplanationDone() {
+  // Finalize the explanation text bubble so tool results appear separately
+  if (currentAssistantBubble && currentAssistantText) {
+    currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+    currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
+      hljs.highlightElement(block);
+    });
+    addCopyButtons(currentAssistantBubble);
+    currentAssistantBubble = null;
+    currentAssistantText = '';
   }
 }
 
@@ -687,7 +842,52 @@ function finalize() {
       hljs.highlightElement(block);
     });
     addCopyButtons(currentAssistantBubble);
+    // If this looks like a clarifying question, add clickable option buttons
+    if (clarifySqlEnabled) {
+      const options = extractClarifyOptions(currentAssistantText);
+      if (options.length >= 2) {
+        const wrap = document.createElement('div');
+        wrap.className = 'clarify-options';
+        options.forEach(opt => {
+          const btn = document.createElement('button');
+          btn.className = 'clarify-option-btn';
+          btn.textContent = opt;
+          btn.onclick = () => {
+            wrap.remove();
+            sendMessage(opt);
+          };
+          wrap.appendChild(btn);
+        });
+        messagesEl.appendChild(wrap);
+        scrollToBottom();
+      }
+    }
   }
+}
+
+function extractClarifyOptions(text) {
+  // Only extract options from clarifying questions, not analysis text.
+  // Requirements: text must contain a "?" line BEFORE the list items,
+  // and list items must use "— description" format (not ":" which is analysis).
+  if (!text.includes('?')) return [];
+  const lines = text.split('\n');
+
+  // Find the last question mark line
+  let lastQuestionIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes('?')) lastQuestionIdx = i;
+  }
+  if (lastQuestionIdx < 0) return [];
+
+  // Only look at list items that come AFTER the question
+  const options = [];
+  for (let i = lastQuestionIdx + 1; i < lines.length; i++) {
+    const match = lines[i].match(/^[-*]\s+\*\*(.+?)\*\*\s*[—–-]/);
+    if (match) {
+      options.push(match[1].trim());
+    }
+  }
+  return options;
 }
 
 function handleSuggestions(data) {
@@ -1184,6 +1384,7 @@ applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefe
 loadSchema();
 loadQueries();
 loadQueryLogState();
+loadSettings();
 loadConversations();
 loadBookmarks();
 restoreSession();

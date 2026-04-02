@@ -46,6 +46,9 @@ in the project directory. CLI flags override `.env` values.
 | `PORT` | `8084` | Web UI port |
 | `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../how-to/query-log.md)) |
 | `QUERY_LOG_PATH` | `./query_log.jsonl` | Path to query log file |
+| `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries ([guide](../how-to/verification.md)) |
+| `CONFIRM_SQL` | `false` | Require user approval before executing SQL ([guide](../how-to/verification.md)) |
+| `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations ([guide](../how-to/verification.md)) |
 
 ## Project files
 

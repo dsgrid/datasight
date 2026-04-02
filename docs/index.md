@@ -38,6 +38,7 @@ how-to/schema-description
 how-to/example-queries
 how-to/visualizations
 how-to/query-log
+how-to/verification
 how-to/remote-hpc
 ```
 

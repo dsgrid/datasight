@@ -7,12 +7,21 @@
 #   - question: <natural language question>
 #     sql: |
 #       <correct SQL for this database>
+#     expected:              # optional — used by `datasight verify`
+#       row_count: 10        # exact row count
+#       min_row_count: 1     # at least this many rows
+#       max_row_count: 100   # at most this many rows
+#       columns: [col1, col2]  # exact column names in order
+#       contains: ["val1"]   # values that must appear somewhere in results
+#       not_contains: ["x"]  # values that must NOT appear in results
 
 - question: Show the first 10 rows
   sql: |
     SELECT *
     FROM my_table
     LIMIT 10
+  expected:
+    row_count: 10
 
 - question: How many records are in each category?
   sql: |
@@ -20,3 +29,6 @@
     FROM my_table
     GROUP BY category
     ORDER BY record_count DESC
+  expected:
+    min_row_count: 1
+    columns: [category, record_count]
