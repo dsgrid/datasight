@@ -59,6 +59,7 @@ VISUALIZE_DATA_TOOL: dict[str, Any] = {
                     "data": {
                         "type": "array",
                         "description": "Array of Plotly trace objects",
+                        "items": {"type": "object"},
                     },
                     "layout": {
                         "type": "object",

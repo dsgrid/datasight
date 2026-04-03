@@ -322,6 +322,7 @@ verify GizmoSQL is reachable before setting up the tunnel:
 On your laptop, edit `.env` in your project directory:
 
 ```bash
+# Use any LLM provider (see Getting Started for options)
 ANTHROPIC_API_KEY=sk-ant-...
 
 DB_MODE=flightsql

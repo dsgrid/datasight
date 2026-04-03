@@ -9,7 +9,7 @@ in the project directory. CLI flags override `.env` values.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic` or `ollama` |
+| `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic`, `github`, or `ollama` |
 
 ### Anthropic settings (when `LLM_PROVIDER=anthropic`)
 
@@ -18,6 +18,14 @@ in the project directory. CLI flags override `.env` values.
 | `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Model name. Haiku is recommended for most use cases; it handles SQL generation well at a fraction of the cost of larger models. |
 | `ANTHROPIC_BASE_URL` | — | Custom API endpoint (e.g. Azure AI Foundry) |
+
+### GitHub Models settings (when `LLM_PROVIDER=github`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GITHUB_TOKEN` | *(required)* | GitHub personal access token. Run `gh auth token` if you use the GitHub CLI. |
+| `GITHUB_MODELS_MODEL` | `gpt-4o` | Model name available on [GitHub Models](https://github.com/marketplace/models) |
+| `GITHUB_MODELS_BASE_URL` | `https://models.inference.ai.azure.com` | GitHub Models API endpoint |
 
 ### Ollama settings (when `LLM_PROVIDER=ollama`)
 

@@ -595,6 +595,15 @@ async def _startup():
         ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         state.model = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b")
         state.llm_client = create_llm_client(provider="ollama", base_url=ollama_base_url)
+    elif llm_provider == "github":
+        api_key = os.environ.get("GITHUB_TOKEN", "")
+        if not api_key:
+            logger.error("GITHUB_TOKEN not set")
+        state.model = os.environ.get("GITHUB_MODELS_MODEL", "gpt-4o")
+        github_base_url = os.environ.get("GITHUB_MODELS_BASE_URL")
+        state.llm_client = create_llm_client(
+            provider="github", api_key=api_key, base_url=github_base_url
+        )
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:

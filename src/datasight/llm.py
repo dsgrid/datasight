@@ -225,18 +225,18 @@ def _convert_messages_to_openai(
     return out
 
 
-class OllamaLLMClient:
-    """LLM client backed by Ollama's OpenAI-compatible API."""
+class _OpenAICompatibleClient:
+    """Base class for LLM clients using OpenAI-compatible APIs."""
 
-    def __init__(self, base_url: str = "http://localhost:11434/v1"):
+    def __init__(self, base_url: str, api_key: str = "ollama"):
         try:
             from openai import AsyncOpenAI
         except ImportError:
             raise ImportError(
-                "The 'openai' package is required for Ollama support. "
+                "The 'openai' package is required for this provider. "
                 "Install it with: pip install openai"
             )
-        self._client = AsyncOpenAI(base_url=base_url, api_key="ollama")
+        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     async def create_message(
         self,
@@ -285,6 +285,31 @@ class OllamaLLMClient:
         return LLMResponse(content=content, stop_reason=stop, usage=usage)
 
 
+class OllamaLLMClient(_OpenAICompatibleClient):
+    """LLM client backed by Ollama's OpenAI-compatible API."""
+
+    def __init__(self, base_url: str = "http://localhost:11434/v1"):
+        super().__init__(base_url=base_url, api_key="ollama")
+
+
+# ---------------------------------------------------------------------------
+# GitHub Models implementation
+# ---------------------------------------------------------------------------
+
+GITHUB_MODELS_BASE_URL = "https://models.inference.ai.azure.com"
+
+
+class GitHubModelsLLMClient(_OpenAICompatibleClient):
+    """LLM client backed by GitHub Models (OpenAI-compatible)."""
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = GITHUB_MODELS_BASE_URL,
+    ):
+        super().__init__(base_url=base_url, api_key=api_key)
+
+
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
@@ -300,6 +325,10 @@ def create_llm_client(
         url = base_url or "http://localhost:11434/v1"
         logger.info(f"Using Ollama LLM backend: {url}")
         return OllamaLLMClient(base_url=url)
+    elif provider == "github":
+        url = base_url or GITHUB_MODELS_BASE_URL
+        logger.info(f"Using GitHub Models LLM backend: {url}")
+        return GitHubModelsLLMClient(api_key=api_key, base_url=url)
     else:
         if base_url:
             logger.info(f"Using Anthropic LLM backend: {base_url}")

@@ -12,10 +12,14 @@ abstraction (defined in `datasight.llm`). The backend is selected via the
 
 - **`anthropic`** (default) — uses the Anthropic SDK to call Claude models via
   the cloud API. Requires an `ANTHROPIC_API_KEY`.
+- **`github`** — uses [GitHub Models](https://github.com/marketplace/models)
+  via the OpenAI-compatible API. Included with GitHub Copilot subscriptions (no
+  per-token billing). Requires a `GITHUB_TOKEN`. Install with
+  `pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"`.
 - **`ollama`** — uses Ollama's OpenAI-compatible API to run models locally. No
   API key required. Install with `pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"`.
 
-Both backends support the same tool-calling interface (`run_sql` and
+All backends support the same tool-calling interface (`run_sql` and
 `visualize_data`), so the rest of the application is provider-agnostic.
 
 ## System overview
@@ -30,10 +34,12 @@ flowchart TB
     subgraph agent ["LLM Agent Loop"]
         LLM[LLMClient]
         ANTH[Anthropic API]
+        GH[GitHub Models]
         OLL[Ollama local]
         SQL[run_sql tool]
         VIZ[visualize_data tool]
         LLM -.-> ANTH
+        LLM -.-> GH
         LLM -.-> OLL
         SQL --> RUNNER[SqlRunner]
         VIZ --> CHART[Interactive<br>ChartGenerator]
@@ -55,6 +61,7 @@ flowchart TB
     style HTML fill:#15a8a8,stroke:#023d60,color:#fff
     style LLM fill:#023d60,stroke:#023d60,color:#fff
     style ANTH fill:#023d60,stroke:#023d60,color:#fff
+    style GH fill:#023d60,stroke:#023d60,color:#fff
     style OLL fill:#023d60,stroke:#023d60,color:#fff
     style SQL fill:#023d60,stroke:#023d60,color:#fff
     style VIZ fill:#023d60,stroke:#023d60,color:#fff
@@ -111,8 +118,8 @@ sequenceDiagram
   multiple strategies (DuckDB `SHOW TABLES`, `INFORMATION_SCHEMA`, SQLite).
 
 `datasight.llm`
-: LLM client abstraction with implementations for Anthropic and Ollama.
-  Converts between provider-specific message and tool formats.
+: LLM client abstraction with implementations for Anthropic, GitHub Models,
+  and Ollama. Converts between provider-specific message and tool formats.
 
 `datasight.chart`
 : Interactive Plotly chart generator with chart-type switching buttons.
@@ -139,7 +146,7 @@ flowchart LR
     A[Auto-discovered schema<br>tables, columns, types, rows] --> D[System prompt]
     B[schema_description.md<br>domain context] --> D
     C[queries.yaml<br>few-shot examples] --> D
-    D --> E[Claude]
+    D --> E[LLM]
 
     style A fill:#023d60,stroke:#023d60,color:#fff
     style B fill:#e7e1cf,stroke:#023d60,color:#023d60

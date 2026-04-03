@@ -27,10 +27,14 @@ dependencies = [
     "fastapi>=0.110,<1",
     "uvicorn>=0.29,<1",
     "loguru>=0.7,<1",
+    "truststore>=0.10.4",
 ]
 
 [project.optional-dependencies]
 ollama = [
+    "openai>=2,<3",
+]
+github = [
     "openai>=2,<3",
 ]
 dev = [

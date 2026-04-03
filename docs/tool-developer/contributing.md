@@ -35,7 +35,7 @@ src/datasight/
 # Start with a demo project
 datasight demo ./dev-project
 cd dev-project
-# Edit .env with your ANTHROPIC_API_KEY
+# Edit .env with your API key (Anthropic, GitHub token, or Ollama)
 datasight run -v
 ```
 

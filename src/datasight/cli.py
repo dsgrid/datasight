@@ -167,6 +167,15 @@ def run(
     if llm_provider == "ollama":
         api_key = "ollama"  # not needed
         resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
+    elif llm_provider == "github":
+        api_key = os.getenv("GITHUB_TOKEN", "")
+        if not api_key:
+            click.echo(
+                "Error: GITHUB_TOKEN is not set. Add it to .env or your environment.",
+                err=True,
+            )
+            sys.exit(1)
+        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
     else:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
@@ -193,8 +202,11 @@ def run(
         resolved_db_path = raw_db_path
 
     # Set env vars so the FastAPI app picks them up on startup
-    os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+    os.environ.setdefault("ANTHROPIC_API_KEY", api_key or "")
     os.environ["ANTHROPIC_MODEL"] = resolved_model
+    if llm_provider == "github":
+        os.environ["GITHUB_TOKEN"] = api_key
+        os.environ["GITHUB_MODELS_MODEL"] = resolved_model
     os.environ["DB_MODE"] = resolved_db_mode
     os.environ["DB_PATH"] = resolved_db_path
     os.environ["DATASIGHT_PROJECT_DIR"] = project_dir
@@ -299,6 +311,12 @@ def verify(project_dir, model, queries_path, verbose):
     if llm_provider == "ollama":
         api_key = "ollama"
         resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
+    elif llm_provider == "github":
+        api_key = os.getenv("GITHUB_TOKEN", "")
+        if not api_key:
+            click.echo("Error: GITHUB_TOKEN is not set.", err=True)
+            sys.exit(1)
+        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
     else:
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
         if not api_key:
@@ -332,6 +350,8 @@ def verify(project_dir, model, queries_path, verbose):
         base_url = (
             os.getenv("OLLAMA_BASE_URL")
             if llm_provider == "ollama"
+            else os.getenv("GITHUB_MODELS_BASE_URL")
+            if llm_provider == "github"
             else os.getenv("ANTHROPIC_BASE_URL")
         )
         llm_client = create_llm_client(

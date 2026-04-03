@@ -9,6 +9,7 @@ database.
 - A DuckDB database file
 - **One of the following LLM backends:**
   - An Anthropic API key ([get one here](https://console.anthropic.com/)), **or**
+  - A GitHub Copilot subscription (uses [GitHub Models](https://github.com/marketplace/models)), **or**
   - [Ollama](https://ollama.com/) installed locally (free, no API key needed)
 
 ## Install datasight
@@ -17,9 +18,14 @@ database.
 pip install git+https://github.com/dsgrid/datasight.git
 ```
 
-To use Ollama as the LLM backend, install with the optional dependency:
+To use GitHub Models or Ollama as the LLM backend, install with the optional
+dependency:
 
 ```bash
+# GitHub Models (Copilot subscription)
+pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"
+
+# Ollama (local)
 pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"
 ```
 
@@ -28,7 +34,7 @@ Or install from source:
 ```bash
 git clone https://github.com/dsgrid/datasight.git
 cd datasight
-pip install -e ".[ollama]"
+pip install -e ".[github]"  # or ".[ollama]"
 ```
 
 ## Create a project
@@ -61,7 +67,17 @@ DB_MODE=local
 DB_PATH=./my_database.duckdb
 ```
 
-**Option B — Ollama (local, no API key):**
+**Option B — GitHub Models (Copilot subscription):**
+
+```bash
+LLM_PROVIDER=github
+GITHUB_TOKEN=ghp_...
+GITHUB_MODELS_MODEL=gpt-4o
+DB_MODE=local
+DB_PATH=./my_database.duckdb
+```
+
+**Option C — Ollama (local, no API key):**
 
 First, install and start [Ollama](https://ollama.com/), then pull a model
 with tool-calling support:

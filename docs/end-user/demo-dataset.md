@@ -45,7 +45,7 @@ datasight demo ./eia-project --min-year 2001
 ```bash
 cd eia-project
 
-# Edit .env — add your Anthropic API key
+# Edit .env — add your API key (Anthropic, GitHub token, or Ollama)
 datasight run
 ```
 

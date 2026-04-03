@@ -8,9 +8,13 @@ Install datasight and start exploring data in under five minutes.
 pip install git+https://github.com/dsgrid/datasight.git
 ```
 
-To use Ollama (free, local models) instead of Anthropic:
+To use GitHub Models (included with GitHub Copilot subscriptions) or Ollama (free, local models):
 
 ```bash
+# GitHub Models
+pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"
+
+# Ollama
 pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"
 ```
 
@@ -28,7 +32,19 @@ datasight needs an LLM to translate your questions into SQL. Choose one:
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-**Option B — Ollama (free, runs locally)**
+**Option B — GitHub Models (uses your Copilot subscription)**
+
+No per-token billing — uses your existing GitHub Copilot subscription. Get your
+token from [github.com/settings/tokens](https://github.com/settings/tokens) or
+run `gh auth token` if you use the GitHub CLI.
+
+```bash
+LLM_PROVIDER=github
+GITHUB_TOKEN=ghp_...
+GITHUB_MODELS_MODEL=gpt-4o
+```
+
+**Option C — Ollama (free, runs locally)**
 
 No API key needed. Install [Ollama](https://ollama.com/), pull a model with
 tool-calling support, and configure `.env`:

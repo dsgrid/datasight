@@ -2,9 +2,12 @@
 
 AI-powered database exploration with natural language.
 
-datasight connects an AI agent (Claude) to your DuckDB database and provides a
+datasight connects an AI agent to your DuckDB database and provides a
 web UI where you can ask questions in natural language. The agent writes SQL, runs
 queries, and generates interactive Plotly visualizations.
+
+Supports **Anthropic Claude** (default), **GitHub Models** (Copilot subscription),
+and **Ollama** (local) as LLM backends.
 
 ## Quick start
 
@@ -39,13 +42,14 @@ Open http://localhost:8084 and start asking questions.
 ## Architecture
 
 datasight uses the Anthropic SDK directly with a FastAPI backend and a
-lightweight HTML/JS frontend. No heavy frameworks — just Python, SQL, and
+lightweight HTML/JS frontend. Swap in GitHub Models or Ollama by setting
+`LLM_PROVIDER` in `.env`. No heavy frameworks — just Python, SQL, and
 Plotly.
 
 ```
 datasight run
   → FastAPI + uvicorn
-    → Anthropic Claude (tool use)
+    → LLM provider (Anthropic / GitHub Models / Ollama)
       → DuckDB or Flight SQL
       → Plotly chart generator
     → SSE streaming to browser

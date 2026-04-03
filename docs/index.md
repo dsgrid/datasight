@@ -13,7 +13,7 @@ pip install git+https://github.com/dsgrid/datasight.git
 # Try with the built-in EIA energy demo dataset
 datasight demo ./my-project
 cd my-project
-# Edit .env with your ANTHROPIC_API_KEY
+# Edit .env with your API key (see Getting Started)
 datasight run
 ```
 ````
