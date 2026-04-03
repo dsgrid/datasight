@@ -25,7 +25,19 @@ class DuckDBRunner:
         self._conn = duckdb.connect(database_path, read_only=True)
         logger.info(f"Connected to DuckDB: {database_path}")
 
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     async def run_sql(self, sql: str) -> pd.DataFrame:
+        assert self._conn is not None, "DuckDBRunner is closed"
         return self._conn.execute(sql).fetchdf()
 
 
@@ -46,6 +58,17 @@ class FlightSqlRunner:
         self.password = password
         self.timeout = timeout
         self._conn = None
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def _get_conn(self):
         if self._conn is None:

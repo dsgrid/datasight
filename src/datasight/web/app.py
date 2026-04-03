@@ -63,6 +63,16 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 # ---------------------------------------------------------------------------
 
 
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _validate_session_id(session_id: str) -> str:
+    """Validate session_id to prevent path traversal."""
+    if not _SESSION_ID_RE.match(session_id) or len(session_id) > 128:
+        raise ValueError(f"Invalid session_id: {session_id!r}")
+    return session_id
+
+
 class ConversationStore:
     """Persist conversations as JSON files in a directory."""
 
@@ -74,6 +84,7 @@ class ConversationStore:
         self._load_all()
 
     def _path(self, session_id: str) -> Path:
+        _validate_session_id(session_id)
         return self._dir / f"{session_id}.json"
 
     def _load_all(self) -> None:
@@ -346,13 +357,13 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     html = f"<div class='result-table-wrap' data-total-rows='{len(df)}'>"
     html += (
         "<div class='table-toolbar'>"
-        "<input class='table-filter' placeholder='Filter rows...' oninput='filterTable(this)'>"
-        "<button class='export-csv-btn' onclick='exportTableCsv(this)'>Download CSV</button>"
+        "<input class='table-filter' placeholder='Filter rows...'>"
+        "<button class='export-csv-btn'>Download CSV</button>"
         "</div>"
     )
     html += "<table class='result-table'><thead><tr>"
     for i, col in enumerate(display_df.columns):
-        html += f"<th data-col='{i}' onclick='sortTable(this)'>{col}<span class='sort-arrow'></span></th>"
+        html += f"<th data-col='{i}'>{col}<span class='sort-arrow'></span></th>"
     html += "</tr></thead><tbody>"
     for _, row in display_df.iterrows():
         html += "<tr>"
@@ -986,6 +997,14 @@ async def chat(request: Request):
     body = await request.json()
     message = body.get("message", "").strip()
     session_id = body.get("session_id", "default")
+
+    try:
+        _validate_session_id(session_id)
+    except ValueError:
+        return StreamingResponse(
+            iter(['event: error\ndata: {"error":"Invalid session ID"}\n\n']),
+            media_type="text/event-stream",
+        )
 
     if not message:
         return StreamingResponse(

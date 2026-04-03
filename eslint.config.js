@@ -21,6 +21,7 @@ export default [
         // Libraries loaded via CDN
         marked: "readonly",
         hljs: "readonly",
+        DOMPurify: "readonly",
       },
     },
     rules: {

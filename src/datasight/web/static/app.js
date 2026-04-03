@@ -38,6 +38,21 @@ marked.setOptions({
   gfm: true,
 });
 
+// Sanitization helpers
+function sanitizeHtml(html) {
+  return DOMPurify.sanitize(html, { ADD_TAGS: ['iframe'], ADD_ATTR: ['srcdoc', 'sandbox', 'allowfullscreen'] });
+}
+
+function sanitizeMarkdown(text) {
+  return DOMPurify.sanitize(marked.parse(text));
+}
+
+async function fetchJson(url, opts) {
+  const resp = await fetch(url, opts);
+  if (!resp.ok) throw new Error('API error: ' + resp.status);
+  return resp.json();
+}
+
 // ---------------------------------------------------------------------------
 // Sidebar
 // ---------------------------------------------------------------------------
@@ -126,7 +141,7 @@ function renderDashboard() {
       card.appendChild(iframe);
     } else {
       const tableDiv = document.createElement('div');
-      tableDiv.innerHTML = item.html;
+      tableDiv.innerHTML = sanitizeHtml(item.html);
       const tableWrap = tableDiv.querySelector('.result-table-wrap');
       if (tableWrap) paginateTable(tableWrap);
       card.appendChild(tableDiv);
@@ -154,8 +169,7 @@ function broadcastThemeToDashboard() {
 
 async function toggleQueryLog() {
   try {
-    const resp = await fetch('/api/query-log/toggle', { method: 'POST' });
-    const data = await resp.json();
+    const data = await fetchJson('/api/query-log/toggle', { method: 'POST' });
     queryLogEnabled = data.enabled;
     updateQueryLogButton();
   } catch (e) {
@@ -171,8 +185,7 @@ function updateQueryLogButton() {
 
 async function loadQueryLogState() {
   try {
-    const resp = await fetch('/api/query-log?n=0');
-    const data = await resp.json();
+    const data = await fetchJson('/api/query-log?n=0');
     queryLogEnabled = data.enabled;
     updateQueryLogButton();
   } catch (e) {
@@ -182,8 +195,7 @@ async function loadQueryLogState() {
 
 async function loadSettings() {
   try {
-    const resp = await fetch('/api/settings');
-    const data = await resp.json();
+    const data = await fetchJson('/api/settings');
     confirmSqlEnabled = data.confirm_sql;
     explainSqlEnabled = data.explain_sql;
     clarifySqlEnabled = data.clarify_sql;
@@ -349,8 +361,7 @@ function renderQueryHistory() {
 
 async function loadSchema() {
   try {
-    const resp = await fetch('/api/schema');
-    const data = await resp.json();
+    const data = await fetchJson('/api/schema');
     schemaData = data.tables || [];
     renderTables(schemaData);
   } catch (e) {
@@ -361,8 +372,7 @@ async function loadSchema() {
 
 async function loadQueries() {
   try {
-    const resp = await fetch('/api/queries');
-    const data = await resp.json();
+    const data = await fetchJson('/api/queries');
     allQueries = data.queries || [];
     renderQueries(allQueries);
   } catch (e) {
@@ -442,8 +452,7 @@ async function toggleColumnStats(el, tableName, colName) {
   }
   statsEl.innerHTML = '<span class="col-stats-loading">Loading...</span>';
   try {
-    const resp = await fetch('/api/column-stats/' + encodeURIComponent(tableName) + '/' + encodeURIComponent(colName));
-    const data = await resp.json();
+    const data = await fetchJson('/api/column-stats/' + encodeURIComponent(tableName) + '/' + encodeURIComponent(colName));
     if (data.stats) {
       const s = data.stats;
       const parts = [];
@@ -470,10 +479,10 @@ async function previewTable(tableName, btn) {
   }
   btn.textContent = 'Loading...';
   try {
-    const resp = await fetch('/api/preview/' + encodeURIComponent(tableName));
-    const data = await resp.json();
+    const data = await fetchJson('/api/preview/' + encodeURIComponent(tableName));
     if (data.html) {
-      previewEl.innerHTML = data.html;
+      previewEl.innerHTML = sanitizeHtml(data.html);
+      bindTableEvents(previewEl);
       btn.textContent = 'Hide preview';
     } else {
       btn.textContent = 'Preview rows';
@@ -585,6 +594,8 @@ async function sendMessage(text) {
       body: JSON.stringify({ message: text, session_id: sessionId }),
     });
 
+    if (!resp.ok) throw new Error('Chat API error: ' + resp.status);
+
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -607,8 +618,12 @@ async function sendMessage(text) {
             typingEl.remove();
             typingRemoved = true;
           }
-          const data = JSON.parse(line.slice(6));
-          handleSSEEvent(eventType, data);
+          try {
+            const data = JSON.parse(line.slice(6));
+            handleSSEEvent(eventType, data);
+          } catch (parseErr) {
+            console.error('Failed to parse SSE event:', parseErr, line);
+          }
           eventType = '';
         }
       }
@@ -648,7 +663,7 @@ function handleSSEEvent(eventType, data) {
 function handleSqlConfirm(data) {
   // Finalize any in-progress explanation text
   if (currentAssistantBubble && currentAssistantText) {
-    currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+    currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
     currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
       hljs.highlightElement(block);
     });
@@ -666,9 +681,9 @@ function handleSqlConfirm(data) {
     '</div>' +
     '<textarea class="sql-confirm-editor" spellcheck="false">' + escapeHtml(data.sql) + '</textarea>' +
     '<div class="sql-confirm-actions">' +
-      '<button class="sql-confirm-btn approve" onclick="respondSqlConfirm(this,\'' + data.request_id + '\',\'approve\')">Approve</button>' +
-      '<button class="sql-confirm-btn edit" onclick="respondSqlConfirm(this,\'' + data.request_id + '\',\'edit\')">Approve with edits</button>' +
-      '<button class="sql-confirm-btn reject" onclick="respondSqlConfirm(this,\'' + data.request_id + '\',\'reject\')">Reject</button>' +
+      '<button class="sql-confirm-btn approve" onclick="respondSqlConfirm(this,\'' + escapeHtml(data.request_id) + '\',\'approve\')">Approve</button>' +
+      '<button class="sql-confirm-btn edit" onclick="respondSqlConfirm(this,\'' + escapeHtml(data.request_id) + '\',\'edit\')">Approve with edits</button>' +
+      '<button class="sql-confirm-btn reject" onclick="respondSqlConfirm(this,\'' + escapeHtml(data.request_id) + '\',\'reject\')">Reject</button>' +
     '</div>';
   messagesEl.appendChild(el);
   scrollToBottom();
@@ -709,7 +724,7 @@ function handleSqlRejected() {
 function handleExplanationDone() {
   // Finalize the explanation text bubble so tool results appear separately
   if (currentAssistantBubble && currentAssistantText) {
-    currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+    currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
     currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
       hljs.highlightElement(block);
     });
@@ -768,7 +783,7 @@ function handleToolResult(data) {
     resultEl.appendChild(iframe);
   } else {
     const tableContainer = document.createElement('div');
-    tableContainer.innerHTML = data.html;
+    tableContainer.innerHTML = sanitizeHtml(data.html);
     while (tableContainer.firstChild) resultEl.appendChild(tableContainer.firstChild);
     const tableWrap = resultEl.querySelector('.result-table-wrap');
     if (tableWrap) paginateTable(tableWrap);
@@ -810,7 +825,7 @@ function handleToken(data) {
     currentAssistantText = '';
   }
   currentAssistantText += data.text;
-  currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+  currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
   currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
     hljs.highlightElement(block);
   });
@@ -837,7 +852,7 @@ function addCopyButtons(container) {
 
 function finalize() {
   if (currentAssistantBubble && currentAssistantText) {
-    currentAssistantBubble.innerHTML = marked.parse(currentAssistantText);
+    currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
     currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
       hljs.highlightElement(block);
     });
@@ -923,7 +938,7 @@ function addMessage(role, text) {
   if (role === 'user') {
     bubble.textContent = text;
   } else {
-    bubble.innerHTML = marked.parse(text);
+    bubble.innerHTML = sanitizeMarkdown(text);
     bubble.querySelectorAll('pre code').forEach(block => {
       hljs.highlightElement(block);
     });
@@ -993,6 +1008,7 @@ const PAGE_SIZE = 25;
 function paginateTable(wrap) {
   const tbody = wrap.querySelector('tbody');
   if (!tbody) return;
+  bindTableEvents(wrap.parentElement || wrap);
   wrap.dataset.page = '0';
   applyPage(wrap);
 }
@@ -1084,6 +1100,27 @@ function sortTable(th) {
   rows.forEach(r => tbody.appendChild(r));
   const wrap = th.closest('.result-table-wrap');
   if (wrap) { wrap.dataset.page = '0'; applyPage(wrap); }
+}
+
+function bindTableEvents(root) {
+  root.querySelectorAll('.result-table-wrap').forEach(function(wrap) {
+    var filter = wrap.querySelector('.table-filter');
+    if (filter && !filter.dataset.bound) {
+      filter.addEventListener('input', function() { filterTable(filter); });
+      filter.dataset.bound = '1';
+    }
+    var csvBtn = wrap.querySelector('.export-csv-btn');
+    if (csvBtn && !csvBtn.dataset.bound) {
+      csvBtn.addEventListener('click', function() { exportTableCsv(csvBtn); });
+      csvBtn.dataset.bound = '1';
+    }
+    wrap.querySelectorAll('th[data-col]').forEach(function(th) {
+      if (!th.dataset.bound) {
+        th.addEventListener('click', function() { sortTable(th); });
+        th.dataset.bound = '1';
+      }
+    });
+  });
 }
 
 function filterTable(input) {
@@ -1183,8 +1220,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 // ---------------------------------------------------------------------------
 async function loadConversations() {
   try {
-    const resp = await fetch('/api/conversations');
-    const data = await resp.json();
+    const data = await fetchJson('/api/conversations');
     renderConversations(data.conversations || []);
   } catch (e) { /* ignore */ }
 }
@@ -1200,7 +1236,7 @@ function renderConversations(conversations) {
     const active = c.session_id === sessionId ? ' active' : '';
     const msgs = c.message_count + ' message' + (c.message_count !== 1 ? 's' : '');
     return '<button class="conversation-item' + active + '" onclick="loadConversation(\'' +
-      c.session_id + '\')" title="' + escapeHtml(c.title) + '">' +
+      escapeHtml(c.session_id) + '\')" title="' + escapeHtml(c.title) + '">' +
       '<span class="conversation-title">' + escapeHtml(c.title) + '</span>' +
       '<span class="conversation-meta">' + msgs + '</span></button>';
   }).join('');
@@ -1209,8 +1245,7 @@ function renderConversations(conversations) {
 async function loadConversation(sid) {
   if (sid === sessionId && messagesEl.querySelector('.message-row')) return;
   try {
-    const resp = await fetch('/api/conversations/' + sid);
-    const data = await resp.json();
+    const data = await fetchJson('/api/conversations/' + sid);
     if (!data.events || data.events.length === 0) return;
 
     // Switch to this session
@@ -1260,8 +1295,7 @@ async function loadConversation(sid) {
 
 async function restoreSession() {
   try {
-    const resp = await fetch('/api/conversations/' + sessionId);
-    const data = await resp.json();
+    const data = await fetchJson('/api/conversations/' + sessionId);
     if (data.events && data.events.length > 0) {
       await loadConversation(sessionId);
     }
@@ -1305,8 +1339,7 @@ async function clearAllConversations() {
 
 async function loadBookmarks() {
   try {
-    const resp = await fetch('/api/bookmarks');
-    const data = await resp.json();
+    const data = await fetchJson('/api/bookmarks');
     renderBookmarks(data.bookmarks || []);
   } catch (e) { /* ignore */ }
 }

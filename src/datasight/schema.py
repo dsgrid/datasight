@@ -139,7 +139,7 @@ async def _get_table_names(run_sql) -> list[str]:
 
 async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
     """Get column info for a table."""
-    df = await _run(run_sql, f"DESCRIBE {table}")
+    df = await _run(run_sql, f'DESCRIBE "{table}"')
     if not df.empty and "column_name" in df.columns:
         cols = []
         for _, row in df.iterrows():
@@ -152,11 +152,12 @@ async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
             )
         return cols
 
+    quoted = table.replace("'", "''")
     df = await _run(
         run_sql,
         f"SELECT column_name, data_type, is_nullable "
         f"FROM information_schema.columns "
-        f"WHERE table_name = '{table}' "
+        f"WHERE table_name = '{quoted}' "
         f"ORDER BY ordinal_position",
     )
     if not df.empty:
@@ -171,7 +172,7 @@ async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
             )
         return cols
 
-    df = await _run(run_sql, f"SELECT * FROM {table} LIMIT 0")
+    df = await _run(run_sql, f'SELECT * FROM "{table}" LIMIT 0')
     if not df.empty or len(df.columns) > 0:
         return [ColumnInfo(name=c, dtype="UNKNOWN") for c in df.columns]
 
@@ -180,7 +181,7 @@ async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
 
 async def _get_row_count(run_sql, table: str) -> int | None:
     """Get approximate row count."""
-    df = await _run(run_sql, f"SELECT COUNT(*) AS cnt FROM {table}")
+    df = await _run(run_sql, f'SELECT COUNT(*) AS cnt FROM "{table}"')
     if not df.empty:
         try:
             return int(df.iloc[0, 0])

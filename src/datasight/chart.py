@@ -214,7 +214,7 @@ def _build_artifact_html(chart_dict: dict[str, Any], title: str) -> str:
         if (!d.x && d.labels) {{ d.x = d.labels; }}
         if (!d.y && d.values) {{ d.y = d.values; }}
         // Give each bar a distinct color (like pie slices)
-        if (newType === 'bar' && d.x && !d.marker) {{
+        if (newType === 'bar' && d.x) {{
           var colors = ['#636efa','#ef553b','#00cc96','#ab63fa','#ffa15a','#19d3f3','#ff6692','#b6e880','#ff97ff','#fecb52'];
           d.marker = {{ color: d.x.map(function(_, i) {{ return colors[i % colors.length]; }}) }};
         }}
