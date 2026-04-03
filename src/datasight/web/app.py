@@ -189,7 +189,7 @@ class AppState:
         self.llm_client: LLMClient | None = None
         self.sql_runner: Any = None
         self.system_prompt: str = ""
-        self.model: str = "claude-sonnet-4-20250514"
+        self.model: str = "claude-haiku-4-5-20251001"
         self.conversations: ConversationStore | None = None
         self.bookmarks: BookmarkStore | None = None
         self.schema_info: list[dict[str, Any]] = []
@@ -599,7 +599,7 @@ async def _startup():
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             logger.error("ANTHROPIC_API_KEY not set")
-        state.model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        state.model = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
         anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
         state.llm_client = create_llm_client(
             provider="anthropic", api_key=api_key, base_url=anthropic_base_url

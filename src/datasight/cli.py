@@ -175,7 +175,7 @@ def run(
                 err=True,
             )
             sys.exit(1)
-        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
     resolved_db_mode = db_mode or os.getenv("DB_MODE", "local")
     resolved_port = port or int(os.getenv("PORT", "8084"))
 
@@ -304,7 +304,7 @@ def verify(project_dir, model, queries_path, verbose):
         if not api_key:
             click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
             sys.exit(1)
-        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
     db_mode = os.getenv("DB_MODE", "local")
     raw_db_path = os.getenv("DB_PATH", "database.duckdb")
