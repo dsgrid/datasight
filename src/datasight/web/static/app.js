@@ -863,22 +863,26 @@ function extractClarifyOptions(text) {
   if (!text.includes('?')) return [];
   const lines = text.split('\n');
 
-  // Find the last question mark line
-  let lastQuestionIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes('?')) lastQuestionIdx = i;
-  }
-  if (lastQuestionIdx < 0) return [];
+  const optionRe = /^[-*]?\s*\*\*(.+?)\*\*\s*[—–-]/;
+  const bulletRe = /^[-*]\s+(.+?)\s*[—–-]/;
+  const plainRe  = /^(\w[\w\s]*?)\s*[—–]\s+\S/;
 
-  // Only look at list items that come AFTER the question
-  const options = [];
-  for (let i = lastQuestionIdx + 1; i < lines.length; i++) {
-    const match = lines[i].match(/^[-*]\s+\*\*(.+?)\*\*\s*[—–-]/);
-    if (match) {
-      options.push(match[1].trim());
+  // Find each "?" line and collect options that follow it.
+  // Return the first group that has 2+ options.
+  for (let q = 0; q < lines.length; q++) {
+    if (!lines[q].includes('?')) continue;
+    const options = [];
+    for (let i = q + 1; i < lines.length; i++) {
+      const match = lines[i].match(optionRe) ||
+                    lines[i].match(bulletRe) ||
+                    lines[i].match(plainRe);
+      if (match) {
+        options.push(match[1].trim());
+      }
     }
+    if (options.length >= 2) return options;
   }
-  return options;
+  return [];
 }
 
 function handleSuggestions(data) {

@@ -35,7 +35,10 @@ VISUALIZE_DATA_TOOL: dict[str, Any] = {
     "description": (
         "Execute SQL and render as a Plotly.js chart. Any Plotly chart type is supported. "
         "String values in traces matching SQL column names are replaced with data arrays. "
-        'Use {"literal": value} for strings that should NOT be treated as column refs.'
+        'Use {"literal": value} for strings that should NOT be treated as column refs. '
+        "To compare categories, include a grouping column in your SQL "
+        'and set the trace\'s "name" to that column — one line/bar per unique value is '
+        "created automatically. Do NOT manually create separate traces per category."
     ),
     "input_schema": {
         "type": "object",
@@ -97,9 +100,9 @@ _BASE_VERIFY_PROMPT = (
 _BASE_WEB_PROMPT = (
     "You are datasight, an expert data analyst. You explore a DuckDB database "
     "via SQL queries and Plotly visualizations.\n\n"
-    "1. Use run_sql to query data (auto-creates a chart).\n"
-    "2. Use visualize_data with a Plotly spec for custom charts.\n"
-    "3. Explain results clearly.\n\n"
+    "Use run_sql to query data (auto-creates a chart). "
+    "Use visualize_data with a Plotly spec for custom charts. "
+    "Explain results clearly.\n\n"
     "Always execute SQL via tools — never write it inline. Use DuckDB syntax.\n\n"
     "After your final answer, add a line `---` then a JSON array of 2-3 short "
     "follow-up questions. Example:\n---\n"
@@ -112,7 +115,7 @@ def build_system_prompt(
     *,
     mode: str = "web",
     explain_sql: bool = False,
-    clarify_sql: bool = True,
+    **_kwargs: Any,
 ) -> str:
     """Build a complete system prompt.
 
@@ -126,9 +129,6 @@ def build_system_prompt(
         verification CLI.
     explain_sql:
         If True, instruct the LLM to explain queries before executing.
-    clarify_sql:
-        If True, instruct the LLM to ask clarifying questions for
-        ambiguous queries (web mode only).
     """
     base = _BASE_WEB_PROMPT if mode == "web" else _BASE_VERIFY_PROMPT
 
@@ -136,17 +136,6 @@ def build_system_prompt(
         base += (
             "\nBefore executing SQL, briefly explain the query in plain English "
             "(tables, joins, filters, aggregations) in 2-3 sentences.\n"
-        )
-    if clarify_sql and mode == "web":
-        base += (
-            "\nCLARIFICATION: Before writing SQL, ask the user to clarify if any apply:\n"
-            "1. Time granularity unspecified (daily/monthly/yearly?)\n"
-            "2. 'Top N' without a count\n"
-            "3. Ambiguous metric (multiple numeric columns possible)\n"
-            "4. Vague filters ('recent', 'high') without thresholds\n"
-            "5. Ambiguous grouping column\n"
-            "Format: short question + markdown list with **bold** options.\n"
-            "If none apply, proceed directly.\n"
         )
 
     return base + schema_text
