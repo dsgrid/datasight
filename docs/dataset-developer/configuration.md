@@ -16,7 +16,7 @@ in the project directory. CLI flags override `.env` values.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model name |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model name. Sonnet is recommended for most use cases; Opus is unnecessary for SQL generation and significantly more expensive. |
 | `ANTHROPIC_BASE_URL` | — | Custom API endpoint (e.g. Azure AI Foundry) |
 
 ### Ollama settings (when `LLM_PROVIDER=ollama`)

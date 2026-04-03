@@ -109,7 +109,7 @@ Run the same suite against different models to compare reliability:
 
 ```bash
 datasight verify --model claude-sonnet-4-20250514
-datasight verify --model claude-opus-4-5
+datasight verify --model claude-haiku-4-5-20251001
 LLM_PROVIDER=ollama datasight verify --model qwen3.5:35b-a3b
 ```
 
