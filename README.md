@@ -54,6 +54,6 @@ datasight run
 ## Documentation
 
 ```bash
-pip install "datasight[docs] @ git+https://github.com/dsgrid/datasight.git"
+pip install "datasight[dev] @ git+https://github.com/dsgrid/datasight.git"
 cd docs && make html
 ```

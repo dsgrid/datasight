@@ -302,6 +302,51 @@ def _coerce_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _split_traces_by_group(traces: list[dict[str, Any]], df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Auto-split traces when the ``name`` field references a DataFrame column.
+
+    Weaker models often produce a single trace like
+    ``{"x": "date", "y": "value", "name": "category"}`` instead of creating
+    one trace per category.  When ``name`` is a column reference, this function
+    splits the trace into one trace per unique value of that column, filtering
+    the underlying data for each.  Traces that don't reference a column in
+    ``name`` are passed through unchanged.
+    """
+    columns = set(df.columns)
+    expanded: list[dict[str, Any]] = []
+
+    for trace in traces:
+        group_col = trace.get("name")
+        if not isinstance(group_col, str) or group_col not in columns:
+            expanded.append(trace)
+            continue
+
+        # Identify which other trace keys reference columns (x, y, z, text, …)
+        col_keys = [
+            k
+            for k, v in trace.items()
+            if k not in ("type", "mode", "name") and isinstance(v, str) and v in columns
+        ]
+        if not col_keys:
+            expanded.append(trace)
+            continue
+
+        for group_value, sub_df in df.groupby(group_col, sort=True):
+            new_trace = {k: v for k, v in trace.items() if k != "name"}
+            new_trace["name"] = str(group_value)
+            # Replace column references with the filtered subset's data
+            for k in col_keys:
+                col_name = trace[k]
+                series = sub_df[col_name]
+                if pd.api.types.is_datetime64_any_dtype(series):
+                    new_trace[k] = series.dt.strftime("%Y-%m-%dT%H:%M:%S").tolist()
+                else:
+                    new_trace[k] = series.tolist()
+            expanded.append(new_trace)
+
+    return expanded
+
+
 def _resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
     """Replace column name references in a Plotly spec with actual data arrays.
 
@@ -311,9 +356,18 @@ def _resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, An
     {"literal": value} are unwrapped and passed through as-is. The "layout" key
     is passed through unchanged. Date columns are coerced to ISO strings for
     JSON serialization.
+
+    If a trace uses a column name as its ``name`` field, the trace is
+    automatically split into one trace per unique value (see
+    ``_split_traces_by_group``), so weaker models don't need to construct
+    multi-trace specs manually.
     """
     df = _coerce_dates(df)
     columns = set(df.columns)
+
+    # Auto-split traces whose "name" references a grouping column
+    raw_traces = spec.get("data", [])
+    raw_traces = _split_traces_by_group(raw_traces, df)
 
     def _resolve_value(val: Any) -> Any:
         if isinstance(val, dict):
@@ -332,18 +386,16 @@ def _resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, An
         return val
 
     resolved: dict[str, Any] = {}
-    # Resolve column references in data traces
-    if "data" in spec:
-        resolved["data"] = []
-        for trace in spec["data"]:
-            resolved_trace = {}
-            for key, val in trace.items():
-                # "type" should never be resolved as a column name
-                if key == "type":
-                    resolved_trace[key] = val
-                else:
-                    resolved_trace[key] = _resolve_value(val)
-            resolved["data"].append(resolved_trace)
+    resolved["data"] = []
+    for trace in raw_traces:
+        resolved_trace = {}
+        for key, val in trace.items():
+            # "type" and "name" should never be resolved as column names
+            if key in ("type", "name"):
+                resolved_trace[key] = val
+            else:
+                resolved_trace[key] = _resolve_value(val)
+        resolved["data"].append(resolved_trace)
     # Pass layout through as-is
     if "layout" in spec:
         resolved["layout"] = spec["layout"]
