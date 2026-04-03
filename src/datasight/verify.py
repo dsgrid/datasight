@@ -9,13 +9,16 @@ different LLM providers and models.
 
 from __future__ import annotations
 
+import json as _json
+import re as _re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 
-from datasight.llm import LLMClient, TextBlock, ToolUseBlock
+from datasight.llm import LLMClient, TextBlock, ToolUseBlock, serialize_content
+from datasight.prompts import VERIFY_TOOLS
 
 
 @dataclass
@@ -118,59 +121,35 @@ def check_result(df: pd.DataFrame, expectation: Expectation) -> list[Check]:
             )
         )
 
-    if expectation.contains is not None:
-        # Check that each value appears somewhere in the DataFrame
+    if expectation.contains is not None or expectation.not_contains is not None:
         all_values = set()
         for col in df.columns:
             for val in df[col].dropna().astype(str):
                 all_values.add(val)
-        for expected_val in expectation.contains:
-            found = str(expected_val) in all_values
-            checks.append(
-                Check(
-                    name="contains",
-                    passed=found,
-                    detail=f"{'found' if found else 'missing'}: {expected_val!r}",
-                )
-            )
 
-    if expectation.not_contains is not None:
-        all_values = set()
-        for col in df.columns:
-            for val in df[col].dropna().astype(str):
-                all_values.add(val)
-        for unexpected_val in expectation.not_contains:
-            found = str(unexpected_val) in all_values
-            checks.append(
-                Check(
-                    name="not_contains",
-                    passed=not found,
-                    detail=f"{'unexpectedly found' if found else 'correctly absent'}: {unexpected_val!r}",
+        if expectation.contains is not None:
+            for expected_val in expectation.contains:
+                found = str(expected_val) in all_values
+                checks.append(
+                    Check(
+                        name="contains",
+                        passed=found,
+                        detail=f"{'found' if found else 'missing'}: {expected_val!r}",
+                    )
                 )
-            )
+
+        if expectation.not_contains is not None:
+            for unexpected_val in expectation.not_contains:
+                found = str(unexpected_val) in all_values
+                checks.append(
+                    Check(
+                        name="not_contains",
+                        passed=not found,
+                        detail=f"{'unexpectedly found' if found else 'correctly absent'}: {unexpected_val!r}",
+                    )
+                )
 
     return checks
-
-
-VERIFY_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "run_sql",
-        "description": (
-            "Execute a SQL query against the database and return results as a table. "
-            "Use DuckDB SQL syntax. Always use this tool instead of writing SQL inline."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sql": {
-                    "type": "string",
-                    "description": "SQL SELECT query to execute",
-                }
-            },
-            "required": ["sql"],
-        },
-    },
-]
 
 
 async def run_single_verification(
@@ -202,20 +181,9 @@ async def run_single_verification(
             result.llm_iterations = iteration + 1
 
             if response.stop_reason == "tool_use":
-                serialized = []
-                for block in response.content:
-                    if isinstance(block, TextBlock):
-                        serialized.append({"type": "text", "text": block.text})
-                    elif isinstance(block, ToolUseBlock):
-                        serialized.append(
-                            {
-                                "type": "tool_use",
-                                "id": block.id,
-                                "name": block.name,
-                                "input": block.input,
-                            }
-                        )
-                messages.append({"role": "assistant", "content": serialized})
+                messages.append(
+                    {"role": "assistant", "content": serialize_content(response.content)}
+                )
 
                 tool_results = []
                 for block in response.content:
@@ -393,9 +361,6 @@ async def analyze_ambiguity(
     model: str,
 ) -> AmbiguityResult:
     """Analyze a single question for ambiguity."""
-    import json as _json
-    import re as _re
-
     response = await llm_client.create_message(
         model=model,
         max_tokens=500,

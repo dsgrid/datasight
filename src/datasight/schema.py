@@ -3,10 +3,14 @@ Auto-discover database schema by querying INFORMATION_SCHEMA or DuckDB-specific
 system tables.
 """
 
+from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
 
 import pandas as pd
 from loguru import logger
+
+# Type alias for the async run_sql callable used throughout this module.
+RunSql = Callable[[str], Awaitable[pd.DataFrame]]
 
 
 @dataclass
@@ -23,7 +27,7 @@ class TableInfo:
     row_count: int | None = None
 
 
-async def introspect_schema(run_sql, runner=None) -> list[TableInfo]:
+async def introspect_schema(run_sql: RunSql, runner=None) -> list[TableInfo]:
     """Discover tables and columns from the database.
 
     Parameters
@@ -94,7 +98,7 @@ def format_schema_context(
 # ---------------------------------------------------------------------------
 
 
-async def _run(run_sql, sql: str) -> pd.DataFrame:
+async def _run(run_sql: RunSql, sql: str) -> pd.DataFrame:
     """Run a query, returning an empty DataFrame on error."""
     try:
         return await run_sql(sql)
@@ -103,7 +107,7 @@ async def _run(run_sql, sql: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-async def _get_table_names(run_sql) -> list[str]:
+async def _get_table_names(run_sql: RunSql) -> list[str]:
     """Get table names, trying multiple strategies."""
     df = await _run(run_sql, "SHOW TABLES")
     if not df.empty and len(df.columns) > 0:
@@ -125,8 +129,20 @@ async def _get_table_names(run_sql) -> list[str]:
     return []
 
 
-async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
+def _validate_identifier(name: str) -> str:
+    """Validate that a name is a safe SQL identifier (alphanumeric + underscores).
+
+    Raises ValueError for names containing characters that could enable injection.
+    """
+    if not all(c.isalnum() or c in ("_", "-", ".") for c in name):
+        raise ValueError(f"Unsafe identifier: {name!r}")
+    return name
+
+
+async def _get_columns(run_sql: RunSql, table: str) -> list[ColumnInfo]:
     """Get column info for a table."""
+    _validate_identifier(table)
+
     df = await _run(run_sql, f'DESCRIBE "{table}"')
     if not df.empty and "column_name" in df.columns:
         cols = []
@@ -140,6 +156,7 @@ async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
             )
         return cols
 
+    # Fallback: INFORMATION_SCHEMA (identifier already validated above)
     quoted = table.replace("'", "''")
     df = await _run(
         run_sql,
@@ -167,7 +184,7 @@ async def _get_columns(run_sql, table: str) -> list[ColumnInfo]:
     return []
 
 
-async def _get_row_count(run_sql, table: str) -> int | None:
+async def _get_row_count(run_sql: RunSql, table: str) -> int | None:
     """Get approximate row count."""
     df = await _run(run_sql, f'SELECT COUNT(*) AS cnt FROM "{table}"')
     if not df.empty:

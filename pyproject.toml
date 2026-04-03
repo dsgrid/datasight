@@ -27,12 +27,11 @@ dependencies = [
     "fastapi>=0.110,<1",
     "uvicorn>=0.29,<1",
     "loguru>=0.7,<1",
-    "openai>=2,<3",
 ]
 
 [project.optional-dependencies]
 ollama = [
-    "openai>=1.0,<3",
+    "openai>=2,<3",
 ]
 dev = [
     "pytest>=8.0,<9",

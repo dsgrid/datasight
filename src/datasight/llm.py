@@ -50,6 +50,24 @@ class LLMResponse:
 ContentBlock = TextBlock | ToolUseBlock
 
 
+def serialize_content(content: list[ContentBlock]) -> list[dict[str, Any]]:
+    """Serialize content blocks to Anthropic-style dicts for message history."""
+    serialized = []
+    for block in content:
+        if isinstance(block, TextBlock):
+            serialized.append({"type": "text", "text": block.text})
+        elif isinstance(block, ToolUseBlock):
+            serialized.append(
+                {
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+            )
+    return serialized
+
+
 class LLMClient(Protocol):
     """Protocol for LLM backends."""
 
@@ -72,8 +90,11 @@ class LLMClient(Protocol):
 class AnthropicLLMClient:
     """LLM client backed by the Anthropic API."""
 
-    def __init__(self, api_key: str):
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+    def __init__(self, api_key: str, base_url: str | None = None):
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = anthropic.AsyncAnthropic(**kwargs)
 
     async def create_message(
         self,
@@ -280,5 +301,8 @@ def create_llm_client(
         logger.info(f"Using Ollama LLM backend: {url}")
         return OllamaLLMClient(base_url=url)
     else:
-        logger.info("Using Anthropic LLM backend")
-        return AnthropicLLMClient(api_key=api_key)
+        if base_url:
+            logger.info(f"Using Anthropic LLM backend: {base_url}")
+        else:
+            logger.info("Using Anthropic LLM backend")
+        return AnthropicLLMClient(api_key=api_key, base_url=base_url)

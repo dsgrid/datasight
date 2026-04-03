@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,9 @@ from datasight.llm import (
     TextBlock,
     ToolUseBlock,
     create_llm_client,
+    serialize_content,
 )
+from datasight.prompts import WEB_TOOLS, build_system_prompt
 from datasight.query_log import QueryLogger
 from datasight.schema import introspect_schema, format_schema_context
 
@@ -179,119 +182,53 @@ class BookmarkStore:
         self._save()
 
 
-# Runtime state (populated on startup)
-llm_client: LLMClient | None = None
-sql_runner: Any = None
-system_prompt: str = ""
-model: str = "claude-sonnet-4-20250514"
-conversations: ConversationStore | None = None
-bookmarks: BookmarkStore | None = None
-schema_info: list[dict[str, Any]] = []
-example_queries_list: list[dict[str, str]] = []
-query_logger: QueryLogger | None = None
-confirm_sql: bool = False
-explain_sql: bool = False
-clarify_sql: bool = True
-_schema_text: str = ""
+class AppState:
+    """Runtime state for the datasight web application, populated on startup."""
 
-# Pending SQL confirmations: request_id -> asyncio.Event + result
-_pending_confirms: dict[str, dict[str, Any]] = {}
+    def __init__(self) -> None:
+        self.llm_client: LLMClient | None = None
+        self.sql_runner: Any = None
+        self.system_prompt: str = ""
+        self.model: str = "claude-sonnet-4-20250514"
+        self.conversations: ConversationStore | None = None
+        self.bookmarks: BookmarkStore | None = None
+        self.schema_info: list[dict[str, Any]] = []
+        self.example_queries_list: list[dict[str, str]] = []
+        self.query_logger: QueryLogger | None = None
+        self.confirm_sql: bool = False
+        self.explain_sql: bool = False
+        self.clarify_sql: bool = True
+        self._schema_text: str = ""
+        # Pending SQL confirmations: request_id -> asyncio.Event + result
+        self.pending_confirms: dict[str, dict[str, Any]] = {}
 
-
-def _rebuild_system_prompt() -> None:
-    """Rebuild the system prompt (e.g. after toggling explain_sql)."""
-    global system_prompt
-    base_prompt = (
-        "You are datasight, an expert data analyst. You explore a DuckDB database "
-        "via SQL queries and Plotly visualizations.\n\n"
-        "1. Use run_sql to query data (auto-creates a chart).\n"
-        "2. Use visualize_data with a Plotly spec for custom charts.\n"
-        "3. Explain results clearly.\n\n"
-        "Always execute SQL via tools — never write it inline. Use DuckDB syntax.\n\n"
-        "After your final answer, add a line `---` then a JSON array of 2-3 short "
-        "follow-up questions. Example:\n---\n"
-        '["What is the trend over time?", "Break this down by category"]\n'
-    )
-    if explain_sql:
-        base_prompt += (
-            "\nBefore executing SQL, briefly explain the query in plain English "
-            "(tables, joins, filters, aggregations) in 2-3 sentences.\n"
+    def rebuild_system_prompt(self) -> None:
+        """Rebuild the system prompt (e.g. after toggling explain_sql)."""
+        self.system_prompt = build_system_prompt(
+            self._schema_text,
+            mode="web",
+            explain_sql=self.explain_sql,
+            clarify_sql=self.clarify_sql,
         )
-    if clarify_sql:
-        base_prompt += (
-            "\nCLARIFICATION: Before writing SQL, ask the user to clarify if any apply:\n"
-            "1. Time granularity unspecified (daily/monthly/yearly?)\n"
-            "2. 'Top N' without a count\n"
-            "3. Ambiguous metric (multiple numeric columns possible)\n"
-            "4. Vague filters ('recent', 'high') without thresholds\n"
-            "5. Ambiguous grouping column\n"
-            "Format: short question + markdown list with **bold** options.\n"
-            "If none apply, proceed directly.\n"
-        )
-    system_prompt = base_prompt + _schema_text
 
 
-TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "run_sql",
-        "description": "Execute a DuckDB SQL query and return results as a table.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sql": {
-                    "type": "string",
-                    "description": "SQL SELECT query to execute",
-                }
-            },
-            "required": ["sql"],
-        },
-    },
-    {
-        "name": "visualize_data",
-        "description": (
-            "Execute SQL and render as a Plotly.js chart. Any Plotly chart type is supported. "
-            "String values in traces matching SQL column names are replaced with data arrays. "
-            'Use {"literal": value} for strings that should NOT be treated as column refs.'
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sql": {
-                    "type": "string",
-                    "description": "SQL SELECT query to fetch data",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Chart title",
-                },
-                "plotly_spec": {
-                    "type": "object",
-                    "description": (
-                        "Plotly.js spec with 'data' and 'layout' keys. "
-                        'Example: {"data": [{"type": "bar", "x": "category", "y": "total"}], "layout": {}}'
-                    ),
-                    "properties": {
-                        "data": {
-                            "type": "array",
-                            "description": "Array of Plotly trace objects",
-                        },
-                        "layout": {
-                            "type": "object",
-                            "description": "Plotly layout object",
-                        },
-                    },
-                    "required": ["data"],
-                },
-            },
-            "required": ["sql", "plotly_spec"],
-        },
-    },
-]
+state = AppState()
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
 
 
 def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
@@ -310,7 +247,7 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     )
     html += "<table class='result-table'><thead><tr>"
     for i, col in enumerate(display_df.columns):
-        html += f"<th data-col='{i}'>{col}<span class='sort-arrow'></span></th>"
+        html += f"<th data-col='{i}'>{_escape_html(str(col))}<span class='sort-arrow'></span></th>"
     html += "</tr></thead><tbody>"
     for _, row in display_df.iterrows():
         html += "<tr>"
@@ -319,7 +256,7 @@ def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
             if pd.isna(val):
                 html += "<td class='null-val'>NULL</td>"
             else:
-                html += f"<td>{val}</td>"
+                html += f"<td>{_escape_html(str(val))}</td>"
         html += "</tr>"
     html += "</tbody></table>"
     html += "<div class='table-pagination'></div>"
@@ -429,10 +366,10 @@ async def execute_tool(
         sql = input_data.get("sql", "")
         t0 = time.perf_counter()
         try:
-            df = await sql_runner.run_sql(sql)
+            df = await state.sql_runner.run_sql(sql)
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            if query_logger:
-                query_logger.log(
+            if state.query_logger:
+                state.query_logger.log(
                     session_id=session_id,
                     user_question=user_question,
                     tool=name,
@@ -461,8 +398,8 @@ async def execute_tool(
             elapsed_ms = (time.perf_counter() - t0) * 1000
             error = f"SQL error: {e}"
             logger.error(error)
-            if query_logger:
-                query_logger.log(
+            if state.query_logger:
+                state.query_logger.log(
                     session_id=session_id,
                     user_question=user_question,
                     tool=name,
@@ -487,10 +424,10 @@ async def execute_tool(
         plotly_spec = input_data.get("plotly_spec", {})
         t0 = time.perf_counter()
         try:
-            df = await sql_runner.run_sql(sql)
+            df = await state.sql_runner.run_sql(sql)
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            if query_logger:
-                query_logger.log(
+            if state.query_logger:
+                state.query_logger.log(
                     session_id=session_id,
                     user_question=user_question,
                     tool=name,
@@ -522,8 +459,8 @@ async def execute_tool(
             elapsed_ms = (time.perf_counter() - t0) * 1000
             error = f"Visualization error: {e}"
             logger.error(error)
-            if query_logger:
-                query_logger.log(
+            if state.query_logger:
+                state.query_logger.log(
                     session_id=session_id,
                     user_question=user_question,
                     tool=name,
@@ -546,8 +483,9 @@ async def execute_tool(
 
 
 def get_session_messages(session_id: str) -> list[dict[str, Any]]:
-    assert conversations is not None
-    return conversations.get(session_id)["messages"]
+    if state.conversations is None:
+        raise RuntimeError("App not initialised")
+    return state.conversations.get(session_id)["messages"]
 
 
 _MAX_HISTORY_PAIRS = 10  # Keep last N user/assistant exchanges
@@ -556,12 +494,22 @@ _MAX_HISTORY_PAIRS = 10  # Keep last N user/assistant exchanges
 def _trim_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep only recent messages to bound input token growth.
 
-    Preserves the last ``_MAX_HISTORY_PAIRS`` user/assistant exchange pairs
-    (including tool_use/tool_result sequences).  Earlier messages are dropped.
+    Groups messages into logical exchanges (a user text message and everything
+    that follows until the next user text message). This ensures tool_use and
+    tool_result pairs are never split across the trim boundary.
     """
-    if len(messages) <= _MAX_HISTORY_PAIRS * 2:
+    # Find indices of user text messages (not tool_result arrays).
+    exchange_starts: list[int] = []
+    for i, msg in enumerate(messages):
+        if msg["role"] == "user" and isinstance(msg["content"], str):
+            exchange_starts.append(i)
+
+    if len(exchange_starts) <= _MAX_HISTORY_PAIRS:
         return messages
-    return messages[-_MAX_HISTORY_PAIRS * 2 :]
+
+    # Keep the last N exchanges
+    cut = exchange_starts[-_MAX_HISTORY_PAIRS]
+    return messages[cut:]
 
 
 def _extract_suggestions(text: str) -> list[str]:
@@ -587,35 +535,23 @@ def _extract_suggestions(text: str) -> list[str]:
 
 
 async def _startup():
-    global \
-        llm_client, \
-        sql_runner, \
-        system_prompt, \
-        model, \
-        schema_info, \
-        example_queries_list, \
-        query_logger, \
-        conversations, \
-        bookmarks, \
-        confirm_sql, \
-        explain_sql, \
-        clarify_sql, \
-        _schema_text
-
     load_dotenv()
 
     llm_provider = os.environ.get("LLM_PROVIDER", "anthropic")
 
     if llm_provider == "ollama":
         ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        model = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b")
-        llm_client = create_llm_client(provider="ollama", base_url=ollama_base_url)
+        state.model = os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b")
+        state.llm_client = create_llm_client(provider="ollama", base_url=ollama_base_url)
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             logger.error("ANTHROPIC_API_KEY not set")
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-        llm_client = create_llm_client(provider="anthropic", api_key=api_key)
+        state.model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+        state.llm_client = create_llm_client(
+            provider="anthropic", api_key=api_key, base_url=anthropic_base_url
+        )
 
     db_mode = os.environ.get("DB_MODE", "local")
     db_path = os.environ.get("DB_PATH", "")
@@ -624,7 +560,7 @@ async def _startup():
     flight_username = os.environ.get("FLIGHT_SQL_USERNAME")
     flight_password = os.environ.get("FLIGHT_SQL_PASSWORD")
 
-    sql_runner = create_sql_runner(
+    state.sql_runner = create_sql_runner(
         db_mode=db_mode,
         db_path=db_path,
         flight_uri=flight_uri,
@@ -635,16 +571,16 @@ async def _startup():
 
     project_dir = os.environ.get("DATASIGHT_PROJECT_DIR", ".")
 
-    conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
-    bookmarks = BookmarkStore(Path(project_dir) / ".datasight" / "bookmarks.json")
+    state.conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
+    state.bookmarks = BookmarkStore(Path(project_dir) / ".datasight" / "bookmarks.json")
 
-    confirm_sql = os.environ.get("CONFIRM_SQL", "false").lower() == "true"
-    explain_sql = os.environ.get("EXPLAIN_SQL", "false").lower() == "true"
-    clarify_sql = os.environ.get("CLARIFY_SQL", "true").lower() == "true"
+    state.confirm_sql = os.environ.get("CONFIRM_SQL", "false").lower() == "true"
+    state.explain_sql = os.environ.get("EXPLAIN_SQL", "false").lower() == "true"
+    state.clarify_sql = os.environ.get("CLARIFY_SQL", "true").lower() == "true"
 
     log_enabled = os.environ.get("QUERY_LOG_ENABLED", "false").lower() == "true"
     log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
-    query_logger = QueryLogger(path=log_path, enabled=log_enabled)
+    state.query_logger = QueryLogger(path=log_path, enabled=log_enabled)
     if log_enabled:
         logger.info(f"Query logging enabled: {log_path}")
 
@@ -654,8 +590,8 @@ async def _startup():
     user_desc = load_schema_description(schema_desc_path, project_dir)
 
     # Discover schema
-    tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
-    schema_info = [
+    tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+    state.schema_info = [
         {
             "name": t.name,
             "row_count": t.row_count,
@@ -675,18 +611,18 @@ async def _startup():
     else:
         logger.warning("No tables discovered in the database")
 
-    _schema_text = format_schema_context(tables, user_desc)
+    state._schema_text = format_schema_context(tables, user_desc)
 
     example_queries = load_example_queries(example_queries_path, project_dir)
-    example_queries_list = example_queries
+    state.example_queries_list = example_queries
     if example_queries:
-        _schema_text += format_example_queries(example_queries)
+        state._schema_text += format_example_queries(example_queries)
         logger.info(f"Loaded {len(example_queries)} example queries")
 
-    _rebuild_system_prompt()
+    state.rebuild_system_prompt()
 
     port = os.environ.get("PORT", "8084")
-    logger.info(f"datasight ready (model={model}, db_mode={db_mode})")
+    logger.info(f"datasight ready (model={state.model}, db_mode={db_mode})")
     print(f"\n  Ready — open http://localhost:{port} in your browser\n")
 
 
@@ -703,24 +639,24 @@ async def index():
 @app.get("/api/schema")
 async def get_schema():
     """Return discovered database schema for the sidebar."""
-    return {"tables": schema_info}
+    return {"tables": state.schema_info}
 
 
 @app.get("/api/queries")
 async def get_queries():
     """Return example queries."""
-    return {"queries": example_queries_list}
+    return {"queries": state.example_queries_list}
 
 
 @app.get("/api/preview/{table_name}")
 async def preview_table(table_name: str):
     """Return an HTML table preview of the first 10 rows."""
     # Validate table name against known schema to prevent SQL injection
-    valid_names = {t["name"] for t in schema_info}
+    valid_names = {t["name"] for t in state.schema_info}
     if table_name not in valid_names:
         return {"html": None, "error": "Unknown table"}
     try:
-        df = await sql_runner.run_sql(f'SELECT * FROM "{table_name}" LIMIT 10')
+        df = await state.sql_runner.run_sql(f'SELECT * FROM "{table_name}" LIMIT 10')
         html = _df_to_html_table(df, max_rows=10)
         return {"html": html}
     except Exception as e:
@@ -730,11 +666,11 @@ async def preview_table(table_name: str):
 @app.get("/api/column-stats/{table_name}/{column_name}")
 async def column_stats(table_name: str, column_name: str):
     """Return basic statistics for a column."""
-    valid_tables = {t["name"] for t in schema_info}
+    valid_tables = {t["name"] for t in state.schema_info}
     if table_name not in valid_tables:
         return {"stats": None, "error": "Unknown table"}
     # Validate column name against schema
-    table_info = next((t for t in schema_info if t["name"] == table_name), None)
+    table_info = next((t for t in state.schema_info if t["name"] == table_name), None)
     if not table_info:
         return {"stats": None, "error": "Unknown table"}
     valid_cols = {c["name"] for c in table_info["columns"]}
@@ -762,7 +698,7 @@ async def column_stats(table_name: str, column_name: str):
                 f'MIN("{column_name}") AS min_val, MAX("{column_name}") AS max_val '
                 f'FROM "{table_name}"'
             )
-        df = await sql_runner.run_sql(sql)
+        df = await state.sql_runner.run_sql(sql)
         row = df.iloc[0]
         stats: dict[str, Any] = {
             "distinct": int(row["distinct_count"]),
@@ -786,55 +722,59 @@ async def column_stats(table_name: str, column_name: str):
 @app.post("/api/query-log/toggle")
 async def toggle_query_log():
     """Enable or disable query logging at runtime."""
-    if query_logger is None:
+    if state.query_logger is None:
         return {"enabled": False}
-    query_logger.enabled = not query_logger.enabled
-    logger.info(f"Query logging {'enabled' if query_logger.enabled else 'disabled'}")
-    return {"enabled": query_logger.enabled}
+    state.query_logger.enabled = not state.query_logger.enabled
+    logger.info(f"Query logging {'enabled' if state.query_logger.enabled else 'disabled'}")
+    return {"enabled": state.query_logger.enabled}
 
 
 @app.get("/api/query-log")
 async def get_query_log(n: int = 50):
     """Return recent query log entries."""
-    if query_logger is None:
+    if state.query_logger is None:
         return {"entries": [], "enabled": False}
-    return {"entries": query_logger.read_recent(n), "enabled": query_logger.enabled}
+    return {"entries": state.query_logger.read_recent(n), "enabled": state.query_logger.enabled}
 
 
 @app.get("/api/bookmarks")
 async def list_bookmarks():
     """Return all bookmarked queries."""
-    assert bookmarks is not None
-    return {"bookmarks": bookmarks.list_all()}
+    if state.bookmarks is None:
+        raise RuntimeError("App not initialised")
+    return {"bookmarks": state.bookmarks.list_all()}
 
 
 @app.post("/api/bookmarks")
 async def add_bookmark(request: Request):
     """Add a bookmarked query."""
-    assert bookmarks is not None
+    if state.bookmarks is None:
+        raise RuntimeError("App not initialised")
     body = await request.json()
     sql = body.get("sql", "").strip()
     tool = body.get("tool", "run_sql")
     name = body.get("name", "").strip()
     if not sql:
         return {"error": "sql is required"}
-    bookmark = bookmarks.add(sql, tool, name)
+    bookmark = state.bookmarks.add(sql, tool, name)
     return {"bookmark": bookmark}
 
 
 @app.delete("/api/bookmarks/{bookmark_id}")
 async def remove_bookmark(bookmark_id: int):
     """Remove a bookmarked query."""
-    assert bookmarks is not None
-    bookmarks.delete(bookmark_id)
+    if state.bookmarks is None:
+        raise RuntimeError("App not initialised")
+    state.bookmarks.delete(bookmark_id)
     return {"ok": True}
 
 
 @app.delete("/api/bookmarks")
 async def clear_bookmarks():
     """Remove all bookmarks."""
-    assert bookmarks is not None
-    bookmarks.clear()
+    if state.bookmarks is None:
+        raise RuntimeError("App not initialised")
+    state.bookmarks.clear()
     return {"ok": True}
 
 
@@ -842,37 +782,40 @@ async def clear_bookmarks():
 async def get_settings():
     """Return current feature toggles."""
     return {
-        "confirm_sql": confirm_sql,
-        "explain_sql": explain_sql,
-        "clarify_sql": clarify_sql,
+        "confirm_sql": state.confirm_sql,
+        "explain_sql": state.explain_sql,
+        "clarify_sql": state.clarify_sql,
     }
 
 
 @app.post("/api/settings")
 async def update_settings(request: Request):
     """Update feature toggles."""
-    global confirm_sql, explain_sql, clarify_sql, system_prompt
     body = await request.json()
     need_rebuild = False
     if "confirm_sql" in body:
-        confirm_sql = bool(body["confirm_sql"])
+        state.confirm_sql = bool(body["confirm_sql"])
     if "explain_sql" in body:
-        old = explain_sql
-        explain_sql = bool(body["explain_sql"])
-        if old != explain_sql:
+        old = state.explain_sql
+        state.explain_sql = bool(body["explain_sql"])
+        if old != state.explain_sql:
             need_rebuild = True
     if "clarify_sql" in body:
-        old = clarify_sql
-        clarify_sql = bool(body["clarify_sql"])
-        if old != clarify_sql:
+        old = state.clarify_sql
+        state.clarify_sql = bool(body["clarify_sql"])
+        if old != state.clarify_sql:
             need_rebuild = True
     if need_rebuild:
-        _rebuild_system_prompt()
+        state.rebuild_system_prompt()
     logger.info(
-        f"Settings updated: confirm_sql={confirm_sql}, "
-        f"explain_sql={explain_sql}, clarify_sql={clarify_sql}"
+        f"Settings updated: confirm_sql={state.confirm_sql}, "
+        f"explain_sql={state.explain_sql}, clarify_sql={state.clarify_sql}"
     )
-    return {"confirm_sql": confirm_sql, "explain_sql": explain_sql, "clarify_sql": clarify_sql}
+    return {
+        "confirm_sql": state.confirm_sql,
+        "explain_sql": state.explain_sql,
+        "clarify_sql": state.clarify_sql,
+    }
 
 
 @app.post("/api/sql-confirm/{request_id}")
@@ -882,7 +825,7 @@ async def sql_confirm(request_id: str, request: Request):
     action = body.get("action", "reject")  # approve, edit, reject
     edited_sql = body.get("sql")
 
-    pending = _pending_confirms.get(request_id)
+    pending = state.pending_confirms.get(request_id)
     if not pending:
         return {"error": "No pending confirmation with that ID"}
 
@@ -896,37 +839,52 @@ async def sql_confirm(request_id: str, request: Request):
 @app.delete("/api/conversations")
 async def clear_conversations():
     """Remove all conversations."""
-    assert conversations is not None
-    conversations.clear_all()
+    if state.conversations is None:
+        raise RuntimeError("App not initialised")
+    state.conversations.clear_all()
     return {"ok": True}
+
+
+# Pricing per million tokens: (input, output)
+_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-sonnet-4-20250514": (3.0, 15.0),
+    "claude-haiku-4-5-20251001": (0.80, 4.0),
+    "claude-opus-4-20250514": (15.0, 75.0),
+}
 
 
 def _log_query_cost(api_calls: int, input_tokens: int, output_tokens: int) -> None:
     """Log token usage and estimated cost for a completed query."""
-    # Sonnet 4 pricing: $3/M input, $15/M output
-    input_cost = input_tokens * 3.0 / 1_000_000
-    output_cost = output_tokens * 15.0 / 1_000_000
-    total_cost = input_cost + output_cost
+    pricing = _MODEL_PRICING.get(state.model)
+    if pricing:
+        input_cost = input_tokens * pricing[0] / 1_000_000
+        output_cost = output_tokens * pricing[1] / 1_000_000
+        total_cost = input_cost + output_cost
+        cost_str = (
+            f" est_cost=${total_cost:.4f} (input=${input_cost:.4f} output=${output_cost:.4f})"
+        )
+    else:
+        cost_str = ""
     logger.info(
         f"[tokens] QUERY TOTAL: api_calls={api_calls} "
-        f"input={input_tokens} output={output_tokens} "
-        f"est_cost=${total_cost:.4f} "
-        f"(input=${input_cost:.4f} output=${output_cost:.4f})"
+        f"input={input_tokens} output={output_tokens}{cost_str}"
     )
 
 
 @app.get("/api/conversations")
 async def list_conversations():
     """Return a list of all conversations with titles."""
-    assert conversations is not None
-    return {"conversations": list(reversed(conversations.list_all()))}
+    if state.conversations is None:
+        raise RuntimeError("App not initialised")
+    return {"conversations": list(reversed(state.conversations.list_all()))}
 
 
 @app.get("/api/conversations/{session_id}")
 async def get_conversation(session_id: str):
     """Return the event log for a conversation (for replay)."""
-    assert conversations is not None
-    data = conversations.get(session_id)
+    if state.conversations is None:
+        raise RuntimeError("App not initialised")
+    data = state.conversations.get(session_id)
     return {"events": data["events"], "title": data.get("title", "Untitled")}
 
 
@@ -955,16 +913,18 @@ async def chat(request: Request):
         messages.append({"role": "user", "content": message})
 
         # Record events for conversation replay
-        assert conversations is not None
-        conv = conversations.get(session_id)
+        if state.conversations is None:
+            raise RuntimeError("App not initialised")
+        conv = state.conversations.get(session_id)
         evt_log = conv["events"]
         evt_log.append({"event": "user_message", "data": {"text": message}})
         # Set title from first user message
         if conv["title"] == "Untitled":
             conv["title"] = message[:80] + ("..." if len(message) > 80 else "")
-        conversations.save(session_id)
+        state.conversations.save(session_id)
 
-        assert llm_client is not None, "LLM client not initialised"
+        if state.llm_client is None:
+            raise RuntimeError("LLM client not initialised")
         max_iterations = 15
 
         total_input_tokens = 0
@@ -973,17 +933,17 @@ async def chat(request: Request):
         for _ in range(max_iterations):
             trimmed = _trim_messages(messages)
             try:
-                response = await llm_client.create_message(
-                    model=model,
+                response = await state.llm_client.create_message(
+                    model=state.model,
                     max_tokens=4096,
-                    system=system_prompt,
-                    tools=TOOLS,
+                    system=state.system_prompt,
+                    tools=WEB_TOOLS,
                     messages=trimmed,
                 )
             except Exception as e:
                 logger.error(f"LLM API error: {e}")
                 evt_log.append({"event": "assistant_message", "data": {"text": f"Error: {e}"}})
-                conversations.save(session_id)
+                state.conversations.save(session_id)
                 yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 return
@@ -1001,20 +961,9 @@ async def chat(request: Request):
 
             if response.stop_reason == "tool_use":
                 # Serialize assistant content for session history
-                serialized = []
-                for block in response.content:
-                    if isinstance(block, TextBlock):
-                        serialized.append({"type": "text", "text": block.text})
-                    elif isinstance(block, ToolUseBlock):
-                        serialized.append(
-                            {
-                                "type": "tool_use",
-                                "id": block.id,
-                                "name": block.name,
-                                "input": block.input,
-                            }
-                        )
-                messages.append({"role": "assistant", "content": serialized})
+                messages.append(
+                    {"role": "assistant", "content": serialize_content(response.content)}
+                )
 
                 # Stream any text blocks (e.g. SQL explanations) before tool execution
                 for block in response.content:
@@ -1036,12 +985,10 @@ async def chat(request: Request):
                     tool_input = dict(block.input)
 
                     # SQL confirmation flow
-                    if confirm_sql and block.name in ("run_sql", "visualize_data"):
-                        import uuid as _uuid
-
-                        request_id = _uuid.uuid4().hex[:12]
+                    if state.confirm_sql and block.name in ("run_sql", "visualize_data"):
+                        request_id = uuid.uuid4().hex[:12]
                         confirm_event = asyncio.Event()
-                        _pending_confirms[request_id] = {
+                        state.pending_confirms[request_id] = {
                             "event": confirm_event,
                             "action": None,
                             "sql": None,
@@ -1057,7 +1004,7 @@ async def chat(request: Request):
                         try:
                             await asyncio.wait_for(confirm_event.wait(), timeout=300)
                         except asyncio.TimeoutError:
-                            _pending_confirms.pop(request_id, None)
+                            state.pending_confirms.pop(request_id, None)
                             tool_results.append(
                                 {
                                     "type": "tool_result",
@@ -1067,7 +1014,7 @@ async def chat(request: Request):
                             )
                             continue
 
-                        decision = _pending_confirms.pop(request_id, {})
+                        decision = state.pending_confirms.pop(request_id, {})
                         action = decision.get("action", "reject")
 
                         if action == "reject":
@@ -1115,7 +1062,7 @@ async def chat(request: Request):
                     if meta:
                         evt_log.append({"event": "tool_done", "data": meta})
                         yield f"event: tool_done\ndata: {json.dumps(meta)}\n\n"
-                        conversations.save(session_id)
+                        state.conversations.save(session_id)
 
                     tool_results.append(
                         {
@@ -1137,7 +1084,7 @@ async def chat(request: Request):
 
             messages.append({"role": "assistant", "content": text})
             evt_log.append({"event": "assistant_message", "data": {"text": text}})
-            conversations.save(session_id)
+            state.conversations.save(session_id)
 
             words = text.split(" ")
             for i, word in enumerate(words):
@@ -1150,14 +1097,14 @@ async def chat(request: Request):
 
             if suggestions:
                 evt_log.append({"event": "suggestions", "data": {"suggestions": suggestions}})
-                conversations.save(session_id)
+                state.conversations.save(session_id)
                 yield f"event: suggestions\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
             return
 
         _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
         max_iter_text = "Reached maximum number of tool calls. Please try a simpler question."
         evt_log.append({"event": "assistant_message", "data": {"text": max_iter_text}})
-        conversations.save(session_id)
+        state.conversations.save(session_id)
         yield f"event: token\ndata: {json.dumps({'text': max_iter_text})}\n\n"
         yield "event: done\ndata: {}\n\n"
 
@@ -1168,6 +1115,7 @@ async def chat(request: Request):
 async def clear_session(request: Request):
     body = await request.json()
     session_id = body.get("session_id", "default")
-    assert conversations is not None
-    conversations.delete(session_id)
+    if state.conversations is None:
+        raise RuntimeError("App not initialised")
+    state.conversations.delete(session_id)
     return {"ok": True}

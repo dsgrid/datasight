@@ -326,12 +326,18 @@ def verify(project_dir, model, queries_path, verbose):
 
     async def _run():
         from datasight.config import format_example_queries
+        from datasight.prompts import build_system_prompt
         from datasight.verify import run_ambiguity_analysis, run_verification
 
+        base_url = (
+            os.getenv("OLLAMA_BASE_URL")
+            if llm_provider == "ollama"
+            else os.getenv("ANTHROPIC_BASE_URL")
+        )
         llm_client = create_llm_client(
             provider=llm_provider,
             api_key=api_key,
-            base_url=os.getenv("OLLAMA_BASE_URL"),
+            base_url=base_url,
         )
         sql_runner = create_sql_runner(
             db_mode=db_mode,
@@ -342,23 +348,13 @@ def verify(project_dir, model, queries_path, verbose):
             flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
         )
 
-        # Build system prompt (same as web app)
+        # Build system prompt
         tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
         user_desc = load_schema_description(None, project_dir)
         schema_text = format_schema_context(tables, user_desc)
         schema_text += format_example_queries(queries)
 
-        sys_prompt = (
-            "You are datasight, an expert data analyst assistant. You help users "
-            "explore and understand data stored in a DuckDB database by writing and "
-            "executing SQL queries.\n\n"
-            "When a user asks a question:\n"
-            "1. Think about what data would answer their question.\n"
-            "2. Use the run_sql tool to query the database.\n"
-            "3. Explain the results clearly.\n\n"
-            "Always use the tools to execute SQL — never write SQL inline without "
-            "executing it. Use DuckDB SQL syntax.\n" + schema_text
-        )
+        sys_prompt = build_system_prompt(schema_text, mode="verify")
 
         # Phase 1: Ambiguity analysis
         ambiguity_results = await run_ambiguity_analysis(

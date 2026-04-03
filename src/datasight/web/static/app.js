@@ -47,6 +47,14 @@ function sanitizeMarkdown(text) {
   return DOMPurify.sanitize(marked.parse(text));
 }
 
+function renderMarkdownInto(el, text) {
+  el.innerHTML = sanitizeMarkdown(text);
+  el.querySelectorAll('pre code').forEach(block => {
+    hljs.highlightElement(block);
+  });
+  addCopyButtons(el);
+}
+
 async function fetchJson(url, opts) {
   const resp = await fetch(url, opts);
   if (!resp.ok) throw new Error('API error: ' + resp.status);
@@ -203,49 +211,32 @@ async function loadSettings() {
   } catch (e) { /* ignore */ }
 }
 
-async function toggleConfirmSql() {
-  confirmSqlEnabled = !confirmSqlEnabled;
+async function toggleSetting(key, getCurrentValue, setCurrentValue) {
+  const oldVal = getCurrentValue();
+  setCurrentValue(!oldVal);
   updateSettingsButtons();
   try {
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirm_sql: confirmSqlEnabled }),
+      body: JSON.stringify({ [key]: getCurrentValue() }),
     });
   } catch (e) {
-    confirmSqlEnabled = !confirmSqlEnabled;
+    setCurrentValue(oldVal);
     updateSettingsButtons();
   }
 }
 
-async function toggleExplainSql() {
-  explainSqlEnabled = !explainSqlEnabled;
-  updateSettingsButtons();
-  try {
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ explain_sql: explainSqlEnabled }),
-    });
-  } catch (e) {
-    explainSqlEnabled = !explainSqlEnabled;
-    updateSettingsButtons();
-  }
+function toggleConfirmSql() {
+  toggleSetting('confirm_sql', () => confirmSqlEnabled, v => { confirmSqlEnabled = v; });
 }
 
-async function toggleClarifySql() {
-  clarifySqlEnabled = !clarifySqlEnabled;
-  updateSettingsButtons();
-  try {
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clarify_sql: clarifySqlEnabled }),
-    });
-  } catch (e) {
-    clarifySqlEnabled = !clarifySqlEnabled;
-    updateSettingsButtons();
-  }
+function toggleExplainSql() {
+  toggleSetting('explain_sql', () => explainSqlEnabled, v => { explainSqlEnabled = v; });
+}
+
+function toggleClarifySql() {
+  toggleSetting('clarify_sql', () => clarifySqlEnabled, v => { clarifySqlEnabled = v; });
 }
 
 function updateSettingsButtons() {
@@ -660,17 +651,17 @@ function handleSSEEvent(eventType, data) {
   }
 }
 
-function handleSqlConfirm(data) {
-  // Finalize any in-progress explanation text
+function finalizeAssistantBubble() {
   if (currentAssistantBubble && currentAssistantText) {
-    currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
-    currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
-      hljs.highlightElement(block);
-    });
-    addCopyButtons(currentAssistantBubble);
+    renderMarkdownInto(currentAssistantBubble, currentAssistantText);
     currentAssistantBubble = null;
     currentAssistantText = '';
   }
+}
+
+function handleSqlConfirm(data) {
+  // Finalize any in-progress explanation text
+  finalizeAssistantBubble();
 
   const el = document.createElement('div');
   el.className = 'sql-confirm-dialog';
@@ -723,15 +714,7 @@ function handleSqlRejected() {
 
 function handleExplanationDone() {
   // Finalize the explanation text bubble so tool results appear separately
-  if (currentAssistantBubble && currentAssistantText) {
-    currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
-    currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
-      hljs.highlightElement(block);
-    });
-    addCopyButtons(currentAssistantBubble);
-    currentAssistantBubble = null;
-    currentAssistantText = '';
-  }
+  finalizeAssistantBubble();
 }
 
 function handleToolStart(data) {
@@ -825,10 +808,7 @@ function handleToken(data) {
     currentAssistantText = '';
   }
   currentAssistantText += data.text;
-  currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
-  currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
-    hljs.highlightElement(block);
-  });
+  renderMarkdownInto(currentAssistantBubble, currentAssistantText);
   scrollToBottom();
 }
 
@@ -852,11 +832,7 @@ function addCopyButtons(container) {
 
 function finalize() {
   if (currentAssistantBubble && currentAssistantText) {
-    currentAssistantBubble.innerHTML = sanitizeMarkdown(currentAssistantText);
-    currentAssistantBubble.querySelectorAll('pre code').forEach(block => {
-      hljs.highlightElement(block);
-    });
-    addCopyButtons(currentAssistantBubble);
+    renderMarkdownInto(currentAssistantBubble, currentAssistantText);
     // If this looks like a clarifying question, add clickable option buttons
     if (clarifySqlEnabled) {
       const options = extractClarifyOptions(currentAssistantText);
@@ -938,11 +914,7 @@ function addMessage(role, text) {
   if (role === 'user') {
     bubble.textContent = text;
   } else {
-    bubble.innerHTML = sanitizeMarkdown(text);
-    bubble.querySelectorAll('pre code').forEach(block => {
-      hljs.highlightElement(block);
-    });
-    addCopyButtons(bubble);
+    renderMarkdownInto(bubble, text);
   }
   row.appendChild(bubble);
   messagesEl.appendChild(row);

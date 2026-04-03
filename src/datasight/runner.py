@@ -5,6 +5,7 @@ Provides a common async interface for executing SQL queries against local
 DuckDB files or remote Flight SQL servers.
 """
 
+import asyncio
 from typing import Protocol
 
 import duckdb
@@ -36,9 +37,13 @@ class DuckDBRunner:
     def __exit__(self, *exc):
         self.close()
 
-    async def run_sql(self, sql: str) -> pd.DataFrame:
-        assert self._conn is not None, "DuckDBRunner is closed"
+    def _execute(self, sql: str) -> pd.DataFrame:
+        if self._conn is None:
+            raise RuntimeError("DuckDBRunner is closed")
         return self._conn.execute(sql).fetchdf()
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        return await asyncio.to_thread(self._execute, sql)
 
 
 class FlightSqlRunner:
@@ -102,10 +107,9 @@ class FlightSqlRunner:
                     names.append(table_entry["table_name"].as_py())
         return names
 
-    async def run_sql(self, sql: str) -> pd.DataFrame:
+    def _execute(self, sql: str) -> pd.DataFrame:
         sql = sql.strip().rstrip(";")
         logger.info(f"Flight SQL query: {sql[:200]}")
-
         conn = self._get_conn()
         cursor = conn.cursor()
         cursor.execute(sql)
@@ -113,3 +117,6 @@ class FlightSqlRunner:
         df = table.to_pandas()
         logger.info(f"Flight SQL returned {len(df)} rows, {len(df.columns)} columns")
         return df
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        return await asyncio.to_thread(self._execute, sql)
