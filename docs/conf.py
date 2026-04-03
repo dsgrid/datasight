@@ -12,6 +12,8 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx_click",
     "sphinxcontrib.mermaid",
+    "sphinx_design",
+    "sphinx_copybutton",
 ]
 
 myst_enable_extensions = [
@@ -30,7 +32,18 @@ exclude_patterns = ["_build"]
 
 html_theme = "furo"
 html_static_path = ["_static"]
+html_css_files = ["custom.css"]
 html_title = "datasight"
+html_theme_options = {
+    "light_css_variables": {
+        "color-brand-primary": "#4a86c8",
+        "color-brand-content": "#023d60",
+    },
+    "dark_css_variables": {
+        "color-brand-primary": "#6ba3e0",
+        "color-brand-content": "#5ec4e8",
+    },
+}
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

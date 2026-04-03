@@ -44,7 +44,7 @@ in the project directory. CLI flags override `.env` values.
 | `SCHEMA_DESCRIPTION_PATH` | `./schema_description.md` | Schema description file |
 | `EXAMPLE_QUERIES_PATH` | `./queries.yaml` | Example queries file |
 | `PORT` | `8084` | Web UI port |
-| `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](query-log.md)) |
+| `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../end-user/query-log.md)) |
 | `QUERY_LOG_PATH` | `./query_log.jsonl` | Path to query log file |
 | `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries ([guide](../end-user/query-confidence.md)) |
 | `CONFIRM_SQL` | `false` | Require user approval before executing SQL ([guide](../end-user/query-confidence.md)) |
@@ -59,7 +59,7 @@ A datasight project directory contains:
 | `.env` | Yes | API key and connection settings |
 | `schema_description.md` | No | Domain context for the AI ([guide](schema-description.md)). Always a local file, even when using Flight SQL. |
 | `queries.yaml` | No | Example question/SQL pairs ([guide](example-queries.md)). Always a local file, even when using Flight SQL. |
-| `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](query-log.md)) |
+| `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../end-user/query-log.md)) |
 | `.datasight/` | No | Auto-created directory for app state (see below) |
 
 ### `.datasight/` directory
