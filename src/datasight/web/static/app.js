@@ -865,7 +865,7 @@ function extractClarifyOptions(text) {
 
   const optionRe = /^[-*]?\s*\*\*(.+?)\*\*\s*[—–-]/;
   const bulletRe = /^[-*]\s+(.+?)\s*[—–-]/;
-  const plainRe  = /^(\w[\w\s]*?)\s*[—–]\s+\S/;
+  const plainRe  = /^[-*]\s+(\w[\w\s]*?)\s*[—–]\s+\S/;
 
   // Find each "?" line and collect options that follow it.
   // Return the first group that has 2+ options.

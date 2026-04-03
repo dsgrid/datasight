@@ -202,11 +202,14 @@ def run(
         resolved_db_path = raw_db_path
 
     # Set env vars so the FastAPI app picks them up on startup
-    os.environ.setdefault("ANTHROPIC_API_KEY", api_key or "")
-    os.environ["ANTHROPIC_MODEL"] = resolved_model
-    if llm_provider == "github":
+    if llm_provider == "anthropic":
+        os.environ.setdefault("ANTHROPIC_API_KEY", api_key or "")
+        os.environ["ANTHROPIC_MODEL"] = resolved_model
+    elif llm_provider == "github":
         os.environ["GITHUB_TOKEN"] = api_key
         os.environ["GITHUB_MODELS_MODEL"] = resolved_model
+    elif llm_provider == "ollama":
+        os.environ["OLLAMA_MODEL"] = resolved_model
     os.environ["DB_MODE"] = resolved_db_mode
     os.environ["DB_PATH"] = resolved_db_path
     os.environ["DATASIGHT_PROJECT_DIR"] = project_dir
@@ -347,13 +350,12 @@ def verify(project_dir, model, queries_path, verbose):
         from datasight.prompts import build_system_prompt
         from datasight.verify import run_ambiguity_analysis, run_verification
 
-        base_url = (
-            os.getenv("OLLAMA_BASE_URL")
-            if llm_provider == "ollama"
-            else os.getenv("GITHUB_MODELS_BASE_URL")
-            if llm_provider == "github"
-            else os.getenv("ANTHROPIC_BASE_URL")
-        )
+        base_url_map = {
+            "ollama": "OLLAMA_BASE_URL",
+            "github": "GITHUB_MODELS_BASE_URL",
+            "anthropic": "ANTHROPIC_BASE_URL",
+        }
+        base_url = os.getenv(base_url_map.get(llm_provider, "ANTHROPIC_BASE_URL"))
         llm_client = create_llm_client(
             provider=llm_provider,
             api_key=api_key,

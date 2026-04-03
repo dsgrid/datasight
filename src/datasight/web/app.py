@@ -198,17 +198,16 @@ class AppState:
         self.confirm_sql: bool = False
         self.explain_sql: bool = False
         self.clarify_sql: bool = True
-        self._schema_text: str = ""
+        self.schema_text: str = ""
         # Pending SQL confirmations: request_id -> asyncio.Event + result
         self.pending_confirms: dict[str, dict[str, Any]] = {}
 
     def rebuild_system_prompt(self) -> None:
         """Rebuild the system prompt (e.g. after toggling explain_sql)."""
         self.system_prompt = build_system_prompt(
-            self._schema_text,
+            self.schema_text,
             mode="web",
             explain_sql=self.explain_sql,
-            clarify_sql=self.clarify_sql,
         )
 
 
@@ -672,12 +671,12 @@ async def _startup():
     else:
         logger.warning("No tables discovered in the database")
 
-    state._schema_text = format_schema_context(tables, user_desc)
+    state.schema_text = format_schema_context(tables, user_desc)
 
     example_queries = load_example_queries(example_queries_path, project_dir)
     state.example_queries_list = example_queries
     if example_queries:
-        state._schema_text += format_example_queries(example_queries)
+        state.schema_text += format_example_queries(example_queries)
         logger.info(f"Loaded {len(example_queries)} example queries")
 
     state.rebuild_system_prompt()
@@ -996,71 +995,71 @@ async def chat(request: Request):
             f"[clarify] is_first_turn={is_first_turn} clarify_sql={state.clarify_sql} msg_count={len(messages)}"
         )
         if is_first_turn and state.clarify_sql:
-            clarify_response = await state.llm_client.create_message(
-                model=state.model,
-                max_tokens=300,
-                system=(
-                    "You are an ambiguity detector. The user asked a data question about "
-                    "the following database:\n\n"
-                    f"{state._schema_text}\n\n"
-                    "Check if ANY of these are ambiguous:\n"
-                    "1. Time granularity unspecified (e.g. 'over time' without monthly/yearly)\n"
-                    "2. 'Top N' without a count\n"
-                    "3. Ambiguous metric\n"
-                    "4. Vague filters ('recent', 'high') without thresholds\n"
-                    "5. Ambiguous grouping column\n\n"
-                    "If ANY apply, respond with ONLY a JSON object like:\n"
-                    '{"ambiguous": true, "question": "Your clarifying question?", '
-                    '"options": [{"label": "Option A", "description": "short description"}, '
-                    '{"label": "Option B", "description": "short description"}]}\n'
-                    "Choose options appropriate for the data schema above.\n\n"
-                    'If NONE apply, respond with ONLY: {"ambiguous": false}'
-                ),
-                tools=[],
-                messages=[{"role": "user", "content": message}],
-            )
-            clarify_text = "".join(
-                b.text for b in clarify_response.content if isinstance(b, TextBlock)
-            ).strip()
-            logger.debug(f"[clarify] pre-check response: {clarify_text}")
-            # Strip markdown code fences if present
-            stripped = clarify_text.strip()
-            if stripped.startswith("```"):
-                stripped = stripped.split("\n", 1)[-1]  # remove opening fence line
-                if stripped.endswith("```"):
-                    stripped = stripped[:-3]
-                stripped = stripped.strip()
             try:
-                clarify_json: dict[str, Any] = json.loads(stripped)
-            except json.JSONDecodeError:
-                logger.warning(f"[clarify] Failed to parse JSON: {clarify_text}")
-                clarify_json = {"ambiguous": False}
-
-            if clarify_json.get("ambiguous"):
-                question = str(clarify_json.get("question", "Could you clarify?"))
-                raw_options: Any = clarify_json.get("options", [])
-                options: list[dict[str, Any]] = (
-                    raw_options if isinstance(raw_options, list) else []
+                clarify_response = await state.llm_client.create_message(
+                    model=state.model,
+                    max_tokens=300,
+                    system=(
+                        "You are an ambiguity detector. The user asked a data question about "
+                        "the following database:\n\n"
+                        f"{state.schema_text}\n\n"
+                        "Check if ANY of these are ambiguous:\n"
+                        "1. Time granularity unspecified (e.g. 'over time' without monthly/yearly)\n"
+                        "2. 'Top N' without a count\n"
+                        "3. Ambiguous metric\n"
+                        "4. Vague filters ('recent', 'high') without thresholds\n"
+                        "5. Ambiguous grouping column\n\n"
+                        "If ANY apply, respond with ONLY a JSON object like:\n"
+                        '{"ambiguous": true, "question": "Your clarifying question?", '
+                        '"options": [{"label": "Option A", "description": "short description"}, '
+                        '{"label": "Option B", "description": "short description"}]}\n'
+                        "Choose options appropriate for the data schema above.\n\n"
+                        'If NONE apply, respond with ONLY: {"ambiguous": false}'
+                    ),
+                    tools=[],
+                    messages=[{"role": "user", "content": message}],
                 )
-                lines: list[str] = [question]
-                for opt in options:
-                    label = opt.get("label", "")
-                    desc = opt.get("description", "")
-                    lines.append(f"- **{label}** — {desc}")
-                clarify_msg = "\n".join(lines)
+                clarify_text = "".join(
+                    b.text for b in clarify_response.content if isinstance(b, TextBlock)
+                ).strip()
+                logger.debug(f"[clarify] pre-check response: {clarify_text}")
+                # Strip markdown code fences if present
+                stripped = clarify_text.strip()
+                if stripped.startswith("```"):
+                    stripped = stripped.split("\n", 1)[-1]  # remove opening fence line
+                    if stripped.endswith("```"):
+                        stripped = stripped[:-3]
+                    stripped = stripped.strip()
+                try:
+                    clarify_json: dict[str, Any] = json.loads(stripped)
+                except json.JSONDecodeError:
+                    logger.warning(f"[clarify] Failed to parse JSON: {clarify_text}")
+                    clarify_json = {"ambiguous": False}
 
-                messages.append({"role": "assistant", "content": clarify_msg})
-                evt_log.append({"event": "assistant_message", "data": {"text": clarify_msg}})
-                state.conversations.save(session_id)
+                if clarify_json.get("ambiguous"):
+                    question = str(clarify_json.get("question", "Could you clarify?"))
+                    raw_options: Any = clarify_json.get("options", [])
+                    options: list[dict[str, Any]] = (
+                        raw_options if isinstance(raw_options, list) else []
+                    )
+                    lines: list[str] = [question]
+                    for opt in options:
+                        label = opt.get("label", "")
+                        desc = opt.get("description", "")
+                        lines.append(f"- **{label}** — {desc}")
+                    clarify_msg = "\n".join(lines)
 
-                words = clarify_msg.split(" ")
-                for i, word in enumerate(words):
-                    chunk = word if i == 0 else " " + word
-                    yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
-                    await asyncio.sleep(0.015)
+                    messages.append({"role": "assistant", "content": clarify_msg})
+                    evt_log.append({"event": "assistant_message", "data": {"text": clarify_msg}})
+                    state.conversations.save(session_id)
 
-                yield "event: done\ndata: {}\n\n"
-                return
+                    # Stream word-by-word to match the UX of the main loop
+                    yield f"event: token\ndata: {json.dumps({'text': clarify_msg})}\n\n"
+
+                    yield "event: done\ndata: {}\n\n"
+                    return
+            except Exception:
+                logger.exception("[clarify] Pre-check failed, skipping clarification")
 
         total_input_tokens = 0
         total_output_tokens = 0

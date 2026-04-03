@@ -31,11 +31,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ollama = [
+openai-compat = [
     "openai>=2,<3",
 ]
+ollama = [
+    "datasight[openai-compat]",
+]
 github = [
-    "openai>=2,<3",
+    "datasight[openai-compat]",
 ]
 dev = [
     "pytest>=8.0,<9",

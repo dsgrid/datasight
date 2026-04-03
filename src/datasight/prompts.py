@@ -115,7 +115,6 @@ def build_system_prompt(
     *,
     mode: str = "web",
     explain_sql: bool = False,
-    **_kwargs: Any,
 ) -> str:
     """Build a complete system prompt.
 
