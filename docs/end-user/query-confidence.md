@@ -40,6 +40,34 @@ the output represents. This helps you verify the logic without reading SQL.
 
 Enable by clicking the question mark button in the header toolbar.
 
+## Important caveats about AI-generated queries and results
+
+datasight uses AI to translate natural language into SQL. While the query
+confidence features above reduce the risk of errors, **AI-generated queries
+and their results should always be treated as unverified drafts.** Keep the
+following in mind:
+
+- **Queries may be incorrect.** The AI can misinterpret your question,
+  choose the wrong columns, apply incorrect filters, or use flawed
+  aggregation logic -- even when the results look plausible.
+- **Results can be misleading.** A query that runs without errors is not
+  necessarily a correct query. Spot-check row counts, totals, and edge
+  cases before drawing conclusions.
+- **Verify before publishing.** Never include AI-generated queries or
+  results in reports, dashboards, or decision-making without independent
+  verification by someone who understands the underlying data.
+- **Different runs may produce different SQL.** The same natural language
+  question can yield different queries across sessions, potentially with
+  different results.
+- **The AI has no domain expertise.** It relies on column names and schema
+  descriptions to infer meaning. If the schema is ambiguous or incomplete,
+  the AI may make wrong assumptions about what the data represents.
+
+Enable **SQL approval mode** and **SQL explanations** (described above) to
+review every query before it runs. For high-stakes analyses, use the
+[query verification](../dataset-developer/verification.md) workflow to
+validate results against known expected outputs.
+
 ## Tips for getting consistent results
 
 Even without these features, you can improve consistency by being specific:
