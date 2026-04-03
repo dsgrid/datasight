@@ -80,22 +80,10 @@ def format_schema_context(
         parts.append("")
 
     parts.append("### Guidelines")
-    parts.append("- IMPORTANT: Always use the run_sql tool to execute queries. Never write SQL")
-    parts.append("  inline in your response — always call the tool so the user sees real results.")
-    parts.append("- A chart is automatically created when run_sql returns results.")
-    parts.append("- When writing SQL for visualization, SELECT only 2-3 columns (e.g. one")
-    parts.append("  category/date column and one numeric column) for best chart results.")
-    parts.append("- IMPORTANT: Only SELECT columns that exist in the tables you are querying.")
-    parts.append("  Check the schema above carefully. If a column is in a different table,")
-    parts.append("  you MUST JOIN that table first.")
-    parts.append("- When the user asks for 'top N', use a CTE or subquery to find the top N")
-    parts.append("  first, then filter the main query to only include those results.")
-    parts.append("- Use DuckDB SQL syntax. For dates use: DATE_TRUNC('month', col),")
-    parts.append(
-        "  EXTRACT(YEAR FROM col), STRFTIME(col, '%Y-%m'). Do NOT use TO_DATE or TO_CHAR."
-    )
-    parts.append("- For visualizations: bar charts for comparisons, line charts for trends,")
-    parts.append("  pie/donut for composition. Always label axes with units.")
+    parts.append("- Only SELECT columns that exist in your FROM tables. JOIN if needed.")
+    parts.append("- For 'top N', use a CTE/subquery to find the top N first.")
+    parts.append("- DuckDB dates: DATE_TRUNC, EXTRACT, STRFTIME. Not TO_DATE/TO_CHAR.")
+    parts.append("- For charts: SELECT 2-3 columns (category/date + numeric).")
     parts.append("")
 
     return "\n".join(parts)

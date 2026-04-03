@@ -36,6 +36,8 @@ class ToolUseBlock:
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 
 @dataclass
@@ -85,7 +87,13 @@ class AnthropicLLMClient:
         response = await self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=system,
+            system=[
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             tools=tools,
             messages=messages,
         )
@@ -107,6 +115,9 @@ class AnthropicLLMClient:
         usage = Usage(
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            cache_creation_input_tokens=getattr(response.usage, "cache_creation_input_tokens", 0)
+            or 0,
+            cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
         )
         return LLMResponse(content=content, stop_reason=stop, usage=usage)
 

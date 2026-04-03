@@ -202,62 +202,31 @@ def _rebuild_system_prompt() -> None:
     """Rebuild the system prompt (e.g. after toggling explain_sql)."""
     global system_prompt
     base_prompt = (
-        "You are datasight, an expert data analyst assistant. You help users "
-        "explore and understand data stored in a DuckDB database by writing and "
-        "executing SQL queries and creating visualizations.\n\n"
-        "When a user asks a question:\n"
-        "1. Think about what data would answer their question.\n"
-        "2. Use the run_sql tool to query the database. A chart will be "
-        "created automatically from the results.\n"
-        "3. If the user wants a specific visualization, use the visualize_data tool "
-        "with a Plotly.js spec. You can create ANY Plotly chart type: bar, line, scatter, "
-        "pie, choropleth maps, treemaps, sunburst, sankey, funnel, 3D plots, waterfall, "
-        "parallel coordinates, candlestick, heatmap, and more.\n"
-        "4. Explain the results clearly.\n\n"
-        "In visualize_data Plotly specs, set trace values to column name strings and they "
-        "will be replaced with actual data arrays from the SQL results. "
-        'Use {"literal": value} to pass values that should NOT be treated as column references.\n\n'
-        "Always use the tools to execute SQL — never write SQL inline without "
-        "executing it. Use DuckDB SQL syntax.\n"
+        "You are datasight, an expert data analyst. You explore a DuckDB database "
+        "via SQL queries and Plotly visualizations.\n\n"
+        "1. Use run_sql to query data (auto-creates a chart).\n"
+        "2. Use visualize_data with a Plotly spec for custom charts.\n"
+        "3. Explain results clearly.\n\n"
+        "Always execute SQL via tools — never write it inline. Use DuckDB syntax.\n\n"
+        "After your final answer, add a line `---` then a JSON array of 2-3 short "
+        "follow-up questions. Example:\n---\n"
+        '["What is the trend over time?", "Break this down by category"]\n'
     )
     if explain_sql:
         base_prompt += (
-            "\nIMPORTANT: Before executing any SQL query, you MUST first provide a "
-            "brief plain-English explanation of the query. Explain: which tables are "
-            "queried, what joins are used, what filters are applied, what aggregations "
-            "are performed, and what the output represents. Keep the explanation concise "
-            "(2-4 sentences). This helps the user verify the query logic is correct.\n"
+            "\nBefore executing SQL, briefly explain the query in plain English "
+            "(tables, joins, filters, aggregations) in 2-3 sentences.\n"
         )
     if clarify_sql:
         base_prompt += (
-            "\nIMPORTANT — MANDATORY CLARIFICATION RULES:\n"
-            "Before writing any SQL, you MUST check the user's question against these "
-            "rules. If ANY rule is triggered, you MUST stop and ask the user to clarify "
-            "BEFORE calling any tool. Do not make assumptions.\n\n"
-            "1. **Temporal granularity**: If the question involves trends, changes, or "
-            "time (phrases like 'over time', 'trend', 'growth', 'by year/month', "
-            "'historically') and does NOT explicitly state the granularity (daily, "
-            "weekly, monthly, quarterly, yearly), you MUST ask: 'What time granularity "
-            "— monthly or yearly?' (or other options that fit the data).\n"
-            "2. **Aggregation scope**: If the question says 'top', 'largest', 'biggest', "
-            "'most' without specifying a count, you MUST ask: 'How many? (e.g. top 5, "
-            "top 10, all)'.\n"
-            "3. **Metric choice**: If 'largest', 'biggest', 'most' could refer to "
-            "different numeric columns, you MUST ask which metric.\n"
-            "4. **Filter boundaries**: If the question uses relative terms like 'recent', "
-            "'old', 'high', 'low' without numeric thresholds or date ranges, you MUST ask "
-            "for specifics.\n"
-            "5. **Grouping level**: If the question references a category and multiple "
-            "columns could serve as the grouping key, you MUST ask which one.\n\n"
-            "When asking a clarifying question, use this EXACT format — a short question "
-            "followed by options as a markdown list with bold labels:\n"
-            "```\n"
-            "What time granularity would you like?\n"
-            "- **Monthly** — one row per month\n"
-            "- **Yearly** — one row per year\n"
-            "```\n"
-            "Always use this list format for options. Keep descriptions short (under 10 words).\n"
-            "If NONE of these rules are triggered, proceed directly with the query.\n"
+            "\nCLARIFICATION: Before writing SQL, ask the user to clarify if any apply:\n"
+            "1. Time granularity unspecified (daily/monthly/yearly?)\n"
+            "2. 'Top N' without a count\n"
+            "3. Ambiguous metric (multiple numeric columns possible)\n"
+            "4. Vague filters ('recent', 'high') without thresholds\n"
+            "5. Ambiguous grouping column\n"
+            "Format: short question + markdown list with **bold** options.\n"
+            "If none apply, proceed directly.\n"
         )
     system_prompt = base_prompt + _schema_text
 
@@ -265,10 +234,7 @@ def _rebuild_system_prompt() -> None:
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "run_sql",
-        "description": (
-            "Execute a SQL query against the database and return results as a table. "
-            "Use DuckDB SQL syntax. Always use this tool instead of writing SQL inline."
-        ),
+        "description": "Execute a DuckDB SQL query and return results as a table.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -283,26 +249,16 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "visualize_data",
         "description": (
-            "Execute a SQL query and render the results as an interactive Plotly.js chart. "
-            "You provide a full Plotly spec with 'data' (array of trace objects) and "
-            "'layout' (layout object). This supports ANY Plotly.js chart type: bar, line, "
-            "scatter, pie, choropleth maps, scattergeo, treemaps, sunburst, sankey diagrams, "
-            "funnel, 3D scatter/surface, candlestick, waterfall, parallel coordinates, "
-            "heatmap, histogram, box, violin, and more. "
-            "Use column names from your SQL query as placeholders in the spec — string values "
-            "matching column names will be replaced with actual data arrays from the query results. "
-            'For example: "locations": "state_code" becomes "locations": ["CA", "TX", ...]. '
-            'For literal values that happen to match a column name, wrap them: {"literal": "value"}. '
-            "The layout object is passed through as-is to Plotly. "
-            "Use the SAME or similar SQL query that you used with run_sql. "
-            "Do NOT embed raw data values in the SQL — always query the database tables."
+            "Execute SQL and render as a Plotly.js chart. Any Plotly chart type is supported. "
+            "String values in traces matching SQL column names are replaced with data arrays. "
+            'Use {"literal": value} for strings that should NOT be treated as column refs.'
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "sql": {
                     "type": "string",
-                    "description": "SQL SELECT query to fetch data for visualization",
+                    "description": "SQL SELECT query to fetch data",
                 },
                 "title": {
                     "type": "string",
@@ -311,17 +267,8 @@ TOOLS: list[dict[str, Any]] = [
                 "plotly_spec": {
                     "type": "object",
                     "description": (
-                        "A Plotly.js specification with 'data' and 'layout' keys. "
-                        "In 'data' traces, string values matching column names from the SQL query "
-                        "will be replaced with arrays of actual values. "
-                        "Example bar chart: "
-                        '{"data": [{"type": "bar", "x": "category", "y": "total"}], '
-                        '"layout": {}}. '
-                        "Example choropleth: "
-                        '{"data": [{"type": "choropleth", "locationmode": "USA-states", '
-                        '"locations": "state_code", "z": "total_mwh", '
-                        '"colorscale": {"literal": "Viridis"}}], '
-                        '"layout": {"geo": {"scope": "usa"}}}'
+                        "Plotly.js spec with 'data' and 'layout' keys. "
+                        'Example: {"data": [{"type": "bar", "x": "category", "y": "total"}], "layout": {}}'
                     ),
                     "properties": {
                         "data": {
@@ -386,31 +333,19 @@ def _sql_error_hint(error_msg: str) -> str:
     lower = error_msg.lower()
     if "not found in from clause" in lower or "referenced column" in lower:
         hints.append(
-            "HINT: The column you referenced does not exist in the table(s) in "
-            "your FROM clause. Check the schema to see which table has this "
-            "column and add a JOIN if needed. For example, 'state' is in the "
-            "plants table, not generation_fuel."
+            "HINT: Column not found in FROM tables. Check the schema and add a JOIN if needed."
         )
     if "ambiguous" in lower:
-        hints.append("HINT: Qualify the column with a table alias (e.g. p.state, g.report_date).")
+        hints.append("HINT: Qualify the column with a table alias.")
     if "scalar function" in lower and "does not exist" in lower:
         hints.append(
-            "HINT: This is DuckDB, not PostgreSQL or MySQL. Use DuckDB date functions: "
-            "DATE_TRUNC('month', col), EXTRACT(YEAR FROM col), STRFTIME(col, '%Y-%m'), "
-            "col::DATE. Do NOT use TO_DATE, DATE_FORMAT, STR_TO_DATE, or TO_CHAR."
+            "HINT: DuckDB syntax — use DATE_TRUNC, EXTRACT, STRFTIME, col::DATE. "
+            "Not TO_DATE, DATE_FORMAT, TO_CHAR."
         )
     if "table with name" in lower and "does not exist" in lower:
-        hints.append(
-            "HINT: Only these tables exist: generation_fuel, plants, plant_details "
-            "(and their views). CTEs and subquery aliases are not real tables — "
-            "you must include the full query, not reference a previous CTE by name."
-        )
+        hints.append("HINT: Table not found. Check the schema for available tables.")
     if "syntax error" in lower:
-        hints.append(
-            "HINT: Write a plain SQL SELECT query against the database tables. "
-            "Do not embed raw data, XML tags, or backslash line continuations in SQL. "
-            "Do not use <tool_response> or similar tags — just write a normal SELECT."
-        )
+        hints.append("HINT: Write a plain SQL SELECT query. No embedded data or XML tags.")
     return ("\n" + "\n".join(hints)) if hints else ""
 
 
@@ -518,7 +453,7 @@ async def execute_tool(
                 meta["row_count"] = 0
                 return "Query executed successfully. No rows returned.", None, None, meta
             csv = df.to_csv(index=False)
-            preview = csv if len(csv) <= 1000 else csv[:1000] + "\n(truncated)"
+            preview = csv if len(csv) <= 500 else csv[:500] + "\n..."
             result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
             result_html = _df_to_html_table(df)
             return result_text, result_html, None, meta
@@ -615,32 +550,35 @@ def get_session_messages(session_id: str) -> list[dict[str, Any]]:
     return conversations.get(session_id)["messages"]
 
 
-async def _generate_suggestions(
-    messages: list[dict[str, Any]],
-) -> list[str]:
-    """Ask the LLM for 2-3 follow-up question suggestions."""
-    assert llm_client is not None
-    # Build a compact context: just the last user message and assistant reply
-    recent = [m for m in messages[-4:] if isinstance(m.get("content"), str)]
-    if not recent:
+_MAX_HISTORY_PAIRS = 10  # Keep last N user/assistant exchanges
+
+
+def _trim_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only recent messages to bound input token growth.
+
+    Preserves the last ``_MAX_HISTORY_PAIRS`` user/assistant exchange pairs
+    (including tool_use/tool_result sequences).  Earlier messages are dropped.
+    """
+    if len(messages) <= _MAX_HISTORY_PAIRS * 2:
+        return messages
+    return messages[-_MAX_HISTORY_PAIRS * 2 :]
+
+
+def _extract_suggestions(text: str) -> list[str]:
+    """Extract follow-up suggestions from the model's response.
+
+    Looks for a ``---`` separator followed by a JSON array of strings.
+    """
+    parts = re.split(r"\n---\s*\n", text, maxsplit=1)
+    if len(parts) < 2:
         return []
-    response = await llm_client.create_message(
-        model=model,
-        max_tokens=200,
-        system=(
-            "Based on the conversation, suggest 2-3 short follow-up questions the user "
-            "might ask next. Return ONLY a JSON array of strings, nothing else. "
-            'Example: ["What is the trend over time?", "Break this down by category"]'
-        ),
-        tools=[],
-        messages=recent,
-    )
-    text = "".join(b.text for b in response.content if isinstance(b, TextBlock)).strip()
-    # Parse JSON array from response
-    match = re.search(r"\[.*\]", text, re.DOTALL)
+    match = re.search(r"\[.*\]", parts[1], re.DOTALL)
     if not match:
         return []
-    return json.loads(match.group())
+    try:
+        return json.loads(match.group())
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -1033,13 +971,14 @@ async def chat(request: Request):
         total_output_tokens = 0
         api_calls = 0
         for _ in range(max_iterations):
+            trimmed = _trim_messages(messages)
             try:
                 response = await llm_client.create_message(
                     model=model,
                     max_tokens=4096,
                     system=system_prompt,
                     tools=TOOLS,
-                    messages=messages,
+                    messages=trimmed,
                 )
             except Exception as e:
                 logger.error(f"LLM API error: {e}")
@@ -1055,6 +994,8 @@ async def chat(request: Request):
             logger.info(
                 f"[tokens] call={api_calls} "
                 f"input={response.usage.input_tokens} output={response.usage.output_tokens} "
+                f"cache_create={response.usage.cache_creation_input_tokens} "
+                f"cache_read={response.usage.cache_read_input_tokens} "
                 f"cumulative_input={total_input_tokens} cumulative_output={total_output_tokens}"
             )
 
@@ -1187,8 +1128,12 @@ async def chat(request: Request):
                 messages.append({"role": "user", "content": tool_results})
                 continue
 
-            # Final text response
+            # Final text response — extract inline suggestions if present
             text = "".join(b.text for b in response.content if isinstance(b, TextBlock))
+            suggestions = _extract_suggestions(text)
+            if suggestions:
+                # Strip the suggestions block from the visible text
+                text = re.split(r"\n---\s*\n", text, maxsplit=1)[0].rstrip()
 
             messages.append({"role": "assistant", "content": text})
             evt_log.append({"event": "assistant_message", "data": {"text": text}})
@@ -1203,15 +1148,10 @@ async def chat(request: Request):
             _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
             yield "event: done\ndata: {}\n\n"
 
-            # Generate follow-up suggestions (non-blocking, best-effort)
-            try:
-                suggestions = await _generate_suggestions(messages)
-                if suggestions:
-                    evt_log.append({"event": "suggestions", "data": {"suggestions": suggestions}})
-                    conversations.save(session_id)
-                    yield f"event: suggestions\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
-            except Exception:
-                pass  # suggestions are optional
+            if suggestions:
+                evt_log.append({"event": "suggestions", "data": {"suggestions": suggestions}})
+                conversations.save(session_id)
+                yield f"event: suggestions\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
             return
 
         _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
