@@ -67,7 +67,7 @@ dilutes the signal and bloats the system prompt.
 
 Each entry can include an `expected` block used by `datasight verify` to
 validate that the AI generates correct SQL. See
-[Verify and validate queries](verification.md) for full details.
+[Verify queries across models](verification.md) for full details.
 
 ```yaml
 - question: What are the top 5 states by solar generation?

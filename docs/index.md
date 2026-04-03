@@ -23,36 +23,38 @@ datasight run
 
 ```{toctree}
 :maxdepth: 2
-:caption: Tutorials
+:caption: End user
 
-tutorials/quickstart
-tutorials/demo-dataset
+end-user/web-ui
+end-user/visualizations
+end-user/query-confidence
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: How-to guides
+:caption: Dataset developer
 
-how-to/web-ui
-how-to/schema-description
-how-to/example-queries
-how-to/visualizations
-how-to/query-log
-how-to/verification
-how-to/remote-hpc
+dataset-developer/quickstart
+dataset-developer/demo-dataset
+dataset-developer/schema-description
+dataset-developer/example-queries
+dataset-developer/verification
+dataset-developer/query-log
+dataset-developer/remote-hpc
+dataset-developer/configuration
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: Reference
+:caption: Tool developer
 
-reference/cli
-reference/configuration
+tool-developer/cli
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: Explanation
+:caption: Core concepts
 
-explanation/architecture
+concepts/users-and-roles
+concepts/architecture
 ```

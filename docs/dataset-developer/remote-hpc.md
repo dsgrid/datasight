@@ -109,6 +109,7 @@ cmake --build build --target install
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+(step-2-create-views-over-parquet-files)=
 ## Step 2: Create views over parquet files
 
 You have two options for how GizmoSQL manages the database:

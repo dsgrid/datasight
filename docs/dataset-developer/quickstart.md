@@ -81,10 +81,10 @@ DB_PATH=./my_database.duckdb
 
 Edit `schema_description.md` to explain your data — domain concepts, column
 meanings, code lookups, and query tips. The AI uses this context to write
-better SQL. See [](../how-to/schema-description.md) for guidance.
+better SQL. See [](schema-description.md) for guidance.
 
 Edit `queries.yaml` with example questions and their correct SQL. See
-[](../how-to/example-queries.md) for guidance.
+[](example-queries.md) for guidance.
 
 ## Run
 

@@ -1,10 +1,9 @@
-# Verify and validate queries
+# Verify queries across models
 
 datasight generates SQL from natural language, which means the same question
 could produce different queries depending on the model, provider, or even
-the run. The verification system helps you build confidence in the results
-by testing queries against expected outcomes and catching ambiguous questions
-before they cause problems.
+the run. The `datasight verify` command helps you validate that your example
+queries produce correct results regardless of which LLM is used.
 
 ## The verification workflow
 
@@ -112,58 +111,6 @@ Run the same suite against different models to compare reliability:
 datasight verify --model claude-sonnet-4-20250514
 datasight verify --model claude-opus-4-5
 LLM_PROVIDER=ollama datasight verify --model qwen3.5:35b-a3b
-```
-
-## Runtime confidence features
-
-These features work in the web UI during interactive use. All are toggleable
-from the header toolbar or via CLI flags.
-
-### Clarify ambiguous queries (on by default)
-
-When enabled, the AI asks clarifying questions before writing SQL if the
-user's question is ambiguous. It checks for:
-
-- **Temporal granularity** -- "over time" without specifying monthly/yearly
-- **Aggregation scope** -- "top states" without a count
-- **Metric choice** -- "largest" when multiple numeric columns exist
-- **Filter boundaries** -- "recent" without a date range
-- **Grouping level** -- when multiple grouping columns are available
-
-Clarifying questions appear with clickable option buttons so the user can
-respond with one click.
-
-```bash
-# Enabled by default. Disable with:
-datasight run --no-clarify
-
-# Or via environment variable:
-CLARIFY_SQL=false
-```
-
-### SQL approval mode (off by default)
-
-Shows each SQL query in an editable text area before execution. The user
-can approve, edit, or reject the query.
-
-```bash
-datasight run --confirm-sql
-
-# Or via environment variable:
-CONFIRM_SQL=true
-```
-
-### SQL explanations (off by default)
-
-The AI explains each query in plain English before executing it -- what
-tables are queried, what joins and filters are applied, and what the output
-represents.
-
-```bash
-datasight run --explain-sql
-
-# Or via environment variable:
-EXPLAIN_SQL=true
 ```
 
 ## Writing deterministic queries
