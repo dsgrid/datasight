@@ -104,9 +104,25 @@ _BASE_WEB_PROMPT = (
     "Use visualize_data with a Plotly spec for custom charts. "
     "Explain results clearly.\n\n"
     "Always execute SQL via tools — never write it inline. Use DuckDB syntax.\n\n"
+    "You MUST only use tables and columns listed in the schema below. "
+    "If the user asks about data that doesn't exist in the schema, say so — "
+    "do not guess or invent column names.\n\n"
     "After your final answer, add a line `---` then a JSON array of 2-3 short "
     "follow-up questions. Example:\n---\n"
     '["What is the trend over time?", "Break this down by category"]\n'
+)
+
+_CLARIFY_PROMPT = (
+    "\n## Ambiguity Check\n"
+    "Before writing SQL, check the user's question for ambiguity:\n"
+    "1. Time granularity unspecified (e.g. 'over time' without monthly/yearly)\n"
+    "2. 'Top N' without specifying a count\n"
+    "3. Ambiguous metric (multiple numeric columns could apply)\n"
+    "4. Vague filters ('recent', 'high') without thresholds\n"
+    "5. Ambiguous grouping column\n\n"
+    "If ANY of these apply, ask a brief clarifying question with concrete options "
+    "before executing any SQL. Do NOT call any tools until ambiguity is resolved.\n"
+    "If the question is clear, proceed directly to querying.\n"
 )
 
 
@@ -115,6 +131,7 @@ def build_system_prompt(
     *,
     mode: str = "web",
     explain_sql: bool = False,
+    clarify_sql: bool = True,
 ) -> str:
     """Build a complete system prompt.
 
@@ -128,6 +145,9 @@ def build_system_prompt(
         verification CLI.
     explain_sql:
         If True, instruct the LLM to explain queries before executing.
+    clarify_sql:
+        If True, include ambiguity-detection instructions so the LLM asks
+        for clarification on vague questions (web mode only).
     """
     base = _BASE_WEB_PROMPT if mode == "web" else _BASE_VERIFY_PROMPT
 
@@ -136,5 +156,8 @@ def build_system_prompt(
             "\nBefore executing SQL, briefly explain the query in plain English "
             "(tables, joins, filters, aggregations) in 2-3 sentences.\n"
         )
+
+    if clarify_sql and mode == "web":
+        base += _CLARIFY_PROMPT
 
     return base + schema_text

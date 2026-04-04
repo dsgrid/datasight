@@ -7,11 +7,13 @@ Ollama LLM backends via a common abstraction layer.
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,7 @@ from datasight.llm import (
 from datasight.prompts import WEB_TOOLS, build_system_prompt
 from datasight.query_log import QueryLogger
 from datasight.schema import introspect_schema, format_schema_context
+from datasight.sql_validation import validate_sql, build_schema_map
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -199,16 +202,43 @@ class AppState:
         self.explain_sql: bool = False
         self.clarify_sql: bool = True
         self.schema_text: str = ""
+        self.schema_map: dict[str, set[str]] = {}  # lowercase table -> lowercase columns
         # Pending SQL confirmations: request_id -> asyncio.Event + result
         self.pending_confirms: dict[str, dict[str, Any]] = {}
+        # Response cache: normalized question -> cached response data
+        self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._response_cache_max = 100
 
     def rebuild_system_prompt(self) -> None:
-        """Rebuild the system prompt (e.g. after toggling explain_sql)."""
+        """Rebuild the system prompt (e.g. after toggling explain_sql or clarify_sql)."""
         self.system_prompt = build_system_prompt(
             self.schema_text,
             mode="web",
             explain_sql=self.explain_sql,
+            clarify_sql=self.clarify_sql,
         )
+        # Invalidate response cache when prompt changes
+        self._response_cache.clear()
+
+    @staticmethod
+    def _cache_key(question: str) -> str:
+        """Normalize a question into a cache key."""
+        normalized = " ".join(question.lower().split())
+        return hashlib.sha256(normalized.encode()).hexdigest()
+
+    def cache_get(self, question: str) -> dict[str, Any] | None:
+        key = self._cache_key(question)
+        entry = self._response_cache.get(key)
+        if entry is not None:
+            self._response_cache.move_to_end(key)
+        return entry
+
+    def cache_put(self, question: str, data: dict[str, Any]) -> None:
+        key = self._cache_key(question)
+        self._response_cache[key] = data
+        self._response_cache.move_to_end(key)
+        while len(self._response_cache) > self._response_cache_max:
+            self._response_cache.popitem(last=False)
 
 
 state = AppState()
@@ -415,6 +445,26 @@ async def execute_tool(
     """
     if name == "run_sql":
         sql = input_data.get("sql", "")
+
+        # Validate SQL against known schema before executing
+        if state.schema_map:
+            vr = validate_sql(sql, state.schema_map)
+            if not vr.valid:
+                logger.warning(f"SQL validation failed: {vr.error_message}")
+                meta = {
+                    "tool": name,
+                    "sql": sql,
+                    "execution_time_ms": 0,
+                    "row_count": None,
+                    "column_count": None,
+                    "error": vr.error_message,
+                }
+                error_text = (
+                    f"SQL validation error: {vr.error_message}\n"
+                    "HINT: Check the schema and fix the table/column names."
+                )
+                return error_text, None, None, meta
+
         t0 = time.perf_counter()
         try:
             df = await state.sql_runner.run_sql(sql)
@@ -473,6 +523,26 @@ async def execute_tool(
         sql = input_data.get("sql", "")
         title = input_data.get("title", "Chart")
         plotly_spec = input_data.get("plotly_spec", {})
+
+        # Validate SQL against known schema before executing
+        if state.schema_map:
+            vr = validate_sql(sql, state.schema_map)
+            if not vr.valid:
+                logger.warning(f"SQL validation failed: {vr.error_message}")
+                meta = {
+                    "tool": name,
+                    "sql": sql,
+                    "execution_time_ms": 0,
+                    "row_count": None,
+                    "column_count": None,
+                    "error": vr.error_message,
+                }
+                error_text = (
+                    f"SQL validation error: {vr.error_message}\n"
+                    "HINT: Check the schema and fix the table/column names."
+                )
+                return error_text, None, None, meta
+
         t0 = time.perf_counter()
         try:
             df = await state.sql_runner.run_sql(sql)
@@ -672,6 +742,7 @@ async def _startup():
         logger.warning("No tables discovered in the database")
 
     state.schema_text = format_schema_context(tables, user_desc)
+    state.schema_map = build_schema_map(state.schema_info)
 
     example_queries = load_example_queries(example_queries_path, project_dir)
     state.example_queries_list = example_queries
@@ -987,79 +1058,33 @@ async def chat(request: Request):
             raise RuntimeError("LLM client not initialised")
         max_iterations = 15
 
-        # On the first user message, run a cheap pre-check to detect
-        # ambiguity before the main tool-use loop.  The pre-check has no
-        # tools so the model *must* respond with text.
         is_first_turn = len(messages) == 1
-        logger.debug(
-            f"[clarify] is_first_turn={is_first_turn} clarify_sql={state.clarify_sql} msg_count={len(messages)}"
-        )
-        if is_first_turn and state.clarify_sql:
-            try:
-                clarify_response = await state.llm_client.create_message(
-                    model=state.model,
-                    max_tokens=300,
-                    system=(
-                        "You are an ambiguity detector. The user asked a data question about "
-                        "the following database:\n\n"
-                        f"{state.schema_text}\n\n"
-                        "Check if ANY of these are ambiguous:\n"
-                        "1. Time granularity unspecified (e.g. 'over time' without monthly/yearly)\n"
-                        "2. 'Top N' without a count\n"
-                        "3. Ambiguous metric\n"
-                        "4. Vague filters ('recent', 'high') without thresholds\n"
-                        "5. Ambiguous grouping column\n\n"
-                        "If ANY apply, respond with ONLY a JSON object like:\n"
-                        '{"ambiguous": true, "question": "Your clarifying question?", '
-                        '"options": [{"label": "Option A", "description": "short description"}, '
-                        '{"label": "Option B", "description": "short description"}]}\n'
-                        "Choose options appropriate for the data schema above.\n\n"
-                        'If NONE apply, respond with ONLY: {"ambiguous": false}'
-                    ),
-                    tools=[],
-                    messages=[{"role": "user", "content": message}],
-                )
-                clarify_text = "".join(
-                    b.text for b in clarify_response.content if isinstance(b, TextBlock)
-                ).strip()
-                logger.debug(f"[clarify] pre-check response: {clarify_text}")
-                # Strip markdown code fences if present
-                stripped = clarify_text.strip()
-                if stripped.startswith("```"):
-                    stripped = stripped.split("\n", 1)[-1]  # remove opening fence line
-                    if stripped.endswith("```"):
-                        stripped = stripped[:-3]
-                    stripped = stripped.strip()
-                try:
-                    clarify_json: dict[str, Any] = json.loads(stripped)
-                except json.JSONDecodeError:
-                    logger.warning(f"[clarify] Failed to parse JSON: {clarify_text}")
-                    clarify_json = {"ambiguous": False}
 
-                if clarify_json.get("ambiguous"):
-                    question = str(clarify_json.get("question", "Could you clarify?"))
-                    raw_options: Any = clarify_json.get("options", [])
-                    options: list[dict[str, Any]] = (
-                        raw_options if isinstance(raw_options, list) else []
+        # Check response cache for first-turn questions
+        if is_first_turn:
+            cached = state.cache_get(message)
+            if cached is not None:
+                logger.info(f"[cache] HIT for question: {message[:60]}")
+                # Replay cached events into conversation and stream
+                for evt in cached["events"]:
+                    evt_log.append(evt)
+                    yield f"event: {evt['event']}\ndata: {json.dumps(evt['data'])}\n\n"
+                # Restore messages for session history
+                for msg in cached["messages"]:
+                    messages.append(msg)
+                state.conversations.save(session_id)
+                yield "event: done\ndata: {}\n\n"
+                if cached.get("suggestions"):
+                    evt_log.append(
+                        {"event": "suggestions", "data": {"suggestions": cached["suggestions"]}}
                     )
-                    lines: list[str] = [question]
-                    for opt in options:
-                        label = opt.get("label", "")
-                        desc = opt.get("description", "")
-                        lines.append(f"- **{label}** — {desc}")
-                    clarify_msg = "\n".join(lines)
-
-                    messages.append({"role": "assistant", "content": clarify_msg})
-                    evt_log.append({"event": "assistant_message", "data": {"text": clarify_msg}})
                     state.conversations.save(session_id)
+                    yield f"event: suggestions\ndata: {json.dumps({'suggestions': cached['suggestions']})}\n\n"
+                return
 
-                    # Stream word-by-word to match the UX of the main loop
-                    yield f"event: token\ndata: {json.dumps({'text': clarify_msg})}\n\n"
-
-                    yield "event: done\ndata: {}\n\n"
-                    return
-            except Exception:
-                logger.exception("[clarify] Pre-check failed, skipping clarification")
+        # Track starting positions for cache collection
+        _evt_start = len(evt_log)
+        _msg_start = len(messages)
 
         total_input_tokens = 0
         total_output_tokens = 0
@@ -1227,6 +1252,21 @@ async def chat(request: Request):
                 await asyncio.sleep(0.015)
 
             _log_query_cost(api_calls, total_input_tokens, total_output_tokens)
+
+            # Cache first-turn responses for identical future questions
+            if is_first_turn:
+                new_events = evt_log[_evt_start:]
+                new_messages = messages[_msg_start:]
+                state.cache_put(
+                    message,
+                    {
+                        "events": [e for e in new_events],
+                        "messages": [m for m in new_messages],
+                        "suggestions": suggestions,
+                    },
+                )
+                logger.info(f"[cache] STORED for question: {message[:60]}")
+
             yield "event: done\ndata: {}\n\n"
 
             if suggestions:

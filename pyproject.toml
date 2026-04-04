@@ -28,6 +28,7 @@ dependencies = [
     "uvicorn>=0.29,<1",
     "loguru>=0.7,<1",
     "truststore>=0.10.4",
+    "sqlglot>=26,<27",
 ]
 
 [project.optional-dependencies]

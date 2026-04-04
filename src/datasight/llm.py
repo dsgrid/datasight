@@ -108,6 +108,7 @@ class AnthropicLLMClient:
         response = await self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
+            temperature=0,
             system=[
                 {
                     "type": "text",
@@ -255,6 +256,7 @@ class _OpenAICompatibleClient:
             messages=openai_messages,
             tools=openai_tools if openai_tools else None,
             max_tokens=max_tokens,
+            temperature=0,
         )
 
         choice = response.choices[0]
