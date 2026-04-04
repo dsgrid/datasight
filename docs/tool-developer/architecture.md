@@ -47,6 +47,8 @@ flowchart TB
 
     subgraph db ["Database"]
         DUCK[DuckDB<br>local file]
+        SQLITE[SQLite<br>local file]
+        PG[PostgreSQL<br>remote server]
         FLIGHT[Flight SQL<br>remote server]
     end
 
@@ -55,6 +57,8 @@ flowchart TB
     LLM --> SQL
     LLM --> VIZ
     RUNNER --> DUCK
+    RUNNER --> SQLITE
+    RUNNER --> PG
     RUNNER --> FLIGHT
 
     style WEB fill:#15a8a8,stroke:#023d60,color:#fff
@@ -68,6 +72,8 @@ flowchart TB
     style RUNNER fill:#bf1363,stroke:#023d60,color:#fff
     style CHART fill:#bf1363,stroke:#023d60,color:#fff
     style DUCK fill:#fe5d26,stroke:#023d60,color:#fff
+    style SQLITE fill:#fe5d26,stroke:#023d60,color:#fff
+    style PG fill:#fe5d26,stroke:#023d60,color:#fff
     style FLIGHT fill:#fe5d26,stroke:#023d60,color:#fff
     style ui fill:#f0fafa,stroke:#15a8a8
     style agent fill:#f0f0fa,stroke:#023d60
@@ -107,7 +113,12 @@ sequenceDiagram
 ## Modules
 
 `datasight.cli`
-: Click CLI with `init`, `demo`, and `run` commands.
+: Click CLI with `init`, `demo`, `run`, `ask`, `verify`, `export`, and `log` commands.
+
+`datasight.agent`
+: Shared agent loop and tool execution. Used by both the web UI and the
+  headless `ask` CLI. Contains `run_agent_loop()`, `execute_tool()`, and
+  Plotly spec resolution helpers.
 
 `datasight.config`
 : Configuration helpers — loads schema descriptions, example queries, and
@@ -115,7 +126,8 @@ sequenceDiagram
 
 `datasight.schema`
 : Database introspection. Discovers tables, columns, and row counts using
-  multiple strategies (DuckDB `SHOW TABLES`, `INFORMATION_SCHEMA`, SQLite).
+  multiple strategies (DuckDB `SHOW TABLES`, `INFORMATION_SCHEMA`, SQLite
+  `PRAGMA table_info`).
 
 `datasight.llm`
 : LLM client abstraction with implementations for Anthropic, GitHub Models,
@@ -125,8 +137,13 @@ sequenceDiagram
 : Interactive Plotly chart generator with chart-type switching buttons.
 
 `datasight.runner`
-: SQL execution backends — `DuckDBRunner` for local files and
-  `FlightSqlRunner` for remote databases via Arrow gRPC.
+: SQL execution backends — `DuckDBRunner` and `SQLiteRunner` for local files,
+  `PostgresRunner` for PostgreSQL servers, and `FlightSqlRunner` for remote
+  databases via Arrow gRPC.
+
+`datasight.export`
+: Converts a conversation session into a self-contained HTML page with
+  inline CSS, Plotly charts, and syntax-highlighted SQL.
 
 `datasight.web.app`
 : FastAPI application with SSE streaming, tool execution, and REST API

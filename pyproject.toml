@@ -41,6 +41,12 @@ ollama = [
 github = [
     "datasight[openai-compat]",
 ]
+postgres = [
+    "psycopg[binary]>=3.1,<4",
+]
+export = [
+    "kaleido>=0.2,<1",
+]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",
@@ -57,6 +63,12 @@ dev = [
 
 [project.scripts]
 datasight = "datasight.cli:cli"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests requiring a running Ollama instance",
+]
 
 [tool.ruff]
 line-length = 99

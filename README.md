@@ -2,10 +2,11 @@
 
 AI-powered database exploration with natural language.
 
-datasight connects an AI agent to your DuckDB database and provides a
-web UI where you can ask questions in natural language. The agent writes SQL, runs
+datasight connects an AI agent to your database and provides a web UI
+where you can ask questions in natural language. The agent writes SQL, runs
 queries, and generates interactive Plotly visualizations.
 
+Supports **DuckDB**, **PostgreSQL**, **SQLite**, and **Flight SQL** databases.
 Supports **Anthropic Claude** (default), **GitHub Models** (Copilot subscription),
 and **Ollama** (local) as LLM backends.
 
@@ -28,15 +29,26 @@ datasight run
 
 Open http://localhost:8084 and start asking questions.
 
+Or ask from the command line without starting a server:
+
+```bash
+datasight ask "What are the top 10 records?"
+datasight ask "Show trends by year" --chart-format html -o chart.html
+```
+
 ## Features
 
 - **Natural language queries** — ask questions in English, get SQL + results
 - **Interactive charts** — Plotly visualizations with chart-type switching
+- **Multiple databases** — DuckDB, PostgreSQL, SQLite, and Flight SQL
+- **Headless CLI** — `datasight ask` runs queries without a web server
 - **Schema browser** — sidebar with tables, columns, and example queries
 - **Schema auto-discovery** — tables, columns, and types detected automatically
 - **Domain context** — describe your data in Markdown for better AI understanding
 - **Example queries** — seed the AI with question/SQL pairs
-- **Local or remote** — connect to local DuckDB files or remote Flight SQL servers
+- **Multi-chart dashboard** — pin results to a dashboard with configurable layouts
+- **Session export** — export conversations as shareable HTML pages
+- **Keyboard shortcuts** — `?` to see all shortcuts, `/` to focus input
 - **Streaming responses** — real-time SSE streaming from the LLM
 
 ## Architecture
@@ -47,12 +59,11 @@ lightweight HTML/JS frontend. Swap in GitHub Models or Ollama by setting
 Plotly.
 
 ```
-datasight run
-  → FastAPI + uvicorn
-    → LLM provider (Anthropic / GitHub Models / Ollama)
-      → DuckDB or Flight SQL
-      → Plotly chart generator
-    → SSE streaming to browser
+datasight run / datasight ask
+  → LLM provider (Anthropic / GitHub Models / Ollama)
+    → DuckDB / PostgreSQL / SQLite / Flight SQL
+    → Plotly chart generator
+  → Web UI (SSE streaming) or CLI output
 ```
 
 ## Documentation

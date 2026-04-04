@@ -2,8 +2,9 @@
 
 ```{rst-class} hero-tagline
 AI-powered database exploration with natural language. Connect an AI agent to
-your DuckDB database and explore data through a web UI — ask questions in plain
-English, get SQL queries, interactive charts, and tabular results.
+your database (DuckDB, PostgreSQL, SQLite, or Flight SQL) and explore data
+through a web UI or CLI — ask questions in plain English, get SQL queries,
+interactive charts, and tabular results.
 ```
 
 ````{div} install-block
@@ -74,8 +75,6 @@ end-user/remote-hpc
 dataset-developer/schema-description
 dataset-developer/example-queries
 dataset-developer/verification
-dataset-developer/configuration
-dataset-developer/cli
 ```
 
 ```{toctree}
@@ -84,6 +83,14 @@ dataset-developer/cli
 
 tool-developer/architecture
 tool-developer/contributing
+```
+
+```{toctree}
+:hidden:
+:caption: Reference
+
+reference/configuration
+reference/cli
 ```
 
 ```{toctree}

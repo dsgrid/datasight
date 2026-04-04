@@ -2,10 +2,11 @@
 SQL runners for datasight.
 
 Provides a common async interface for executing SQL queries against local
-DuckDB files or remote Flight SQL servers.
+DuckDB files, remote Flight SQL servers, PostgreSQL, or SQLite databases.
 """
 
 import asyncio
+import sqlite3
 from typing import Protocol
 
 import duckdb
@@ -41,6 +42,102 @@ class DuckDBRunner:
         if self._conn is None:
             raise RuntimeError("DuckDBRunner is closed")
         return self._conn.execute(sql).fetchdf()
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        return await asyncio.to_thread(self._execute, sql)
+
+
+class SQLiteRunner:
+    """Execute SQL against a local SQLite file."""
+
+    def __init__(self, database_path: str):
+        self._conn = sqlite3.connect(database_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        logger.info(f"Connected to SQLite: {database_path}")
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _execute(self, sql: str) -> pd.DataFrame:
+        if self._conn is None:
+            raise RuntimeError("SQLiteRunner is closed")
+        cursor = self._conn.execute(sql)
+        rows = cursor.fetchall()
+        if not rows:
+            cols = [desc[0] for desc in cursor.description] if cursor.description else []
+            return pd.DataFrame(columns=cols)
+        cols = [desc[0] for desc in cursor.description]
+        return pd.DataFrame(rows, columns=cols)
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        return await asyncio.to_thread(self._execute, sql)
+
+
+class PostgresRunner:
+    """Execute SQL against a PostgreSQL database using psycopg."""
+
+    def __init__(
+        self,
+        *,
+        host: str = "localhost",
+        port: int = 5432,
+        dbname: str = "",
+        user: str = "",
+        password: str = "",
+        url: str = "",
+        sslmode: str = "prefer",
+    ):
+        try:
+            import psycopg  # ty: ignore[unresolved-import]
+        except ImportError:
+            raise ImportError(
+                "The 'psycopg' package is required for PostgreSQL support. "
+                "Install it with: pip install 'datasight[postgres]'"
+            )
+        if url:
+            self._conn = psycopg.connect(url, autocommit=True)
+            logger.info("Connected to PostgreSQL via URL")
+        else:
+            self._conn = psycopg.connect(
+                host=host,
+                port=port,
+                dbname=dbname,
+                user=user,
+                password=password,
+                sslmode=sslmode,
+                autocommit=True,
+            )
+            logger.info(f"Connected to PostgreSQL: {host}:{port}/{dbname}")
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _execute(self, sql: str) -> pd.DataFrame:
+        if self._conn is None:
+            raise RuntimeError("PostgresRunner is closed")
+        cursor = self._conn.execute(sql)
+        rows = cursor.fetchall()
+        if not rows:
+            cols = [desc[0] for desc in cursor.description] if cursor.description else []
+            return pd.DataFrame(columns=cols)
+        cols = [desc[0] for desc in cursor.description]
+        return pd.DataFrame(rows, columns=cols)
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
         return await asyncio.to_thread(self._execute, sql)

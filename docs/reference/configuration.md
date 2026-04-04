@@ -38,8 +38,30 @@ in the project directory. CLI flags override `.env` values.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_MODE` | `local` | `local` for DuckDB file, `flightsql` for remote |
-| `DB_PATH` | `./database.duckdb` | Path to local DuckDB file (ignored when `DB_MODE=flightsql`) |
+| `DB_MODE` | `local` | Database type: `local` (DuckDB), `sqlite`, `postgres`, or `flightsql` |
+| `DB_PATH` | `./database.duckdb` | Path to DuckDB or SQLite file (used when `DB_MODE=local` or `sqlite`) |
+
+#### PostgreSQL settings (when `DB_MODE=postgres`)
+
+Install with: `pip install "datasight[postgres]"`
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_URL` | — | Connection string (takes precedence over individual fields). Example: `postgresql://user:pass@host:5432/dbname` |
+| `POSTGRES_HOST` | `localhost` | Database host |
+| `POSTGRES_PORT` | `5432` | Database port |
+| `POSTGRES_DATABASE` | — | Database name |
+| `POSTGRES_USER` | — | Username |
+| `POSTGRES_PASSWORD` | — | Password |
+| `POSTGRES_SSLMODE` | `prefer` | SSL mode: `disable`, `prefer`, `require`, `verify-ca`, `verify-full` |
+
+For production, use `POSTGRES_SSLMODE=verify-full` and consider using a
+`.pgpass` file or environment variables rather than storing passwords in `.env`.
+
+#### Flight SQL settings (when `DB_MODE=flightsql`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `FLIGHT_SQL_URI` | `grpc://localhost:31337` | Flight SQL server URI |
 | `FLIGHT_SQL_TOKEN` | — | Bearer token for Flight SQL auth |
 | `FLIGHT_SQL_USERNAME` | — | Username for Flight SQL basic auth |
@@ -65,8 +87,8 @@ A datasight project directory contains:
 | File | Required | Description |
 |------|----------|-------------|
 | `.env` | Yes | API key and connection settings |
-| `schema_description.md` | No | Domain context for the AI ([guide](schema-description.md)). Always a local file, even when using Flight SQL. |
-| `queries.yaml` | No | Example question/SQL pairs ([guide](example-queries.md)). Always a local file, even when using Flight SQL. |
+| `schema_description.md` | No | Domain context for the AI ([guide](../dataset-developer/schema-description.md)). Always a local file, even when using Flight SQL. |
+| `queries.yaml` | No | Example question/SQL pairs ([guide](../dataset-developer/example-queries.md)). Always a local file, even when using Flight SQL. |
 | `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../end-user/query-log.md)) |
 | `.datasight/` | No | Auto-created directory for app state (see below) |
 

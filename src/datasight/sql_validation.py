@@ -34,6 +34,7 @@ class ValidationResult:
 def validate_sql(
     sql: str,
     schema: dict[str, set[str]],
+    dialect: str = "duckdb",
 ) -> ValidationResult:
     """Validate that table references in *sql* exist in *schema*.
 
@@ -57,8 +58,15 @@ def validate_sql(
     if not HAS_SQLGLOT:
         return ValidationResult(valid=True, errors=[])
 
+    _SQLGLOT_DIALECTS = {
+        "duckdb": "duckdb",
+        "postgres": "postgres",
+        "sqlite": "sqlite",
+    }
+    sqlglot_dialect = _SQLGLOT_DIALECTS.get(dialect, "duckdb")
+
     try:
-        parsed = sqlglot.parse(sql, read="duckdb")
+        parsed = sqlglot.parse(sql, read=sqlglot_dialect)
     except sqlglot.errors.ParseError as e:
         return ValidationResult(valid=False, errors=[f"SQL parse error: {e}"])
 

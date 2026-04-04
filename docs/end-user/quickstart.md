@@ -1,12 +1,11 @@
 # Quickstart
 
-This tutorial walks you through setting up datasight with your own DuckDB
-database.
+This tutorial walks you through setting up datasight with your own database.
 
 ## Prerequisites
 
 - Python 3.10+
-- A DuckDB database file
+- A database: DuckDB file, SQLite file, or PostgreSQL server
 - **One of the following LLM backends:**
   - An Anthropic API key ([get one here](https://console.anthropic.com/)), **or**
   - A GitHub Copilot subscription (uses [GitHub Models](https://github.com/marketplace/models)), **or**
@@ -95,6 +94,27 @@ DB_MODE=local
 DB_PATH=./my_database.duckdb
 ```
 
+**Using SQLite or PostgreSQL?** Set `DB_MODE` accordingly:
+
+```bash
+# SQLite
+DB_MODE=sqlite
+DB_PATH=./my_database.sqlite
+
+# PostgreSQL (install with: pip install "datasight[postgres]")
+DB_MODE=postgres
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=mydb
+POSTGRES_USER=datasight
+POSTGRES_PASSWORD=secret
+# Or use a connection string instead:
+# POSTGRES_URL=postgresql://user:pass@host:5432/dbname
+```
+
+See [Configuration reference](../reference/configuration.md) for all
+PostgreSQL options.
+
 Edit `schema_description.md` to explain your data — domain concepts, column
 meanings, code lookups, and query tips. The AI uses this context to write
 better SQL. See [](../dataset-developer/schema-description.md) for guidance.
@@ -112,6 +132,18 @@ Open <http://localhost:8084> in your browser. The sidebar shows your database
 tables and example queries. Type a question in plain English and the AI will
 write SQL, run it, and display the results. Ask for a chart and it will
 generate an interactive Plotly visualization.
+
+### Headless mode
+
+You can also ask questions from the command line without starting a web server:
+
+```bash
+datasight ask "What are the top 10 records by the largest numeric column?"
+datasight ask "Show trends over time" --chart-format html -o chart.html
+datasight ask "Top 5 states" --format csv -o results.csv
+```
+
+See `datasight ask --help` for all options.
 
 ## What happens at startup
 

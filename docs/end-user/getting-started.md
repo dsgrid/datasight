@@ -8,15 +8,23 @@ Install datasight and start exploring data in under five minutes.
 pip install git+https://github.com/dsgrid/datasight.git
 ```
 
-To use GitHub Models (included with GitHub Copilot subscriptions) or Ollama (free, local models):
+Optional extras for different databases and LLM providers:
 
 ```bash
-# GitHub Models
+# PostgreSQL support
+pip install "datasight[postgres] @ git+https://github.com/dsgrid/datasight.git"
+
+# GitHub Models (included with Copilot subscriptions)
 pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"
 
-# Ollama
+# Ollama (free, local models)
 pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"
+
+# PNG chart export (for datasight ask --chart-format png)
+pip install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"
 ```
+
+SQLite support is built in (no extra install needed).
 
 ## Set up your API key
 

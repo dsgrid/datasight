@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-<link rel="stylesheet" href="/static/style.css?v=17">
+<link rel="stylesheet" href="/static/style.css?v=23">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -50,6 +50,9 @@
       </button>
       <button class="btn-icon query-log-toggle" onclick="toggleQueryLog()" title="Toggle query logging" id="query-log-toggle">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 6h12M2 9h9M2 12h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+      <button class="btn-icon" onclick="toggleExportMode()" title="Export conversation" id="export-toggle">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
       </button>
       <button class="btn-icon" onclick="clearChat()" title="New conversation">New chat</button>
     </div>
@@ -121,6 +124,13 @@
 
     <!-- Dashboard area (hidden by default) -->
     <div class="dashboard-area" id="dashboard" style="display:none">
+      <div class="dashboard-toolbar" id="dashboard-toolbar">
+        <span class="dashboard-toolbar-label">Layout</span>
+        <button class="layout-btn active" onclick="setDashboardColumns(0)" title="Auto" data-cols="0">Auto</button>
+        <button class="layout-btn" onclick="setDashboardColumns(1)" title="1 column" data-cols="1">1</button>
+        <button class="layout-btn" onclick="setDashboardColumns(2)" title="2 columns" data-cols="2">2</button>
+        <button class="layout-btn" onclick="setDashboardColumns(3)" title="3 columns" data-cols="3">3</button>
+      </div>
       <div class="dashboard-empty" id="dashboard-empty">
         <p>No pinned items yet.</p>
         <p style="font-size:0.85rem;">Pin charts and tables from the chat to build your dashboard.</p>
@@ -139,6 +149,6 @@
     </aside>
   </div>
 
-<script src="/static/app.js?v=17"></script>
+<script src="/static/app.js?v=20"></script>
 </body>
 </html>

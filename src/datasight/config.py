@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 from loguru import logger
 
-from datasight.runner import DuckDBRunner, FlightSqlRunner
+from datasight.runner import DuckDBRunner, FlightSqlRunner, PostgresRunner, SQLiteRunner
 
 
 def create_sql_runner(
@@ -21,6 +21,13 @@ def create_sql_runner(
     flight_token: str | None = None,
     flight_username: str | None = None,
     flight_password: str | None = None,
+    postgres_host: str = "localhost",
+    postgres_port: int = 5432,
+    postgres_database: str = "",
+    postgres_user: str = "",
+    postgres_password: str = "",
+    postgres_url: str = "",
+    postgres_sslmode: str = "prefer",
 ):
     """Create the appropriate SqlRunner based on db_mode."""
     if db_mode == "flightsql":
@@ -31,6 +38,20 @@ def create_sql_runner(
             username=flight_username,
             password=flight_password,
         )
+    elif db_mode == "postgres":
+        logger.info("Connecting to PostgreSQL")
+        return PostgresRunner(
+            host=postgres_host,
+            port=postgres_port,
+            dbname=postgres_database,
+            user=postgres_user,
+            password=postgres_password,
+            url=postgres_url,
+            sslmode=postgres_sslmode,
+        )
+    elif db_mode == "sqlite":
+        logger.info(f"Opening SQLite: {db_path}")
+        return SQLiteRunner(database_path=db_path)
     else:
         logger.info(f"Opening local DuckDB: {db_path}")
         return DuckDBRunner(database_path=db_path)

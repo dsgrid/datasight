@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import re
-import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
@@ -26,7 +25,11 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from datasight.chart import _build_artifact_html
+from datasight.agent import (
+    df_to_html_table,
+    execute_tool,
+    extract_suggestions,
+)
 from datasight.config import (
     create_sql_runner,
     load_schema_description,
@@ -43,7 +46,7 @@ from datasight.llm import (
 from datasight.prompts import WEB_TOOLS, build_system_prompt
 from datasight.query_log import QueryLogger
 from datasight.schema import introspect_schema, format_schema_context
-from datasight.sql_validation import validate_sql, build_schema_map
+from datasight.sql_validation import build_schema_map
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -203,6 +206,7 @@ class AppState:
         self.clarify_sql: bool = True
         self.schema_text: str = ""
         self.schema_map: dict[str, set[str]] = {}  # lowercase table -> lowercase columns
+        self.sql_dialect: str = "duckdb"  # "duckdb", "postgres", or "sqlite"
         # Pending SQL confirmations: request_id -> asyncio.Event + result
         self.pending_confirms: dict[str, dict[str, Any]] = {}
         # Response cache: normalized question -> cached response data
@@ -216,6 +220,7 @@ class AppState:
             mode="web",
             explain_sql=self.explain_sql,
             clarify_sql=self.clarify_sql,
+            dialect=self.sql_dialect,
         )
         # Invalidate response cache when prompt changes
         self._response_cache.clear()
@@ -261,346 +266,31 @@ def _escape_html(text: str) -> str:
 
 
 def _df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
-    """Render a DataFrame as a styled HTML table string."""
-    if df.empty:
-        return "<p class='empty-result'>Query returned no rows.</p>"
-
-    display_df = df.head(max_rows)
-
-    html = f"<div class='result-table-wrap' data-total-rows='{len(df)}'>"
-    html += (
-        "<div class='table-toolbar'>"
-        "<input class='table-filter' placeholder='Filter rows...'>"
-        "<button class='export-csv-btn'>Download CSV</button>"
-        "</div>"
-    )
-    html += "<table class='result-table'><thead><tr>"
-    for i, col in enumerate(display_df.columns):
-        html += f"<th data-col='{i}'>{_escape_html(str(col))}<span class='sort-arrow'></span></th>"
-    html += "</tr></thead><tbody>"
-    for _, row in display_df.iterrows():
-        html += "<tr>"
-        for col in display_df.columns:
-            val = row[col]
-            if pd.isna(val):
-                html += "<td class='null-val'>NULL</td>"
-            else:
-                html += f"<td>{_escape_html(str(val))}</td>"
-        html += "</tr>"
-    html += "</tbody></table>"
-    html += "<div class='table-pagination'></div>"
-    html += "</div>"
-    return html
+    return df_to_html_table(df, max_rows=max_rows)
 
 
-def _sql_error_hint(error_msg: str) -> str:
-    """Return a short hint to help the model fix common SQL errors."""
-    hints: list[str] = []
-    lower = error_msg.lower()
-    if "not found in from clause" in lower or "referenced column" in lower:
-        hints.append(
-            "HINT: Column not found in FROM tables. Check the schema and add a JOIN if needed."
-        )
-    if "ambiguous" in lower:
-        hints.append("HINT: Qualify the column with a table alias.")
-    if "scalar function" in lower and "does not exist" in lower:
-        hints.append(
-            "HINT: DuckDB syntax — use DATE_TRUNC, EXTRACT, STRFTIME, col::DATE. "
-            "Not TO_DATE, DATE_FORMAT, TO_CHAR."
-        )
-    if "table with name" in lower and "does not exist" in lower:
-        hints.append("HINT: Table not found. Check the schema for available tables.")
-    if "syntax error" in lower:
-        hints.append("HINT: Write a plain SQL SELECT query. No embedded data or XML tags.")
-    return ("\n" + "\n".join(hints)) if hints else ""
-
-
-def _coerce_dates(df: pd.DataFrame) -> pd.DataFrame:
-    """Try to parse object columns that look like dates into datetime."""
-    df = df.copy()
-    for col in df.select_dtypes(include=["object"]).columns:
-        sample = df[col].dropna().head(5)
-        if sample.empty:
-            continue
-        try:
-            parsed = pd.to_datetime(sample, format="mixed")
-            if parsed.notna().all():
-                df[col] = pd.to_datetime(df[col], format="mixed")
-        except (ValueError, TypeError):
-            continue
-    return df
-
-
-def _split_traces_by_group(traces: list[dict[str, Any]], df: pd.DataFrame) -> list[dict[str, Any]]:
-    """Auto-split traces when the ``name`` field references a DataFrame column.
-
-    Weaker models often produce a single trace like
-    ``{"x": "date", "y": "value", "name": "category"}`` instead of creating
-    one trace per category.  When ``name`` is a column reference, this function
-    splits the trace into one trace per unique value of that column, filtering
-    the underlying data for each.  Traces that don't reference a column in
-    ``name`` are passed through unchanged.
-    """
-    columns = set(df.columns)
-    expanded: list[dict[str, Any]] = []
-
-    for trace in traces:
-        group_col = trace.get("name")
-        if not isinstance(group_col, str) or group_col not in columns:
-            expanded.append(trace)
-            continue
-
-        # Identify which other trace keys reference columns (x, y, z, text, …)
-        col_keys = [
-            k
-            for k, v in trace.items()
-            if k not in ("type", "mode", "name") and isinstance(v, str) and v in columns
-        ]
-        if not col_keys:
-            expanded.append(trace)
-            continue
-
-        for group_value, sub_df in df.groupby(group_col, sort=True):
-            new_trace = {k: v for k, v in trace.items() if k != "name"}
-            new_trace["name"] = str(group_value)
-            # Replace column references with the filtered subset's data
-            for k in col_keys:
-                col_name = trace[k]
-                series = sub_df[col_name]
-                if pd.api.types.is_datetime64_any_dtype(series):
-                    new_trace[k] = series.dt.strftime("%Y-%m-%dT%H:%M:%S").tolist()
-                else:
-                    new_trace[k] = series.tolist()
-            expanded.append(new_trace)
-
-    return expanded
-
-
-def _resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
-    """Replace column name references in a Plotly spec with actual data arrays.
-
-    In trace objects within spec["data"], any string value that matches a column
-    name in the DataFrame (including aliased names like 'g.col' or 'g_col') is
-    replaced with the list of values from that column. Objects wrapped as
-    {"literal": value} are unwrapped and passed through as-is. The "layout" key
-    is passed through unchanged. Date columns are coerced to ISO strings for
-    JSON serialization.
-
-    If a trace uses a column name as its ``name`` field, the trace is
-    automatically split into one trace per unique value (see
-    ``_split_traces_by_group``), so weaker models don't need to construct
-    multi-trace specs manually.
-    """
-    df = _coerce_dates(df)
-    columns = set(df.columns)
-
-    # Auto-split traces whose "name" references a grouping column
-    raw_traces = spec.get("data", [])
-    raw_traces = _split_traces_by_group(raw_traces, df)
-
-    def _resolve_value(val: Any) -> Any:
-        if isinstance(val, dict):
-            # {"literal": X} -> X (escape hatch for values that happen to match column names)
-            if "literal" in val and len(val) == 1:
-                return val["literal"]
-            return {k: _resolve_value(v) for k, v in val.items()}
-        if isinstance(val, list):
-            return [_resolve_value(item) for item in val]
-        if isinstance(val, str) and val in columns:
-            series = df[val]
-            # Convert datetimes to ISO strings for JSON
-            if pd.api.types.is_datetime64_any_dtype(series):
-                return series.dt.strftime("%Y-%m-%dT%H:%M:%S").tolist()
-            return series.tolist()
-        return val
-
-    resolved: dict[str, Any] = {}
-    resolved["data"] = []
-    for trace in raw_traces:
-        resolved_trace = {}
-        for key, val in trace.items():
-            # "type" and "name" should never be resolved as column names
-            if key in ("type", "name"):
-                resolved_trace[key] = val
-            else:
-                resolved_trace[key] = _resolve_value(val)
-        resolved["data"].append(resolved_trace)
-    # Pass layout through as-is
-    if "layout" in spec:
-        resolved["layout"] = spec["layout"]
-    return resolved
-
-
-async def execute_tool(
+async def _execute_tool_web(
     name: str,
     input_data: dict[str, Any],
     *,
     session_id: str = "",
     user_question: str = "",
 ) -> tuple[str, str | None, str | None, dict[str, Any]]:
-    """Execute a tool call.
+    """Execute a tool call via the shared agent module.
 
     Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html, meta).
-    *meta* carries timing and result info for the query history panel.
     """
-    if name == "run_sql":
-        sql = input_data.get("sql", "")
-
-        # Validate SQL against known schema before executing
-        if state.schema_map:
-            vr = validate_sql(sql, state.schema_map)
-            if not vr.valid:
-                logger.warning(f"SQL validation failed: {vr.error_message}")
-                meta = {
-                    "tool": name,
-                    "sql": sql,
-                    "execution_time_ms": 0,
-                    "row_count": None,
-                    "column_count": None,
-                    "error": vr.error_message,
-                }
-                error_text = (
-                    f"SQL validation error: {vr.error_message}\n"
-                    "HINT: Check the schema and fix the table/column names."
-                )
-                return error_text, None, None, meta
-
-        t0 = time.perf_counter()
-        try:
-            df = await state.sql_runner.run_sql(sql)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if state.query_logger:
-                state.query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    row_count=len(df),
-                    column_count=len(df.columns),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": len(df),
-                "column_count": len(df.columns),
-                "error": None,
-            }
-            if df.empty:
-                meta["row_count"] = 0
-                return "Query executed successfully. No rows returned.", None, None, meta
-            csv = df.to_csv(index=False)
-            preview = csv if len(csv) <= 500 else csv[:500] + "\n..."
-            result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
-            result_html = _df_to_html_table(df)
-            return result_text, result_html, None, meta
-        except Exception as e:
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            error = f"SQL error: {e}"
-            logger.error(error)
-            if state.query_logger:
-                state.query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    error=str(e),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": None,
-                "column_count": None,
-                "error": str(e),
-            }
-            hint = _sql_error_hint(str(e))
-            return error + hint, f"<p class='sql-error'>{error}</p>", None, meta
-
-    elif name == "visualize_data":
-        sql = input_data.get("sql", "")
-        title = input_data.get("title", "Chart")
-        plotly_spec = input_data.get("plotly_spec", {})
-
-        # Validate SQL against known schema before executing
-        if state.schema_map:
-            vr = validate_sql(sql, state.schema_map)
-            if not vr.valid:
-                logger.warning(f"SQL validation failed: {vr.error_message}")
-                meta = {
-                    "tool": name,
-                    "sql": sql,
-                    "execution_time_ms": 0,
-                    "row_count": None,
-                    "column_count": None,
-                    "error": vr.error_message,
-                }
-                error_text = (
-                    f"SQL validation error: {vr.error_message}\n"
-                    "HINT: Check the schema and fix the table/column names."
-                )
-                return error_text, None, None, meta
-
-        t0 = time.perf_counter()
-        try:
-            df = await state.sql_runner.run_sql(sql)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if state.query_logger:
-                state.query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    row_count=len(df),
-                    column_count=len(df.columns),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": len(df),
-                "column_count": len(df.columns),
-                "error": None,
-            }
-            if df.empty:
-                meta["row_count"] = 0
-                return "Query returned no rows — nothing to visualize.", None, None, meta
-            resolved = _resolve_plotly_spec(plotly_spec, df)
-            layout = resolved.get("layout", {})
-            if "title" not in layout:
-                layout["title"] = title
-                resolved["layout"] = layout
-            chart_html = _build_artifact_html(resolved, title)
-            result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
-            return result_text, chart_html, None, meta
-        except Exception as e:
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            error = f"Visualization error: {e}"
-            logger.error(error)
-            if state.query_logger:
-                state.query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    error=str(e),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": None,
-                "column_count": None,
-                "error": str(e),
-            }
-            hint = _sql_error_hint(str(e))
-            return error + hint, f"<p class='sql-error'>{error}</p>", None, meta
-
-    return f"Unknown tool: {name}", None, None, {}
+    result = await execute_tool(
+        name,
+        input_data,
+        run_sql=state.sql_runner.run_sql,
+        schema_map=state.schema_map or None,
+        dialect=state.sql_dialect,
+        query_logger=state.query_logger,
+        session_id=session_id,
+        user_question=user_question,
+    )
+    return result.result_text, result.result_html, None, result.meta
 
 
 def get_session_messages(session_id: str) -> list[dict[str, Any]]:
@@ -634,20 +324,7 @@ def _trim_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _extract_suggestions(text: str) -> list[str]:
-    """Extract follow-up suggestions from the model's response.
-
-    Looks for a ``---`` separator followed by a JSON array of strings.
-    """
-    parts = re.split(r"\n---\s*\n", text, maxsplit=1)
-    if len(parts) < 2:
-        return []
-    match = re.search(r"\[.*\]", parts[1], re.DOTALL)
-    if not match:
-        return []
-    try:
-        return json.loads(match.group())
-    except (json.JSONDecodeError, TypeError):
-        return []
+    return extract_suggestions(text)
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +367,10 @@ async def _startup():
     flight_username = os.environ.get("FLIGHT_SQL_USERNAME")
     flight_password = os.environ.get("FLIGHT_SQL_PASSWORD")
 
+    # Map DB mode to SQL dialect
+    _DB_MODE_DIALECTS = {"local": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    state.sql_dialect = _DB_MODE_DIALECTS.get(db_mode, "duckdb")
+
     state.sql_runner = create_sql_runner(
         db_mode=db_mode,
         db_path=db_path,
@@ -697,6 +378,13 @@ async def _startup():
         flight_token=flight_token,
         flight_username=flight_username,
         flight_password=flight_password,
+        postgres_host=os.environ.get("POSTGRES_HOST", "localhost"),
+        postgres_port=int(os.environ.get("POSTGRES_PORT", "5432")),
+        postgres_database=os.environ.get("POSTGRES_DATABASE", ""),
+        postgres_user=os.environ.get("POSTGRES_USER", ""),
+        postgres_password=os.environ.get("POSTGRES_PASSWORD", ""),
+        postgres_url=os.environ.get("POSTGRES_URL", ""),
+        postgres_sslmode=os.environ.get("POSTGRES_SSLMODE", "prefer"),
     )
 
     project_dir = os.environ.get("DATASIGHT_PROJECT_DIR", ".")
@@ -815,11 +503,17 @@ async def column_stats(table_name: str, column_name: str):
             t in dtype for t in ("int", "float", "double", "decimal", "numeric", "real")
         )
         if is_numeric:
+            if state.sql_dialect == "sqlite":
+                avg_expr = f'ROUND(AVG("{column_name}"), 2)'
+            elif state.sql_dialect == "postgres":
+                avg_expr = f'ROUND(AVG("{column_name}")::NUMERIC, 2)'
+            else:
+                avg_expr = f'ROUND(AVG("{column_name}")::NUMERIC, 2)'
             sql = (
                 f'SELECT COUNT(DISTINCT "{column_name}") AS distinct_count, '
                 f'SUM(CASE WHEN "{column_name}" IS NULL THEN 1 ELSE 0 END) AS null_count, '
                 f'MIN("{column_name}") AS min_val, MAX("{column_name}") AS max_val, '
-                f'ROUND(AVG("{column_name}")::NUMERIC, 2) AS avg_val '
+                f"{avg_expr} AS avg_val "
                 f'FROM "{table_name}"'
             )
         else:
@@ -1193,7 +887,7 @@ async def chat(request: Request):
                     evt_log.append({"event": "tool_start", "data": tool_start_data})
                     yield f"event: tool_start\ndata: {json.dumps(tool_start_data)}\n\n"
 
-                    result_text, result_html, auto_chart_html, meta = await execute_tool(
+                    result_text, result_html, auto_chart_html, meta = await _execute_tool_web(
                         block.name,
                         tool_input,
                         session_id=session_id,
@@ -1293,3 +987,27 @@ async def clear_session(request: Request):
         raise RuntimeError("App not initialised")
     state.conversations.delete(session_id)
     return {"ok": True}
+
+
+@app.post("/api/export/{session_id}")
+async def export_session(session_id: str, request: Request):
+    """Export a conversation as self-contained HTML."""
+    from datasight.export import export_session_html
+
+    if state.conversations is None:
+        raise RuntimeError("App not initialised")
+    body = await request.json()
+    exclude = body.get("exclude_indices", [])
+    exclude_set = set(exclude) if exclude else None
+
+    data = state.conversations.get(session_id)
+    events = data.get("events", [])
+    title = data.get("title", "datasight session")
+
+    html = export_session_html(events, title=title, exclude_indices=exclude_set)
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Content-Disposition": 'attachment; filename="datasight-export.html"',
+        },
+    )

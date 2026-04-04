@@ -63,6 +63,16 @@ it.
 Pinned items persist across chat clears — clicking "New chat" does not
 remove items from the dashboard.
 
+### Dashboard layout
+
+The dashboard toolbar lets you choose a column layout:
+
+- **Auto** — responsive grid that fills available space
+- **1 / 2 / 3** — fixed column count
+
+Drag cards by their handle (visible on hover) to reorder them. Charts
+automatically resize to fit their container when the layout changes.
+
 ## Bookmark queries
 
 To save a query for later reuse, hover over any result and click
@@ -106,3 +116,37 @@ the right. It shows every SQL query executed in the current session with:
 - ★ button to bookmark the query
 
 Failed queries are highlighted with an orange border.
+
+## Export a conversation
+
+Click the **export** button (download icon) in the header to enter export
+mode. Each message gets a checkbox — uncheck messages you want to exclude,
+then click **Export HTML**. The browser downloads a self-contained HTML page
+with all selected messages, SQL, tables, and interactive charts.
+
+You can also export from the command line:
+
+```bash
+# List available sessions
+datasight export --list-sessions
+
+# Export a session
+datasight export <session-id> -o my-analysis.html
+
+# Exclude specific messages by index
+datasight export <session-id> --exclude 2,3
+```
+
+## Keyboard shortcuts
+
+Press **?** to see the shortcuts overlay. All shortcuts:
+
+| Shortcut | Action |
+|----------|--------|
+| `/` or `Cmd/Ctrl+K` | Focus question input |
+| `Cmd/Ctrl+B` | Toggle sidebar |
+| `N` | New conversation |
+| `Escape` | Close modal / blur input |
+| `?` | Show shortcuts help |
+
+On macOS, shortcuts use `Cmd`; on Windows/Linux, they use `Ctrl`.

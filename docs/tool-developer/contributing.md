@@ -12,12 +12,14 @@ pip install -e ".[dev]"
 
 ```
 src/datasight/
-├── cli.py              # Click CLI commands
+├── cli.py              # Click CLI commands (run, ask, export, verify, log)
+├── agent.py            # Shared agent loop and tool execution
 ├── config.py           # Configuration helpers
 ├── schema.py           # Database introspection
 ├── llm.py              # LLM client abstraction
 ├── chart.py            # Plotly chart generator
-├── runner.py           # SQL execution backends
+├── runner.py           # SQL execution backends (DuckDB, SQLite, Postgres, Flight SQL)
+├── export.py           # Session-to-HTML export
 ├── verify.py           # Query verification engine
 ├── demo.py             # Demo dataset generator
 └── web/

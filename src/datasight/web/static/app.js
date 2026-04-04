@@ -90,6 +90,8 @@ function switchView(view) {
   if (view === 'dashboard') broadcastThemeToDashboard();
 }
 
+let dashboardColumns = 0; // 0 = auto
+
 function pinResult(btn) {
   const resultEl = btn.closest('.tool-result');
   if (!resultEl) return;
@@ -123,20 +125,52 @@ function updateDashboardBadge() {
   }
 }
 
+function setDashboardColumns(cols) {
+  dashboardColumns = cols;
+  const grid = document.getElementById('dashboard-grid');
+  if (cols === 0) {
+    grid.style.gridTemplateColumns = '';
+    grid.classList.remove('cols-1', 'cols-2', 'cols-3');
+  } else {
+    grid.classList.remove('cols-1', 'cols-2', 'cols-3');
+    grid.classList.add('cols-' + cols);
+    grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+  }
+  // Update active button
+  document.querySelectorAll('.layout-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.cols) === cols);
+  });
+  // Resize charts
+  grid.querySelectorAll('iframe').forEach(iframe => {
+    try { iframe.contentWindow.Plotly.Plots.resize(iframe.contentDocument.getElementById('chart')); } catch(e) {}
+  });
+}
+
 function renderDashboard() {
   const grid = document.getElementById('dashboard-grid');
   const empty = document.getElementById('dashboard-empty');
+  const toolbar = document.getElementById('dashboard-toolbar');
   grid.innerHTML = '';
 
   if (pinnedItems.length === 0) {
     empty.style.display = '';
+    toolbar.style.display = 'none';
     return;
   }
   empty.style.display = 'none';
+  toolbar.style.display = '';
 
-  pinnedItems.forEach(item => {
+  pinnedItems.forEach((item, idx) => {
     const card = document.createElement('div');
     card.className = 'dashboard-card';
+    card.draggable = true;
+    card.dataset.idx = idx;
+
+    // Drag handle
+    const handle = document.createElement('div');
+    handle.className = 'dashboard-drag-handle';
+    handle.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" opacity="0.4"><circle cx="5" cy="3" r="1.5"/><circle cx="11" cy="3" r="1.5"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/><circle cx="5" cy="13" r="1.5"/><circle cx="11" cy="13" r="1.5"/></svg>';
+    card.appendChild(handle);
 
     if (item.type === 'chart') {
       const iframe = document.createElement('iframe');
@@ -147,6 +181,11 @@ function renderDashboard() {
         try { iframe.contentWindow.postMessage({ type: 'theme-change', theme }, '*'); } catch(e) {}
       });
       card.appendChild(iframe);
+      // Resize chart when card resizes
+      const ro = new window.ResizeObserver(() => {
+        try { iframe.contentWindow.Plotly.Plots.resize(iframe.contentDocument.getElementById('chart')); } catch(e) {}
+      });
+      ro.observe(card);
     } else {
       const tableDiv = document.createElement('div');
       tableDiv.innerHTML = sanitizeHtml(item.html);
@@ -164,8 +203,41 @@ function renderDashboard() {
     actions.appendChild(unpinBtn);
     card.appendChild(actions);
 
+    // Drag and drop
+    card.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', idx);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      grid.querySelectorAll('.dashboard-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over');
+    });
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+      const toIdx = parseInt(card.dataset.idx);
+      if (fromIdx !== toIdx && !isNaN(fromIdx) && !isNaN(toIdx)) {
+        const moved = pinnedItems.splice(fromIdx, 1)[0];
+        pinnedItems.splice(toIdx, 0, moved);
+        renderDashboard();
+      }
+    });
+
     grid.appendChild(card);
   });
+
+  // Reapply column setting
+  if (dashboardColumns > 0) {
+    setDashboardColumns(dashboardColumns);
+  }
 }
 
 function broadcastThemeToDashboard() {
@@ -592,7 +664,7 @@ async function sendMessage(text) {
     let buffer = '';
     let typingRemoved = false;
 
-    while (true) { // eslint-disable-line no-constant-condition
+    while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -730,6 +802,9 @@ function handleToolStart(data) {
     updateSqlDisplay(data.input.sql);
   }
   el.innerHTML = html;
+  const delTool = _makeDeleteBtn('Delete');
+  delTool.onclick = (e) => { e.stopPropagation(); deleteElement(el); };
+  el.appendChild(delTool);
   messagesEl.appendChild(el);
   scrollToBottom();
 }
@@ -792,6 +867,10 @@ function handleToolResult(data) {
     resultEl.appendChild(bmBtn);
   }
 
+  const delResult = _makeDeleteBtn('Delete result');
+  delResult.onclick = (e) => { e.stopPropagation(); deleteElement(resultEl); };
+  resultEl.appendChild(delResult);
+
   messagesEl.appendChild(resultEl);
   scrollToBottom();
 }
@@ -802,6 +881,10 @@ function handleToken(data) {
     row.className = 'message-row assistant';
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
+    const del = _makeDeleteBtn('Delete response');
+    del.className = 'msg-delete-btn msg-delete-single';
+    del.onclick = (e) => { e.stopPropagation(); deleteElement(row); };
+    row.appendChild(del);
     row.appendChild(bubble);
     messagesEl.appendChild(row);
     currentAssistantBubble = bubble;
@@ -910,6 +993,49 @@ function handleSuggestions(data) {
 // ---------------------------------------------------------------------------
 // DOM helpers
 // ---------------------------------------------------------------------------
+
+const TRASH_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4"/></svg>';
+const COPY_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 0 1 2 9.5v-7A1.5 1.5 0 0 1 3.5 1h7A1.5 1.5 0 0 1 12 2.5V5"/></svg>';
+
+function _makeDeleteBtn(title) {
+  const btn = document.createElement('button');
+  btn.className = 'msg-delete-btn';
+  btn.title = title || 'Delete';
+  btn.innerHTML = TRASH_SVG;
+  return btn;
+}
+
+function _makeCopyBtn(text) {
+  const btn = document.createElement('button');
+  btn.className = 'msg-copy-btn';
+  btn.title = 'Copy prompt';
+  btn.innerHTML = COPY_SVG;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+      setTimeout(() => { btn.innerHTML = COPY_SVG; }, 1200);
+    });
+  };
+  return btn;
+}
+
+function deleteUserBlock(userRow) {
+  // Remove this user message and all downstream siblings until the next user message-row
+  let el = userRow.nextElementSibling;
+  while (el) {
+    if (el.classList.contains('message-row') && el.classList.contains('user')) break;
+    const next = el.nextElementSibling;
+    el.remove();
+    el = next;
+  }
+  userRow.remove();
+}
+
+function deleteElement(el) {
+  el.remove();
+}
+
 function addMessage(role, text) {
   const row = document.createElement('div');
   row.className = 'message-row ' + role;
@@ -917,8 +1043,20 @@ function addMessage(role, text) {
   bubble.className = 'message-bubble';
   if (role === 'user') {
     bubble.textContent = text;
+    // Action buttons for user messages
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.appendChild(_makeCopyBtn(text));
+    const del = _makeDeleteBtn('Delete question and responses');
+    del.onclick = (e) => { e.stopPropagation(); deleteUserBlock(row); };
+    actions.appendChild(del);
+    row.appendChild(actions);
   } else {
     renderMarkdownInto(bubble, text);
+    const del = _makeDeleteBtn('Delete response');
+    del.className = 'msg-delete-btn msg-delete-single';
+    del.onclick = (e) => { e.stopPropagation(); deleteElement(row); };
+    row.appendChild(del);
   }
   row.appendChild(bubble);
   messagesEl.appendChild(row);
@@ -1385,6 +1523,206 @@ function renderBookmarks(bookmarks) {
     document.removeEventListener('mouseup', onMouseUp);
   }
 })();
+
+// ---------------------------------------------------------------------------
+// Export mode
+// ---------------------------------------------------------------------------
+let exportMode = false;
+let exportExcludeIndices = new Set();
+
+function toggleExportMode() {
+  exportMode = !exportMode;
+  const btn = document.getElementById('export-toggle');
+  btn.classList.toggle('active', exportMode);
+
+  if (exportMode) {
+    exportExcludeIndices.clear();
+    addExportCheckboxes();
+    showExportBar();
+  } else {
+    removeExportCheckboxes();
+    hideExportBar();
+  }
+}
+
+function addExportCheckboxes() {
+  let msgIdx = 0;
+  // Group message-rows with their following tool indicators and tool results
+  // so the trash button excludes the entire Q&A block
+  const children = Array.from(messagesEl.children);
+  let i = 0;
+  while (i < children.length) {
+    const el = children[i];
+    if (el.classList.contains('message-row')) {
+      const idx = msgIdx;
+      // Collect this message row and all following non-message-row siblings
+      // (tool indicators, tool results, suggestions, clarify options) as one block
+      const block = [el];
+      let j = i + 1;
+      while (j < children.length && !children[j].classList.contains('message-row')) {
+        block.push(children[j]);
+        j++;
+      }
+
+      const btn = document.createElement('button');
+      btn.className = 'export-trash-btn';
+      btn.dataset.msgIdx = idx;
+      btn.title = 'Exclude from export';
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4"/></svg>';
+      btn.onclick = function(e) {
+        e.stopPropagation();
+        const isExcluded = exportExcludeIndices.has(idx);
+        if (isExcluded) {
+          exportExcludeIndices.delete(idx);
+          block.forEach(b => b.classList.remove('export-excluded'));
+          btn.classList.remove('active');
+          btn.title = 'Exclude from export';
+        } else {
+          exportExcludeIndices.add(idx);
+          block.forEach(b => b.classList.add('export-excluded'));
+          btn.classList.add('active');
+          btn.title = 'Restore to export';
+        }
+      };
+      el.appendChild(btn);
+      msgIdx++;
+      i = j;
+    } else {
+      i++;
+    }
+  }
+}
+
+function removeExportCheckboxes() {
+  messagesEl.querySelectorAll('.export-trash-btn').forEach(el => el.remove());
+  messagesEl.querySelectorAll('.export-excluded').forEach(el => el.classList.remove('export-excluded'));
+}
+
+function showExportBar() {
+  if (document.getElementById('export-bar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'export-bar';
+  bar.innerHTML =
+    '<span>Select messages to include in export</span>' +
+    '<div>' +
+      '<button class="export-bar-btn cancel" onclick="toggleExportMode()">Cancel</button>' +
+      '<button class="export-bar-btn confirm" onclick="doExport()">Export HTML</button>' +
+    '</div>';
+  document.querySelector('.chat-area').appendChild(bar);
+}
+
+function hideExportBar() {
+  const bar = document.getElementById('export-bar');
+  if (bar) bar.remove();
+}
+
+async function doExport() {
+  try {
+    const resp = await fetch('/api/export/' + sessionId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exclude_indices: Array.from(exportExcludeIndices) }),
+    });
+    if (!resp.ok) throw new Error('Export failed');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'datasight-export.html';
+    a.click();
+    URL.revokeObjectURL(url);
+    toggleExportMode();
+  } catch (e) {
+    console.error('Export failed:', e);
+    window.alert('Export failed. Please try again.');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcuts
+// ---------------------------------------------------------------------------
+let shortcutsModalOpen = false;
+
+function showShortcutsModal() {
+  if (shortcutsModalOpen) { hideShortcutsModal(); return; }
+  shortcutsModalOpen = true;
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const mod = isMac ? '&#8984;' : 'Ctrl';
+  const overlay = document.createElement('div');
+  overlay.id = 'shortcuts-modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) hideShortcutsModal(); };
+  overlay.innerHTML =
+    '<div class="shortcuts-modal">' +
+      '<div class="shortcuts-modal-header">' +
+        '<span>Keyboard Shortcuts</span>' +
+        '<button class="shortcuts-close" onclick="hideShortcutsModal()">&times;</button>' +
+      '</div>' +
+      '<div class="shortcuts-list">' +
+        '<div class="shortcut-row"><kbd>/</kbd> or <kbd>' + mod + '</kbd>+<kbd>K</kbd><span>Focus question input</span></div>' +
+        '<div class="shortcut-row"><kbd>' + mod + '</kbd>+<kbd>B</kbd><span>Toggle sidebar</span></div>' +
+        '<div class="shortcut-row"><kbd>N</kbd><span>New conversation</span></div>' +
+        '<div class="shortcut-row"><kbd>Escape</kbd><span>Close modal / deselect</span></div>' +
+        '<div class="shortcut-row"><kbd>?</kbd><span>Show this help</span></div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+}
+
+function hideShortcutsModal() {
+  shortcutsModalOpen = false;
+  const overlay = document.getElementById('shortcuts-modal-overlay');
+  if (overlay) overlay.remove();
+}
+
+document.addEventListener('keydown', function(e) {
+  const tag = document.activeElement.tagName;
+  const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement.isContentEditable;
+  const mod = e.metaKey || e.ctrlKey;
+
+  // Escape: close modals or blur input
+  if (e.key === 'Escape') {
+    if (shortcutsModalOpen) { hideShortcutsModal(); return; }
+    if (isInput) { document.activeElement.blur(); return; }
+    return;
+  }
+
+  // Mod+K: focus input (always, even from input)
+  if (mod && e.key === 'k') {
+    e.preventDefault();
+    inputEl.focus();
+    return;
+  }
+
+  // Mod+B: toggle sidebar
+  if (mod && e.key === 'b' && !e.shiftKey) {
+    e.preventDefault();
+    toggleSidebar();
+    return;
+  }
+
+  // Shortcuts below only apply when not typing in an input
+  if (isInput) return;
+
+  // N: new conversation
+  if (e.key === 'n' && !mod && !e.shiftKey && !e.altKey) {
+    clearChat();
+    return;
+  }
+
+  // / : focus input
+  if (e.key === '/') {
+    e.preventDefault();
+    inputEl.focus();
+    return;
+  }
+
+  // ? : show shortcuts help
+  if (e.key === '?') {
+    e.preventDefault();
+    showShortcutsModal();
+    return;
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Init

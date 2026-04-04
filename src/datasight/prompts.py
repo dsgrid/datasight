@@ -16,7 +16,7 @@ RUN_SQL_TOOL: dict[str, Any] = {
     "name": "run_sql",
     "description": (
         "Execute a SQL query against the database and return results as a table. "
-        "Use DuckDB SQL syntax. Always use this tool instead of writing SQL inline."
+        "Always use this tool instead of writing SQL inline."
     ),
     "input_schema": {
         "type": "object",
@@ -85,25 +85,48 @@ VERIFY_TOOLS: list[dict[str, Any]] = [RUN_SQL_TOOL]
 # System prompt construction
 # ---------------------------------------------------------------------------
 
+_DIALECT_HINTS: dict[str, str] = {
+    "duckdb": (
+        "Use DuckDB SQL syntax.\n"
+        "DuckDB dates: DATE_TRUNC, EXTRACT, STRFTIME. Not TO_DATE/TO_CHAR.\n"
+    ),
+    "postgres": (
+        "Use PostgreSQL SQL syntax.\n"
+        "Postgres dates: DATE_TRUNC, EXTRACT, TO_CHAR. "
+        "Use ::type for casts. Use ILIKE for case-insensitive matching.\n"
+    ),
+    "sqlite": (
+        "Use SQLite SQL syntax.\n"
+        "SQLite dates: strftime(), date(), datetime(). "
+        "No DATE_TRUNC or EXTRACT — use strftime('%Y', col) to extract year, etc. "
+        "No BOOLEAN type — use 0/1. No FULL OUTER JOIN.\n"
+    ),
+}
+
+
+def _dialect_hint(dialect: str) -> str:
+    return _DIALECT_HINTS.get(dialect, _DIALECT_HINTS["duckdb"])
+
+
 _BASE_VERIFY_PROMPT = (
     "You are datasight, an expert data analyst assistant. You help users "
-    "explore and understand data stored in a DuckDB database by writing and "
+    "explore and understand data stored in a database by writing and "
     "executing SQL queries.\n\n"
     "When a user asks a question:\n"
     "1. Think about what data would answer their question.\n"
     "2. Use the run_sql tool to query the database.\n"
     "3. Explain the results clearly.\n\n"
     "Always use the tools to execute SQL — never write SQL inline without "
-    "executing it. Use DuckDB SQL syntax.\n"
+    "executing it. {dialect_hint}\n"
 )
 
 _BASE_WEB_PROMPT = (
-    "You are datasight, an expert data analyst. You explore a DuckDB database "
+    "You are datasight, an expert data analyst. You explore a database "
     "via SQL queries and Plotly visualizations.\n\n"
     "Use run_sql to query data (auto-creates a chart). "
     "Use visualize_data with a Plotly spec for custom charts. "
     "Explain results clearly.\n\n"
-    "Always execute SQL via tools — never write it inline. Use DuckDB syntax.\n\n"
+    "Always execute SQL via tools — never write it inline. {dialect_hint}\n\n"
     "You MUST only use tables and columns listed in the schema below. "
     "If the user asks about data that doesn't exist in the schema, say so — "
     "do not guess or invent column names.\n\n"
@@ -132,6 +155,7 @@ def build_system_prompt(
     mode: str = "web",
     explain_sql: bool = False,
     clarify_sql: bool = True,
+    dialect: str = "duckdb",
 ) -> str:
     """Build a complete system prompt.
 
@@ -148,8 +172,11 @@ def build_system_prompt(
     clarify_sql:
         If True, include ambiguity-detection instructions so the LLM asks
         for clarification on vague questions (web mode only).
+    dialect:
+        SQL dialect: ``"duckdb"``, ``"postgres"``, or ``"sqlite"``.
     """
-    base = _BASE_WEB_PROMPT if mode == "web" else _BASE_VERIFY_PROMPT
+    template = _BASE_WEB_PROMPT if mode == "web" else _BASE_VERIFY_PROMPT
+    base = template.format(dialect_hint=_dialect_hint(dialect))
 
     if explain_sql:
         base += (

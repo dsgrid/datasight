@@ -112,7 +112,7 @@ def demo(project_dir: str, min_year: int):
 @click.option("--host", default="0.0.0.0", help="Bind address.")
 @click.option(
     "--db-mode",
-    type=click.Choice(["local", "flightsql"]),
+    type=click.Choice(["local", "sqlite", "postgres", "flightsql"]),
     default=None,
     help="Database mode (overrides .env).",
 )
@@ -190,7 +190,7 @@ def run(
 
     # Resolve DB_PATH relative to project_dir, not CWD
     raw_db_path = db_path or os.getenv("DB_PATH", "database.duckdb")
-    if resolved_db_mode == "local":
+    if resolved_db_mode in ("local", "sqlite"):
         resolved_db_path = (
             str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
         )
@@ -198,6 +198,8 @@ def run(
             click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
             click.echo("  Set DB_PATH in .env or pass --db-path", err=True)
             sys.exit(1)
+    elif resolved_db_mode == "postgres":
+        resolved_db_path = ""  # Postgres uses its own env vars
     else:
         resolved_db_path = raw_db_path
 
@@ -226,9 +228,16 @@ def run(
 
     click.echo(f"datasight v{__version__}")
     click.echo(f"  Model:    {resolved_model}")
-    click.echo(
-        f"  Database: {resolved_db_mode} — {resolved_db_path if resolved_db_mode == 'local' else flight_uri}"
-    )
+    if resolved_db_mode == "postgres":
+        pg_host = os.getenv("POSTGRES_HOST", "localhost")
+        pg_db = os.getenv("POSTGRES_DATABASE", "")
+        pg_url = os.getenv("POSTGRES_URL", "")
+        db_display = pg_url if pg_url else f"{pg_host}/{pg_db}"
+        click.echo(f"  Database: postgres — {db_display}")
+    elif resolved_db_mode == "flightsql":
+        click.echo(f"  Database: flightsql — {flight_uri}")
+    else:
+        click.echo(f"  Database: {resolved_db_mode} — {resolved_db_path}")
     click.echo(f"  Project:  {project_dir}")
     click.echo()
 
@@ -329,19 +338,24 @@ def verify(project_dir, model, queries_path, verbose):
 
     db_mode = os.getenv("DB_MODE", "local")
     raw_db_path = os.getenv("DB_PATH", "database.duckdb")
-    if db_mode == "local":
+    if db_mode in ("local", "sqlite"):
         resolved_db_path = (
             str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
         )
         if not os.path.exists(resolved_db_path):
             click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
             sys.exit(1)
+    elif db_mode == "postgres":
+        resolved_db_path = ""
     else:
         resolved_db_path = raw_db_path
 
+    _db_mode_dialects = {"local": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
+
     click.echo("datasight verify")
     click.echo(f"  Model:    {resolved_model}")
-    click.echo(f"  Database: {db_mode} — {resolved_db_path}")
+    click.echo(f"  Database: {db_mode} — {resolved_db_path or sql_dialect}")
     click.echo(f"  Queries:  {len(queries)}")
     click.echo()
 
@@ -368,6 +382,13 @@ def verify(project_dir, model, queries_path, verbose):
             flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
             flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
             flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
+            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
+            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
+            postgres_database=os.getenv("POSTGRES_DATABASE", ""),
+            postgres_user=os.getenv("POSTGRES_USER", ""),
+            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
+            postgres_url=os.getenv("POSTGRES_URL", ""),
+            postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
         )
 
         # Build system prompt
@@ -376,7 +397,7 @@ def verify(project_dir, model, queries_path, verbose):
         schema_text = format_schema_context(tables, user_desc)
         schema_text += format_example_queries(queries)
 
-        sys_prompt = build_system_prompt(schema_text, mode="verify")
+        sys_prompt = build_system_prompt(schema_text, mode="verify", dialect=sql_dialect)
 
         # Phase 1: Ambiguity analysis
         ambiguity_results = await run_ambiguity_analysis(
@@ -510,6 +531,355 @@ def verify(project_dir, model, queries_path, verbose):
     console.print("\n" + ", ".join(summary_parts))
 
     sys.exit(0 if failed == 0 else 1)
+
+
+@cli.command()
+@click.argument("question")
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--model", default=None, help="Model name (overrides .env).")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "csv", "json"]),
+    default="table",
+    help="Output format for query results (default: table).",
+)
+@click.option(
+    "--chart-format",
+    type=click.Choice(["html", "json", "png"]),
+    default=None,
+    help="Save chart output in this format (requires --output).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Output file path for chart or data export.",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def ask(question, project_dir, model, output_format, chart_format, output_path, verbose):
+    """Ask a question about your data from the command line.
+
+    Runs the full LLM agent loop without starting a web server.
+    Results are printed to the console.
+
+    \b
+    Examples:
+      datasight ask "What are the top 5 states by generation?"
+      datasight ask "Show generation by year" --chart-format html -o chart.html
+      datasight ask "Top 5 states" --format csv -o results.csv
+    """
+    import asyncio
+    import json as json_mod
+
+    project_dir = str(Path(project_dir).resolve())
+
+    # Load .env
+    env_path = os.path.join(project_dir, ".env")
+    if os.path.exists(env_path):
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+
+    # Logging
+    level = "DEBUG" if verbose else "WARNING"
+    logger.remove()
+    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+
+    # Resolve LLM
+    from datasight.config import create_sql_runner, load_schema_description, load_example_queries
+    from datasight.llm import create_llm_client
+
+    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+
+    if llm_provider == "ollama":
+        api_key = "ollama"
+        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
+    elif llm_provider == "github":
+        api_key = os.getenv("GITHUB_TOKEN", "")
+        if not api_key:
+            click.echo("Error: GITHUB_TOKEN is not set.", err=True)
+            sys.exit(1)
+        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
+    else:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
+            sys.exit(1)
+        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+
+    db_mode = os.getenv("DB_MODE", "local")
+    raw_db_path = os.getenv("DB_PATH", "database.duckdb")
+    if db_mode in ("local", "sqlite"):
+        resolved_db_path = (
+            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
+        )
+        if not os.path.exists(resolved_db_path):
+            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+            sys.exit(1)
+    elif db_mode == "postgres":
+        resolved_db_path = ""
+    else:
+        resolved_db_path = raw_db_path
+
+    _db_mode_dialects = {"local": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
+
+    async def _run():
+        from datasight.agent import run_agent_loop
+        from datasight.config import format_example_queries
+        from datasight.prompts import build_system_prompt
+        from datasight.schema import introspect_schema, format_schema_context
+
+        base_url_map = {
+            "ollama": "OLLAMA_BASE_URL",
+            "github": "GITHUB_MODELS_BASE_URL",
+            "anthropic": "ANTHROPIC_BASE_URL",
+        }
+        base_url = os.getenv(base_url_map.get(llm_provider, "ANTHROPIC_BASE_URL"))
+        llm_client = create_llm_client(
+            provider=llm_provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        sql_runner = create_sql_runner(
+            db_mode=db_mode,
+            db_path=resolved_db_path,
+            flight_uri=os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337"),
+            flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
+            flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
+            flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
+            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
+            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
+            postgres_database=os.getenv("POSTGRES_DATABASE", ""),
+            postgres_user=os.getenv("POSTGRES_USER", ""),
+            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
+            postgres_url=os.getenv("POSTGRES_URL", ""),
+            postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
+        )
+
+        # Build system prompt
+        tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+        user_desc = load_schema_description(None, project_dir)
+        example_queries = load_example_queries(None, project_dir)
+        schema_text = format_schema_context(tables, user_desc)
+        if example_queries:
+            schema_text += format_example_queries(example_queries)
+
+        from datasight.sql_validation import build_schema_map
+
+        schema_info = [
+            {
+                "name": t.name,
+                "columns": [{"name": c.name, "dtype": c.dtype} for c in t.columns],
+            }
+            for t in tables
+        ]
+        schema_map = build_schema_map(schema_info)
+
+        sys_prompt = build_system_prompt(
+            schema_text,
+            mode="web",
+            clarify_sql=False,
+            dialect=sql_dialect,
+        )
+
+        result = await run_agent_loop(
+            question=question,
+            llm_client=llm_client,
+            model=resolved_model,
+            system_prompt=sys_prompt,
+            run_sql=sql_runner.run_sql,
+            schema_map=schema_map,
+            dialect=sql_dialect,
+        )
+        return result
+
+    result = asyncio.run(_run())
+
+    from rich.console import Console
+
+    console = Console()
+
+    # Print the assistant's text response
+    if result.text:
+        console.print(result.text)
+        console.print()
+
+    # Output data results
+    for tr in result.tool_results:
+        if tr.df is not None and not tr.df.empty:
+            if output_format == "csv":
+                csv_output = tr.df.to_csv(index=False)
+                if output_path and not chart_format:
+                    Path(output_path).write_text(csv_output)
+                    click.echo(f"Data saved to {output_path}")
+                else:
+                    click.echo(csv_output)
+            elif output_format == "json":
+                json_output = tr.df.to_json(orient="records", indent=2)
+                if output_path and not chart_format:
+                    Path(output_path).write_text(json_output)
+                    click.echo(f"Data saved to {output_path}")
+                else:
+                    click.echo(json_output)
+            else:
+                # Rich table
+                from rich.table import Table as RichTable
+
+                rich_table = RichTable(show_lines=True)
+                for col in tr.df.columns:
+                    rich_table.add_column(str(col))
+                for _, row in tr.df.head(50).iterrows():
+                    rich_table.add_row(*[str(v) for v in row])
+                console.print(rich_table)
+                if len(tr.df) > 50:
+                    console.print(f"[dim]Showing 50 of {len(tr.df)} rows[/dim]")
+
+        # Handle chart export
+        if tr.plotly_spec and chart_format and output_path:
+            if chart_format == "json":
+                Path(output_path).write_text(json_mod.dumps(tr.plotly_spec, indent=2))
+                click.echo(f"Plotly spec saved to {output_path}")
+            elif chart_format == "html":
+                from datasight.chart import _build_artifact_html
+
+                html = _build_artifact_html(tr.plotly_spec, tr.meta.get("title", "Chart"))
+                Path(output_path).write_text(html)
+                click.echo(f"Chart HTML saved to {output_path}")
+            elif chart_format == "png":
+                try:
+                    import plotly.io as pio
+                    import plotly.graph_objects as go
+
+                    fig = go.Figure(tr.plotly_spec)
+                    pio.write_image(fig, output_path)
+                    click.echo(f"Chart PNG saved to {output_path}")
+                except ImportError:
+                    click.echo(
+                        "Error: PNG export requires kaleido. "
+                        "Install with: pip install 'datasight[export]'",
+                        err=True,
+                    )
+                    sys.exit(1)
+
+
+@cli.command()
+@click.argument("session_id")
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Output file path (default: <session_id>.html).",
+)
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .datasight/conversations/.",
+)
+@click.option(
+    "--exclude",
+    default=None,
+    help="Comma-separated message indices to exclude (0-based).",
+)
+@click.option("--list-sessions", is_flag=True, help="List available sessions and exit.")
+def export(session_id, output_path, project_dir, exclude, list_sessions):
+    """Export a conversation session as a self-contained HTML page.
+
+    SESSION_ID is the conversation ID (use --list-sessions to see available IDs).
+
+    \b
+    Examples:
+      datasight export --list-sessions
+      datasight export abc123def -o my-analysis.html
+      datasight export abc123def --exclude 2,3
+    """
+    import json as json_mod
+
+    project_dir = str(Path(project_dir).resolve())
+    conv_dir = Path(project_dir) / ".datasight" / "conversations"
+
+    if list_sessions or session_id == "list":
+        if not conv_dir.exists():
+            click.echo("No conversations found.")
+            return
+        sessions = []
+        for f in sorted(conv_dir.glob("*.json")):
+            try:
+                data = json_mod.loads(f.read_text())
+                events = data.get("events", [])
+                msg_count = sum(1 for e in events if e.get("event") == "user_message")
+                if msg_count == 0:
+                    continue
+                sessions.append(
+                    {
+                        "id": f.stem,
+                        "title": data.get("title", "Untitled"),
+                        "messages": msg_count,
+                    }
+                )
+            except (json_mod.JSONDecodeError, OSError):
+                continue
+        if not sessions:
+            click.echo("No conversations found.")
+            return
+
+        from rich.console import Console
+        from rich.table import Table
+
+        console = Console()
+        table = Table(title="Available Sessions")
+        table.add_column("Session ID", style="cyan", no_wrap=True)
+        table.add_column("Title", overflow="fold")
+        table.add_column("Messages", justify="right")
+        for s in sessions:
+            table.add_row(s["id"], s["title"], str(s["messages"]))
+        console.print(table)
+        return
+
+    # Load session
+    session_path = conv_dir / f"{session_id}.json"
+    if not session_path.exists():
+        click.echo(f"Error: Session not found: {session_id}", err=True)
+        click.echo("Use 'datasight export --list-sessions' to see available sessions.", err=True)
+        sys.exit(1)
+
+    data = json_mod.loads(session_path.read_text())
+    events = data.get("events", [])
+    title = data.get("title", "datasight session")
+
+    if not events:
+        click.echo("Error: Session has no events.", err=True)
+        sys.exit(1)
+
+    exclude_indices: set[int] | None = None
+    if exclude:
+        try:
+            exclude_indices = {int(x.strip()) for x in exclude.split(",")}
+        except ValueError:
+            click.echo("Error: --exclude must be comma-separated integers.", err=True)
+            sys.exit(1)
+
+    from datasight.export import export_session_html
+
+    html = export_session_html(events, title=title, exclude_indices=exclude_indices)
+
+    if not output_path:
+        safe_id = session_id[:20]
+        output_path = f"{safe_id}.html"
+
+    Path(output_path).write_text(html)
+    click.echo(f"Session exported to {output_path}")
 
 
 @cli.command(name="log")

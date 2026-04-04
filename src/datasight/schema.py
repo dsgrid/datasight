@@ -86,7 +86,6 @@ def format_schema_context(
     parts.append("### Guidelines")
     parts.append("- Only SELECT columns that exist in your FROM tables. JOIN if needed.")
     parts.append("- For 'top N', use a CTE/subquery to find the top N first.")
-    parts.append("- DuckDB dates: DATE_TRUNC, EXTRACT, STRFTIME. Not TO_DATE/TO_CHAR.")
     parts.append("- For charts: SELECT 2-3 columns (category/date + numeric).")
     parts.append("")
 
@@ -173,6 +172,20 @@ async def _get_columns(run_sql: RunSql, table: str) -> list[ColumnInfo]:
                     name=row.get("column_name", ""),
                     dtype=row.get("data_type", ""),
                     nullable=row.get("is_nullable", "YES") == "YES",
+                )
+            )
+        return cols
+
+    # Fallback: SQLite PRAGMA table_info
+    df = await _run(run_sql, f'PRAGMA table_info("{table}")')
+    if not df.empty and "name" in df.columns:
+        cols = []
+        for _, row in df.iterrows():
+            cols.append(
+                ColumnInfo(
+                    name=row.get("name", ""),
+                    dtype=row.get("type", "TEXT"),
+                    nullable=row.get("notnull", 0) == 0,
                 )
             )
         return cols
