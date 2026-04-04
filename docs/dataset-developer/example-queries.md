@@ -5,7 +5,7 @@ database. Each entry pairs a natural language question with its SQL answer.
 
 ## How examples are used
 
-```{mermaid}
+```mermaid
 flowchart TD
     A[queries.yaml] --> B[System prompt<br>few-shot examples]
     A --> C[Sidebar<br>clickable queries]

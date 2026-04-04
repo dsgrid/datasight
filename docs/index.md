@@ -1,13 +1,16 @@
+---
+hide:
+  - navigation
+  - toc
+---
+
 # datasight
 
-```{rst-class} hero-tagline
-AI-powered database exploration with natural language. Connect an AI agent to
+**AI-powered database exploration with natural language.** Connect an AI agent to
 your database (DuckDB, PostgreSQL, SQLite, or Flight SQL) and explore data
 through a web UI or CLI — ask questions in plain English, get SQL queries,
 interactive charts, and tabular results.
-```
 
-````{div} install-block
 ```bash
 pip install git+https://github.com/dsgrid/datasight.git
 
@@ -17,7 +20,6 @@ cd my-project
 # Edit .env with your API key (see Getting Started)
 datasight run
 ```
-````
 
 ## Documentation by role
 
@@ -25,77 +27,33 @@ datasight has three types of users. Pick the section that matches how you use
 the tool — or start with [Users and roles](concepts/users-and-roles.md) for an
 overview.
 
-::::{grid} 1 1 3 3
-:gutter: 3
+<div class="grid cards" markdown>
 
-:::{grid-item-card} End user
-:link: end-user/getting-started
-:link-type: doc
+-   :material-account:{ .lg .middle } **End user**
 
-Get started, explore data through the web UI, ask questions, view charts,
-and review SQL.
-:::
+    ---
 
-:::{grid-item-card} Dataset developer
-:link: dataset-developer/schema-description
-:link-type: doc
+    Get started, explore data through the web UI, ask questions, view charts,
+    and review SQL.
 
-Set up a datasight project for your team. Connect a database, write schema
-descriptions, curate example queries, and verify results across models.
-:::
+    [:octicons-arrow-right-24: Getting started](end-user/getting-started.md)
 
-:::{grid-item-card} Tool developer
-:link: tool-developer/architecture
-:link-type: doc
+-   :material-database-cog:{ .lg .middle } **Dataset developer**
 
-Contribute to datasight itself. Understand the architecture, LLM agent
-loop, and module structure.
-:::
+    ---
 
-::::
+    Set up a datasight project for your team. Connect a database, write schema
+    descriptions, curate example queries, and verify results across models.
 
-```{toctree}
-:hidden:
-:caption: End user
+    [:octicons-arrow-right-24: Schema description](dataset-developer/schema-description.md)
 
-end-user/getting-started
-end-user/demo-dataset
-end-user/quickstart
-end-user/web-ui
-end-user/visualizations
-end-user/query-confidence
-end-user/query-log
-end-user/remote-hpc
-```
+-   :material-code-braces:{ .lg .middle } **Tool developer**
 
-```{toctree}
-:hidden:
-:caption: Dataset developer
+    ---
 
-dataset-developer/schema-description
-dataset-developer/example-queries
-dataset-developer/verification
-```
+    Contribute to datasight itself. Understand the architecture, LLM agent
+    loop, and module structure.
 
-```{toctree}
-:hidden:
-:caption: Tool developer
+    [:octicons-arrow-right-24: Architecture](tool-developer/architecture.md)
 
-tool-developer/architecture
-tool-developer/contributing
-```
-
-```{toctree}
-:hidden:
-:caption: Reference
-
-reference/configuration
-reference/cli
-```
-
-```{toctree}
-:hidden:
-:caption: Core concepts
-
-concepts/users-and-roles
-```
+</div>

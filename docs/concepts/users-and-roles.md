@@ -3,7 +3,7 @@
 datasight has three types of users. Understanding which role you play helps
 you find the right documentation and get the most out of the tool.
 
-```{mermaid}
+```mermaid
 flowchart LR
     TD[Tool developer] -->|builds| DS[datasight]
     DD[Dataset developer] -->|configures| PROJ[Project]

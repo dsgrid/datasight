@@ -92,11 +92,10 @@ datasight verify -v
 
 ## Documentation
 
-Docs use Sphinx with MyST (Markdown) and the Furo theme.
+Docs use MkDocs with the Material theme.
 
 ```bash
-pip install -e ".[docs]"
-cd docs
-make html
-open _build/html/index.html
+pip install -e ".[dev]"
+mkdocs serve
+# Open http://localhost:8000
 ```

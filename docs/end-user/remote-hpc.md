@@ -11,7 +11,7 @@ on your laptop or the login node. Your laptop only runs datasight (the web
 UI and LLM agent). It sends SQL queries over an SSH tunnel and receives
 results back. All data processing stays on the HPC.
 
-```{mermaid}
+```mermaid
 flowchart LR
     subgraph laptop ["Your laptop"]
         DS[datasight web UI<br>+ LLM agent]
@@ -37,11 +37,10 @@ flowchart LR
     style compute fill:#fff5f0,stroke:#fe5d26
 ```
 
-```{important}
-**Do not run GizmoSQL on the login node.** DuckDB queries can be CPU- and
-memory-intensive. Always allocate a compute node with Slurm first, then
-start GizmoSQL on that node.
-```
+!!! important
+    **Do not run GizmoSQL on the login node.** DuckDB queries can be CPU- and
+    memory-intensive. Always allocate a compute node with Slurm first, then
+    start GizmoSQL on that node.
 
 Steps:
 
@@ -53,12 +52,11 @@ Steps:
 
 ## Step 1: Install GizmoSQL on the HPC
 
-```{tip}
-**NREL Kestrel users:** A pre-built `gizmosql_server` binary is already
-available at `/scratch/dthom/gizmosql/gizmosql_server`. You can skip the
-installation instructions below and go straight to
-[Step 2](#step-2-create-views-over-parquet-files).
-```
+!!! tip
+    **NREL Kestrel users:** A pre-built `gizmosql_server` binary is already
+    available at `/scratch/dthom/gizmosql/gizmosql_server`. You can skip the
+    installation instructions below and go straight to
+    [Step 2](#step-2-create-views-over-parquet-files).
 
 Download a pre-built binary from the
 [GizmoSQL releases page](https://github.com/gizmodata/gizmosql/releases).
@@ -71,13 +69,12 @@ tar xzf gizmosql-linux-amd64.tar.gz
 mv gizmosql_server gizmosql_client ~/.local/bin/
 ```
 
-```{warning}
-The pre-built binaries require a recent GLIBC version. If your HPC runs an
-older operating system (e.g. CentOS 7, RHEL 7), you may see errors like
-`GLIBC_2.XX not found` when trying to run the binary. In that case, use
-the Apptainer container image instead — it bundles its own libraries and
-avoids GLIBC compatibility issues entirely.
-```
+!!! warning
+    The pre-built binaries require a recent GLIBC version. If your HPC runs an
+    older operating system (e.g. CentOS 7, RHEL 7), you may see errors like
+    `GLIBC_2.XX not found` when trying to run the binary. In that case, use
+    the Apptainer container image instead — it bundles its own libraries and
+    avoids GLIBC compatibility issues entirely.
 
 **Apptainer container (recommended if binaries don't work):**
 
@@ -109,7 +106,6 @@ cmake --build build --target install
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-(step-2-create-views-over-parquet-files)=
 ## Step 2: Create views over parquet files
 
 You have two options for how GizmoSQL manages the database:
@@ -311,11 +307,10 @@ ssh -N -L 31337:compute-node-42:31337 user@hpc-login-node
 
 Leave this running in a separate terminal.
 
-```{tip}
-If your HPC allows direct SSH to compute nodes from the login node, you can
-verify GizmoSQL is reachable before setting up the tunnel:
-`nc -zv compute-node-42 31337`
-```
+!!! tip
+    If your HPC allows direct SSH to compute nodes from the login node, you can
+    verify GizmoSQL is reachable before setting up the tunnel:
+    `nc -zv compute-node-42 31337`
 
 ## Step 6: Configure datasight
 

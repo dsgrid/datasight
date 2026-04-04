@@ -24,7 +24,7 @@ All backends support the same tool-calling interface (`run_sql` and
 
 ## System overview
 
-```{mermaid}
+```mermaid
 flowchart TB
     subgraph ui ["Web UI (FastAPI + SSE)"]
         WEB[FastAPI server]
@@ -82,7 +82,7 @@ flowchart TB
 
 ## Request flow
 
-```{mermaid}
+```mermaid
 sequenceDiagram
     participant U as User
     participant W as FastAPI
@@ -158,7 +158,7 @@ sequenceDiagram
 The AI receives database context at startup, which is included in every
 system prompt:
 
-```{mermaid}
+```mermaid
 flowchart LR
     A[Auto-discovered schema<br>tables, columns, types, rows] --> D[System prompt]
     B[schema_description.md<br>domain context] --> D

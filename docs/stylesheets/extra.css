@@ -1,0 +1,14 @@
+/* datasight brand colors */
+:root {
+  --md-primary-fg-color: #4a86c8;
+  --md-primary-fg-color--light: #6ba3e0;
+  --md-primary-fg-color--dark: #023d60;
+  --md-accent-fg-color: #fe5d26;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #6ba3e0;
+  --md-primary-fg-color--light: #8dbde8;
+  --md-primary-fg-color--dark: #4a86c8;
+  --md-accent-fg-color: #fe5d26;
+}

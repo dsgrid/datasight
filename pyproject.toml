@@ -50,13 +50,8 @@ export = [
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<1",
-    "sphinx>=7.0,<9",
-    "furo>=2024.0,<2026",
-    "sphinx-click>=5.0,<6",
-    "sphinx-design>=0.5,<1",
-    "sphinx-copybutton>=0.5,<1",
-    "myst-parser>=5.0,<6",
-    "sphinxcontrib-mermaid>=1.0,<2",
+    "mkdocs-material>=9.5,<10",
+    "mkdocs-click>=0.8,<1",
     "ty>=0.0.26",
     "pre-commit>=4.0,<5",
 ]

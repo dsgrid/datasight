@@ -7,7 +7,7 @@ queries produce correct results regardless of which LLM is used.
 
 ## The verification workflow
 
-```{mermaid}
+```mermaid
 flowchart LR
     A[queries.yaml<br>+ expected] --> B[datasight verify]
     B --> C[Ambiguity<br>analysis]

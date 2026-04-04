@@ -1,0 +1,87 @@
+site_name: datasight
+site_description: AI-powered database exploration with natural language
+repo_url: https://github.com/dsgrid/datasight
+repo_name: dsgrid/datasight
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: custom
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - tables
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - def_list
+  - mkdocs-click
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - End user:
+      - Getting started: end-user/getting-started.md
+      - Try the demo dataset: end-user/demo-dataset.md
+      - Quickstart: end-user/quickstart.md
+      - Use the web UI: end-user/web-ui.md
+      - Create visualizations: end-user/visualizations.md
+      - Query confidence features: end-user/query-confidence.md
+      - Log and review SQL queries: end-user/query-log.md
+      - Connect to a remote HPC: end-user/remote-hpc.md
+  - Dataset developer:
+      - Write a schema description: dataset-developer/schema-description.md
+      - Create example queries: dataset-developer/example-queries.md
+      - Verify queries across models: dataset-developer/verification.md
+  - Tool developer:
+      - Architecture: tool-developer/architecture.md
+      - Contributing: tool-developer/contributing.md
+  - Reference:
+      - Configuration: reference/configuration.md
+      - CLI: reference/cli.md
+  - Concepts:
+      - Users and roles: concepts/users-and-roles.md
