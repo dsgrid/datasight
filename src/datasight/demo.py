@@ -304,7 +304,7 @@ def write_demo_project_files(dest_dir: Path) -> None:
         env_path.write_text(
             "# datasight demo project\n"
             "ANTHROPIC_API_KEY=your-api-key-here\n"
-            "DB_MODE=local\n" + db_path_line
+            "DB_MODE=duckdb\n" + db_path_line
         )
         logger.info(f"  Created {env_path.name}")
     else:
@@ -312,7 +312,7 @@ def write_demo_project_files(dest_dir: Path) -> None:
         content = env_path.read_text()
         if "DB_PATH" not in content:
             with open(env_path, "a") as f:
-                f.write(f"\n# Added by datasight demo\nDB_MODE=local\n{db_path_line}")
+                f.write(f"\n# Added by datasight demo\nDB_MODE=duckdb\n{db_path_line}")
             logger.info(f"  Updated {env_path.name} — added DB_PATH")
         else:
             logger.warning(

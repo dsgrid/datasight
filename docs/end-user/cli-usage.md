@@ -1,0 +1,201 @@
+# Use the CLI
+
+datasight provides command-line tools for querying data, reviewing SQL logs,
+and exporting conversations — all without opening the web UI.
+
+## Ask questions from the terminal
+
+`datasight ask` runs the full LLM agent loop and prints results to the
+terminal. It uses the same AI, schema context, and example queries as the
+web UI.
+
+```bash
+datasight ask "What are the top 5 states by total generation?"
+```
+
+```
+The top 5 states by total electricity generation are:
+
+┌───────┬──────────────────┐
+│ state │ total_generation  │
+├───────┼──────────────────┤
+│ TX    │  574,327,891.2   │
+│ FL    │  287,654,321.0   │
+│ PA    │  243,876,543.8   │
+│ IL    │  198,234,567.1   │
+│ CA    │  187,654,321.4   │
+└───────┴──────────────────┘
+```
+
+The AI's text explanation is printed first, followed by a formatted table
+of the query results.
+
+### Export results as CSV or JSON
+
+```bash
+datasight ask "Top 10 plants by generation" --format csv
+```
+
+```
+plant_name,total_mwh
+Palo Verde,32541876.5
+West County Energy Center,28764532.1
+Scherer,27654321.0
+Martin,25432198.7
+Navajo,24321098.4
+Grand Coulee,23456789.0
+Oconee,22345678.9
+Amos,21234567.8
+Monroe,20987654.3
+Gibson,20123456.7
+```
+
+Save directly to a file:
+
+```bash
+datasight ask "Monthly generation trend" --format csv -o generation.csv
+datasight ask "Top 10 plants" --format json -o plants.json
+```
+
+### Export charts
+
+Ask for a visualization and save it as an HTML file with an interactive
+Plotly chart:
+
+```bash
+datasight ask "Show monthly wind generation as a line chart" \
+    --chart-format html -o wind-trend.html
+```
+
+```
+Chart HTML saved to wind-trend.html
+```
+
+Open `wind-trend.html` in a browser to see the interactive chart. Other
+export formats:
+
+```bash
+# Plotly JSON spec (for embedding in notebooks or other tools)
+datasight ask "Generation by fuel type" --chart-format json -o chart.json
+
+# Static PNG image (requires: pip install "datasight[export]")
+datasight ask "Solar generation by state" --chart-format png -o solar-map.png
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `table` | Output format: `table`, `csv`, or `json` |
+| `--chart-format` | — | Chart export format: `html`, `json`, or `png` |
+| `-o` / `--output` | — | Save output to a file instead of printing |
+| `--model` | from `.env` | Override the model for this query |
+| `--project-dir` | `.` | Project directory containing `.env` |
+| `-v` / `--verbose` | off | Show debug logging (LLM requests, SQL, timing) |
+
+### Scripting examples
+
+Chain `datasight ask` with other tools:
+
+```bash
+# Pipe CSV output to another program
+datasight ask "All plants in Texas" --format csv | head -20
+
+# Use in a shell script
+datasight ask "Count of plants by state" --format json -o counts.json
+python analyze.py counts.json
+
+# Quick data check before a meeting
+datasight ask "Total generation by fuel type for 2024" --format table
+```
+
+## Review the query log
+
+`datasight log` shows a formatted table of recent SQL queries from the
+query log file. Logging must be enabled first — see
+[Log and review SQL queries](query-log.md).
+
+```bash
+datasight log
+```
+
+```
+ Timestamp            Tool     SQL                                  Time  Rows  Status
+─────────────────────────────────────────────────────────────────────────────────────────
+ 2026-04-04 09:15:03  run_sql  SELECT state, SUM(net_generation_     84ms     5  OK
+                               mwh) AS total FROM generation_fuel
+                               GROUP BY state ORDER BY total DESC
+                               LIMIT 5
+ 2026-04-04 09:15:47  run_sql  SELECT DATE_TRUNC('month',           142ms    48  OK
+                               report_date) AS month, SUM(net_
+                               generation_mwh) AS total FROM
+                               generation_fuel WHERE
+                               energy_source_code = 'WND'
+                               GROUP BY month ORDER BY month
+ 2026-04-04 09:17:22  run_sql  SELECT * FROM nonexistent_table        2ms        ERR
+─────────────────────────────────────────────────────────────────────────────────────────
+3 queries (2 succeeded, 1 failed)
+```
+
+### Filter and format
+
+```bash
+# Show only failed queries
+datasight log --errors
+```
+
+```
+ Timestamp            Tool     SQL                                Time  Rows  Status
+────────────────────────────────────────────────────────────────────────────────────────
+ 2026-04-04 09:17:22  run_sql  SELECT * FROM nonexistent_table      2ms        ERR
+────────────────────────────────────────────────────────────────────────────────────────
+1 query (0 succeeded, 1 failed)
+```
+
+```bash
+# Show full SQL and the original natural-language question
+datasight log --full --tail 5
+```
+
+```
+ Timestamp            Question              Tool     SQL                       Time  Rows  Status
+──────────────────────────────────────────────────────────────────────────────────────────────────
+ 2026-04-04 09:15:03  Top 5 states by       run_sql  SELECT state,              84ms     5  OK
+                      generation                       SUM(net_generation_mwh)
+                                                       AS total
+                                                     FROM generation_fuel
+                                                     GROUP BY state
+                                                     ORDER BY total DESC
+                                                     LIMIT 5
+──────────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+## Export conversations
+
+`datasight export` converts a saved web UI conversation into a
+self-contained HTML page.
+
+```bash
+# List available conversations
+datasight export --list-sessions
+```
+
+```
+ Session   Title                         Messages
+──────────────────────────────────────────────────
+ a1b2c3d4  Top plants by generation             4
+ e5f6g7h8  Wind generation trends               7
+ i9j0k1l2  State comparison analysis            12
+```
+
+```bash
+# Export a conversation to HTML
+datasight export a1b2c3d4 -o analysis.html
+
+# Exclude specific messages by index (0-based)
+datasight export e5f6g7h8 --exclude 0,3 -o wind-report.html
+```
+
+The exported HTML page includes all messages, SQL queries with syntax
+highlighting, data tables, and interactive Plotly charts — ready to share
+with colleagues or embed in a report.

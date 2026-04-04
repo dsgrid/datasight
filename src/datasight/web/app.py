@@ -360,7 +360,9 @@ async def _startup():
             provider="anthropic", api_key=api_key, base_url=anthropic_base_url
         )
 
-    db_mode = os.environ.get("DB_MODE", "local")
+    from datasight.config import normalize_db_mode
+
+    db_mode = normalize_db_mode(os.environ.get("DB_MODE", "duckdb"))
     db_path = os.environ.get("DB_PATH", "")
     flight_uri = os.environ.get("FLIGHT_SQL_URI", "grpc://localhost:31337")
     flight_token = os.environ.get("FLIGHT_SQL_TOKEN")
@@ -368,7 +370,7 @@ async def _startup():
     flight_password = os.environ.get("FLIGHT_SQL_PASSWORD")
 
     # Map DB mode to SQL dialect
-    _DB_MODE_DIALECTS = {"local": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    _DB_MODE_DIALECTS = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
     state.sql_dialect = _DB_MODE_DIALECTS.get(db_mode, "duckdb")
 
     state.sql_runner = create_sql_runner(

@@ -62,7 +62,7 @@ Edit `.env` with your database path and LLM settings.
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-DB_MODE=local
+DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
 
@@ -72,7 +72,7 @@ DB_PATH=./my_database.duckdb
 LLM_PROVIDER=github
 GITHUB_TOKEN=ghp_...
 GITHUB_MODELS_MODEL=gpt-4o
-DB_MODE=local
+DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
 
@@ -90,7 +90,7 @@ Then configure `.env`:
 ```bash
 LLM_PROVIDER=ollama
 OLLAMA_MODEL=qwen3.5:35b-a3b
-DB_MODE=local
+DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
 

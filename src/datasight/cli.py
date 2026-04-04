@@ -112,7 +112,7 @@ def demo(project_dir: str, min_year: int):
 @click.option("--host", default="0.0.0.0", help="Bind address.")
 @click.option(
     "--db-mode",
-    type=click.Choice(["local", "sqlite", "postgres", "flightsql"]),
+    type=click.Choice(["duckdb", "sqlite", "postgres", "flightsql"]),
     default=None,
     help="Database mode (overrides .env).",
 )
@@ -185,12 +185,14 @@ def run(
             )
             sys.exit(1)
         resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-    resolved_db_mode = db_mode or os.getenv("DB_MODE", "local")
+    from datasight.config import normalize_db_mode
+
+    resolved_db_mode = normalize_db_mode(db_mode or os.getenv("DB_MODE", "duckdb"))
     resolved_port = port or int(os.getenv("PORT", "8084"))
 
     # Resolve DB_PATH relative to project_dir, not CWD
     raw_db_path = db_path or os.getenv("DB_PATH", "database.duckdb")
-    if resolved_db_mode in ("local", "sqlite"):
+    if resolved_db_mode in ("duckdb", "sqlite"):
         resolved_db_path = (
             str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
         )
@@ -336,9 +338,11 @@ def verify(project_dir, model, queries_path, verbose):
             sys.exit(1)
         resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
-    db_mode = os.getenv("DB_MODE", "local")
+    from datasight.config import normalize_db_mode
+
+    db_mode = normalize_db_mode(os.getenv("DB_MODE", "duckdb"))
     raw_db_path = os.getenv("DB_PATH", "database.duckdb")
-    if db_mode in ("local", "sqlite"):
+    if db_mode in ("duckdb", "sqlite"):
         resolved_db_path = (
             str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
         )
@@ -350,7 +354,7 @@ def verify(project_dir, model, queries_path, verbose):
     else:
         resolved_db_path = raw_db_path
 
-    _db_mode_dialects = {"local": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    _db_mode_dialects = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
     sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
 
     click.echo("datasight verify")
@@ -615,9 +619,11 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
             sys.exit(1)
         resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 
-    db_mode = os.getenv("DB_MODE", "local")
+    from datasight.config import normalize_db_mode
+
+    db_mode = normalize_db_mode(os.getenv("DB_MODE", "duckdb"))
     raw_db_path = os.getenv("DB_PATH", "database.duckdb")
-    if db_mode in ("local", "sqlite"):
+    if db_mode in ("duckdb", "sqlite"):
         resolved_db_path = (
             str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
         )
@@ -629,7 +635,7 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
     else:
         resolved_db_path = raw_db_path
 
-    _db_mode_dialects = {"local": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    _db_mode_dialects = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
     sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
 
     async def _run():

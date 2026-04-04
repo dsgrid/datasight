@@ -14,6 +14,11 @@ from loguru import logger
 from datasight.runner import DuckDBRunner, FlightSqlRunner, PostgresRunner, SQLiteRunner
 
 
+def normalize_db_mode(db_mode: str) -> str:
+    """Normalize db_mode, accepting 'local' as an alias for 'duckdb'."""
+    return "duckdb" if db_mode == "local" else db_mode
+
+
 def create_sql_runner(
     db_mode: str,
     db_path: str = "",
@@ -30,6 +35,7 @@ def create_sql_runner(
     postgres_sslmode: str = "prefer",
 ):
     """Create the appropriate SqlRunner based on db_mode."""
+    db_mode = normalize_db_mode(db_mode)
     if db_mode == "flightsql":
         logger.info(f"Connecting to Flight SQL server: {flight_uri}")
         return FlightSqlRunner(

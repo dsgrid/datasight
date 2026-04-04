@@ -38,8 +38,8 @@ in the project directory. CLI flags override `.env` values.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_MODE` | `local` | Database type: `local` (DuckDB), `sqlite`, `postgres`, or `flightsql` |
-| `DB_PATH` | `./database.duckdb` | Path to DuckDB or SQLite file (used when `DB_MODE=local` or `sqlite`) |
+| `DB_MODE` | `duckdb` | Database type: `duckdb`, `sqlite`, `postgres`, or `flightsql` |
+| `DB_PATH` | `./database.duckdb` | Path to DuckDB or SQLite file (used when `DB_MODE=duckdb` or `sqlite`) |
 
 #### PostgreSQL settings (when `DB_MODE=postgres`)
 

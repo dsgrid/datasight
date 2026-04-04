@@ -175,7 +175,7 @@ def test_ask_aggregation(project_dir):
 
 def test_ask_missing_db(tmp_path):
     """Verify error when database file doesn't exist."""
-    env_content = "LLM_PROVIDER=ollama\nDB_MODE=local\nDB_PATH=nonexistent.duckdb\n"
+    env_content = "LLM_PROVIDER=ollama\nDB_MODE=duckdb\nDB_PATH=nonexistent.duckdb\n"
     (tmp_path / ".env").write_text(env_content)
     result = _run_ask(str(tmp_path), "test question")
     assert result.returncode != 0
