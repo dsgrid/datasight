@@ -15,12 +15,12 @@ flowchart LR
     C --> E[Warnings:<br>ambiguous questions]
     D --> F[Pass/fail<br>report]
 
-    style A fill:#e7e1cf,stroke:#023d60,color:#023d60
+    style A fill:#8a7d55,stroke:#6b6040,color:#fff
     style B fill:#15a8a8,stroke:#023d60,color:#fff
-    style C fill:#fe5d26,stroke:#023d60,color:#fff
-    style D fill:#fe5d26,stroke:#023d60,color:#fff
-    style E fill:#023d60,stroke:#023d60,color:#fff
-    style F fill:#023d60,stroke:#023d60,color:#fff
+    style C fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style D fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style E fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style F fill:#2e7ebb,stroke:#1a5c8a,color:#fff
 ```
 
 `datasight verify` runs in two phases:

@@ -11,12 +11,12 @@ flowchart LR
     DS --> PROJ
     PROJ --> WEB
 
-    style TD fill:#023d60,stroke:#023d60,color:#fff
+    style TD fill:#1a5c8a,stroke:#023d60,color:#fff
     style DD fill:#15a8a8,stroke:#023d60,color:#fff
     style EU fill:#fe5d26,stroke:#023d60,color:#fff
-    style DS fill:#f0f0fa,stroke:#023d60,color:#023d60
-    style PROJ fill:#f0fafa,stroke:#15a8a8,color:#023d60
-    style WEB fill:#fff5f0,stroke:#fe5d26,color:#023d60
+    style DS fill:#4a86c8,stroke:#023d60,color:#fff
+    style PROJ fill:#2b9e9e,stroke:#15a8a8,color:#fff
+    style WEB fill:#e8693a,stroke:#fe5d26,color:#fff
 ```
 
 ## End user

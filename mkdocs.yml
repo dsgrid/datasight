@@ -76,6 +76,7 @@ nav:
       - Connect to a remote HPC: end-user/remote-hpc.md
   - Dataset developer:
       - Database connections: dataset-developer/database-connections.md
+      - Query CSV and Parquet files: dataset-developer/querying-files.md
       - Write a schema description: dataset-developer/schema-description.md
       - Create example queries: dataset-developer/example-queries.md
       - Verify queries across models: dataset-developer/verification.md

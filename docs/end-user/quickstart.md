@@ -148,7 +148,7 @@ See `datasight ask --help` for all options.
 ## What happens at startup
 
 ```mermaid
-flowchart LR
+flowchart TB
     A[datasight run] --> B[Load .env]
     B --> C[Connect to database]
     C --> D[Introspect schema]
@@ -157,11 +157,11 @@ flowchart LR
     F --> G[Start FastAPI server]
 
     style A fill:#15a8a8,stroke:#023d60,color:#fff
-    style B fill:#e7e1cf,stroke:#023d60,color:#023d60
-    style C fill:#023d60,stroke:#023d60,color:#fff
-    style D fill:#023d60,stroke:#023d60,color:#fff
-    style E fill:#e7e1cf,stroke:#023d60,color:#023d60
-    style F fill:#e7e1cf,stroke:#023d60,color:#023d60
+    style B fill:#8a7d55,stroke:#6b6040,color:#fff
+    style C fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style D fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style E fill:#8a7d55,stroke:#6b6040,color:#fff
+    style F fill:#8a7d55,stroke:#6b6040,color:#fff
     style G fill:#fe5d26,stroke:#023d60,color:#fff
 ```
 

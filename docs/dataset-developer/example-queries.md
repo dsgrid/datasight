@@ -11,10 +11,10 @@ flowchart TD
     A --> C[Sidebar<br>clickable queries]
     B --> D[AI writes SQL]
 
-    style A fill:#e7e1cf,stroke:#023d60,color:#023d60
+    style A fill:#8a7d55,stroke:#6b6040,color:#fff
     style B fill:#15a8a8,stroke:#023d60,color:#fff
-    style C fill:#fe5d26,stroke:#023d60,color:#fff
-    style D fill:#023d60,stroke:#023d60,color:#fff
+    style C fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style D fill:#2e7ebb,stroke:#1a5c8a,color:#fff
 ```
 
 At startup, datasight:

@@ -28,13 +28,13 @@ flowchart LR
     DS <-->|"SQL over<br>Flight SQL"| SSH <-->|port 31337| GS
 
     style DS fill:#15a8a8,stroke:#023d60,color:#fff
-    style SSH fill:#bf1363,stroke:#023d60,color:#fff
-    style GS fill:#fe5d26,stroke:#023d60,color:#fff
-    style DDB fill:#023d60,stroke:#023d60,color:#fff
-    style PQ fill:#e7e1cf,stroke:#023d60,color:#023d60
-    style laptop fill:#f0fafa,stroke:#15a8a8
-    style login fill:#fdf0f4,stroke:#bf1363
-    style compute fill:#fff5f0,stroke:#fe5d26
+    style SSH fill:#bf1363,stroke:#8a0d42,color:#fff
+    style GS fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style DDB fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style PQ fill:#8a7d55,stroke:#6b6040,color:#fff
+    style laptop fill:#1a8a8a,stroke:#15a8a8,color:#fff
+    style login fill:#9e1050,stroke:#bf1363,color:#fff
+    style compute fill:#c44a1e,stroke:#fe5d26,color:#fff
 ```
 
 !!! important
