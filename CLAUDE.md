@@ -34,8 +34,8 @@ src/datasight/
     ├── static/     # app.js, style.css
     └── templates/  # index.html
 tests/              # pytest + pytest-asyncio
-docs/               # MkDocs Material documentation
-mkdocs.yml          # MkDocs config
+docs/               # Zensical documentation
+mkdocs.yml          # Zensical config (MkDocs-compatible)
 ```
 
 ## Development commands
@@ -48,8 +48,8 @@ pip install -e ".[dev]"
 pre-commit run --all-files
 
 # Build docs
-mkdocs serve        # dev server at localhost:8000
-mkdocs build --strict
+zensical serve      # dev server at localhost:8000
+zensical build
 
 # Run tests
 pytest
@@ -74,9 +74,9 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 
 ## Documentation
 
-Docs use **MkDocs Material**. Key details:
+Docs use **Zensical** (successor to MkDocs Material). Key details:
 
-- Config: `mkdocs.yml`
+- Config: `mkdocs.yml` (Zensical reads MkDocs config natively)
 - Content: `docs/` directory, standard Markdown
 - Mermaid diagrams: use ` ```mermaid ` fences
 - Admonitions: use `!!! tip`, `!!! warning`

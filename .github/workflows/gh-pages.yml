@@ -18,8 +18,8 @@ jobs:
       - name: Install the project
         run: pip install -e ".[dev]"
 
-      - name: Build MkDocs documentation
-        run: mkdocs build --strict
+      - name: Build documentation
+        run: zensical build
 
       - name: Deploy on GitHub Pages
         uses: peaceiris/actions-gh-pages@v4.0.0
