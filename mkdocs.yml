@@ -1,7 +1,7 @@
 site_name: datasight
 site_description: AI-powered database exploration with natural language
 repo_url: https://github.com/dsgrid/datasight
-repo_name: dsgrid/datasight
+repo_name: datasight
 
 theme:
   name: material

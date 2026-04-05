@@ -131,6 +131,13 @@ header .actions { display: flex; gap: 8px; align-items: center; }
   font-family: inherit;
   font-size: 0.8rem;
   transition: all 0.15s;
+  text-decoration: none;
+}
+
+a.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-icon:hover {
