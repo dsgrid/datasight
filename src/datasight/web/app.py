@@ -45,6 +45,13 @@ from datasight.llm import (
 )
 from datasight.prompts import WEB_TOOLS, build_system_prompt
 from datasight.query_log import QueryLogger
+from datasight.recent_projects import (
+    add_recent_project,
+    get_project_name,
+    load_recent_projects,
+    remove_recent_project,
+    validate_project_dir,
+)
 from datasight.schema import introspect_schema, format_schema_context
 from datasight.sql_validation import build_schema_map
 
@@ -207,11 +214,36 @@ class AppState:
         self.schema_text: str = ""
         self.schema_map: dict[str, set[str]] = {}  # lowercase table -> lowercase columns
         self.sql_dialect: str = "duckdb"  # "duckdb", "postgres", or "sqlite"
+        # Project state
+        self.project_dir: str | None = None  # None when no project loaded
+        self.project_loaded: bool = False
         # Pending SQL confirmations: request_id -> asyncio.Event + result
         self.pending_confirms: dict[str, dict[str, Any]] = {}
         # Response cache: normalized question -> cached response data
         self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._response_cache_max = 100
+
+    def clear_project(self) -> None:
+        """Clear project-specific state."""
+        if self.sql_runner:
+            # Close existing connection if possible
+            if hasattr(self.sql_runner, "close"):
+                try:
+                    self.sql_runner.close()
+                except Exception:
+                    pass
+        self.sql_runner = None
+        self.schema_info = []
+        self.example_queries_list = []
+        self.schema_text = ""
+        self.schema_map = {}
+        self.system_prompt = ""
+        self.project_dir = None
+        self.project_loaded = False
+        self.conversations = None
+        self.bookmarks = None
+        self.query_logger = None
+        self._response_cache.clear()
 
     def rebuild_system_prompt(self) -> None:
         """Rebuild the system prompt (e.g. after toggling explain_sql or clarify_sql)."""
@@ -328,13 +360,12 @@ def _extract_suggestions(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Startup
+# Startup and Project Loading
 # ---------------------------------------------------------------------------
 
 
-async def _startup():
-    load_dotenv()
-
+def _reinit_llm_client() -> None:
+    """Initialize or reinitialize the LLM client from current environment variables."""
     llm_provider = os.environ.get("LLM_PROVIDER", "anthropic")
 
     if llm_provider == "ollama":
@@ -344,7 +375,7 @@ async def _startup():
     elif llm_provider == "github":
         api_key = os.environ.get("GITHUB_TOKEN", "")
         if not api_key:
-            logger.error("GITHUB_TOKEN not set")
+            logger.warning("LLM API key not configured (GITHUB_TOKEN)")
         state.model = os.environ.get("GITHUB_MODELS_MODEL", "gpt-4o")
         github_base_url = os.environ.get("GITHUB_MODELS_BASE_URL")
         state.llm_client = create_llm_client(
@@ -353,21 +384,78 @@ async def _startup():
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
-            logger.error("ANTHROPIC_API_KEY not set")
+            logger.warning("LLM API key not configured (ANTHROPIC_API_KEY)")
         state.model = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
         anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
         state.llm_client = create_llm_client(
             provider="anthropic", api_key=api_key, base_url=anthropic_base_url
         )
 
+
+async def _startup():
+    """Initialize the LLM client. Projects are loaded separately via the UI."""
+    load_dotenv()
+
+    _reinit_llm_client()
+
+    # Check for auto-load project (from CLI --project-dir)
+    auto_load_project = os.environ.get("DATASIGHT_AUTO_LOAD_PROJECT")
+    if auto_load_project:
+        try:
+            await load_project(auto_load_project)
+            logger.info(f"Auto-loaded project: {auto_load_project}")
+        except Exception as e:
+            logger.error(f"Failed to auto-load project {auto_load_project}: {e}")
+
+    port = os.environ.get("PORT", "8084")
+    if state.project_loaded:
+        logger.info(f"datasight ready (model={state.model}, project={state.project_dir})")
+    else:
+        logger.info(f"datasight ready (model={state.model}, no project loaded)")
+    print(f"\n  Ready — open http://localhost:{port} in your browser\n")
+
+
+async def load_project(project_dir: str) -> dict[str, Any]:
+    """Load a project directory, initializing DB connection and schema.
+
+    This can be called to switch projects at runtime.
+    Returns project info on success, raises exception on failure.
+    """
     from datasight.config import normalize_db_mode
 
+    project_dir = str(Path(project_dir).resolve())
+
+    # Validate the project directory
+    is_valid, error = validate_project_dir(project_dir)
+    if not is_valid:
+        raise ValueError(error)
+
+    # Clear any existing project state
+    state.clear_project()
+
+    # Load .env from the project directory
+    env_path = os.path.join(project_dir, ".env")
+    if os.path.exists(env_path):
+        load_dotenv(env_path, override=True)
+
+    # Reinitialize LLM client in case the project has different/new API keys
+    _reinit_llm_client()
+
+    # Set up database connection based on project's .env
     db_mode = normalize_db_mode(os.environ.get("DB_MODE", "duckdb"))
-    db_path = os.environ.get("DB_PATH", "")
+    db_path = os.environ.get("DB_PATH", "database.duckdb")
     flight_uri = os.environ.get("FLIGHT_SQL_URI", "grpc://localhost:31337")
     flight_token = os.environ.get("FLIGHT_SQL_TOKEN")
     flight_username = os.environ.get("FLIGHT_SQL_USERNAME")
     flight_password = os.environ.get("FLIGHT_SQL_PASSWORD")
+
+    # Resolve relative DB path
+    if db_mode in ("duckdb", "sqlite") and not os.path.isabs(db_path):
+        db_path = str(Path(project_dir) / db_path)
+
+    # Validate DB file exists for file-based databases
+    if db_mode in ("duckdb", "sqlite") and not os.path.exists(db_path):
+        raise ValueError(f"Database file not found: {db_path}")
 
     # Map DB mode to SQL dialect
     _DB_MODE_DIALECTS = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
@@ -389,11 +477,16 @@ async def _startup():
         postgres_sslmode=os.environ.get("POSTGRES_SSLMODE", "prefer"),
     )
 
-    project_dir = os.environ.get("DATASIGHT_PROJECT_DIR", ".")
+    state.project_dir = project_dir
 
+    # Track this project in recent projects list
+    add_recent_project(project_dir)
+
+    # Set up project-specific storage
     state.conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
     state.bookmarks = BookmarkStore(Path(project_dir) / ".datasight" / "bookmarks.json")
 
+    # Load settings from env
     state.confirm_sql = os.environ.get("CONFIRM_SQL", "false").lower() == "true"
     state.explain_sql = os.environ.get("EXPLAIN_SQL", "false").lower() == "true"
     state.clarify_sql = os.environ.get("CLARIFY_SQL", "true").lower() == "true"
@@ -401,15 +494,13 @@ async def _startup():
     log_enabled = os.environ.get("QUERY_LOG_ENABLED", "false").lower() == "true"
     log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
     state.query_logger = QueryLogger(path=log_path, enabled=log_enabled)
-    if log_enabled:
-        logger.info(f"Query logging enabled: {log_path}")
 
+    # Load schema description and example queries
     schema_desc_path = os.environ.get("SCHEMA_DESCRIPTION_PATH")
     example_queries_path = os.environ.get("EXAMPLE_QUERIES_PATH")
-
     user_desc = load_schema_description(schema_desc_path, project_dir)
 
-    # Discover schema
+    # Discover schema from database
     tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
     state.schema_info = [
         {
@@ -425,9 +516,6 @@ async def _startup():
     if tables:
         total_rows = sum(t.row_count or 0 for t in tables)
         logger.info(f"Discovered {len(tables)} tables ({total_rows:,} total rows)")
-        for t in tables:
-            row_str = f" ({t.row_count:,} rows)" if t.row_count else ""
-            logger.info(f"  {t.name}: {len(t.columns)} columns{row_str}")
     else:
         logger.warning("No tables discovered in the database")
 
@@ -441,10 +529,14 @@ async def _startup():
         logger.info(f"Loaded {len(example_queries)} example queries")
 
     state.rebuild_system_prompt()
+    state.project_loaded = True
 
-    port = os.environ.get("PORT", "8084")
-    logger.info(f"datasight ready (model={state.model}, db_mode={db_mode})")
-    print(f"\n  Ready — open http://localhost:{port} in your browser\n")
+    return {
+        "path": project_dir,
+        "name": get_project_name(project_dir),
+        "tables": len(state.schema_info),
+        "queries": len(state.example_queries_list),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +559,81 @@ async def get_schema():
 async def get_queries():
     """Return example queries."""
     return {"queries": state.example_queries_list}
+
+
+# ---------------------------------------------------------------------------
+# Project management endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/project")
+async def get_current_project():
+    """Return current project info, or null if no project is loaded."""
+    if not state.project_loaded or state.project_dir is None:
+        return {"loaded": False, "path": None, "name": None}
+    return {
+        "loaded": True,
+        "path": state.project_dir,
+        "name": get_project_name(state.project_dir),
+    }
+
+
+@app.get("/api/projects/recent")
+async def get_recent_projects():
+    """Return list of recent projects."""
+    projects = load_recent_projects()
+    return {
+        "projects": [
+            {
+                "path": p["path"],
+                "name": get_project_name(p["path"]),
+                "last_used": p.get("last_used", ""),
+                "is_current": state.project_loaded and p["path"] == state.project_dir,
+            }
+            for p in projects
+        ]
+    }
+
+
+@app.post("/api/projects/validate")
+async def validate_project_endpoint(request: Request):
+    """Validate a project directory before loading."""
+    body = await request.json()
+    project_path = body.get("path", "")
+    is_valid, error = validate_project_dir(project_path)
+    return {"valid": is_valid, "error": error}
+
+
+@app.post("/api/projects/load")
+async def load_project_endpoint(request: Request):
+    """Load a project directory.
+
+    This initializes the database connection, loads schema, and sets up
+    project-specific state. Can be called to switch between projects.
+    """
+    body = await request.json()
+    project_path = body.get("path", "")
+
+    try:
+        result = await load_project(project_path)
+        return {"success": True, **result}
+    except Exception as e:
+        logger.error(f"Failed to load project {project_path}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/projects/recent/{project_path:path}")
+async def remove_project_from_recent(project_path: str):
+    """Remove a project from the recent list."""
+    # URL decode the path (FastAPI handles this, but path may have been encoded)
+    from urllib.parse import unquote
+
+    decoded_path = unquote(project_path)
+    # Handle paths that start with / (absolute paths)
+    if not decoded_path.startswith("/"):
+        decoded_path = "/" + decoded_path
+    remove_recent_project(decoded_path)
+    return {"success": True}
 
 
 @app.get("/api/preview/{table_name}")

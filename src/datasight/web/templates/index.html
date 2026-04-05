@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>datasight</title>
+<link rel="icon" href="/static/datasight-icon-option3.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-<link rel="stylesheet" href="/static/style.css?v=23">
+<link rel="stylesheet" href="/static/style.css?v=25">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -27,7 +28,13 @@
       <button class="btn-icon" onclick="toggleSidebar()" title="Toggle sidebar" id="sidebar-toggle">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1" y="2.5" width="14" height="1.5" rx="0.75" fill="currentColor"/><rect x="1" y="7.25" width="14" height="1.5" rx="0.75" fill="currentColor"/><rect x="1" y="12" width="14" height="1.5" rx="0.75" fill="currentColor"/></svg>
       </button>
-      <div class="brand">data<span>sight</span></div>
+      <div class="brand brand-lockup" onclick="toggleProjectsPanel()" style="cursor:pointer" title="Switch project">
+        <img class="brand-mark" src="/static/datasight-icon-option3.svg" alt="datasight icon" />
+        <span>data<span>sight</span></span>
+      </div>
+      <button class="btn-icon project-switcher-btn" onclick="toggleProjectsPanel()" title="Switch project" id="projects-toggle">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 4l3-2M2 4l3 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 12H2M14 12l-3-2M14 12l-3 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
     </div>
     <div class="view-tabs">
       <button class="view-tab active" onclick="switchView('chat')" id="tab-chat">Chat</button>
@@ -149,6 +156,35 @@
     </aside>
   </div>
 
-<script src="/static/app.js?v=20"></script>
+  <!-- Projects panel (slide-out from left) - outside main-layout for proper fixed positioning -->
+  <aside class="projects-panel" id="projects-panel">
+    <div class="sidebar-header">
+      <span>Projects</span>
+      <button class="sidebar-close-btn" onclick="toggleProjectsPanel()" title="Close">&times;</button>
+    </div>
+    <div class="projects-current">
+      <div class="projects-current-label">Current Project</div>
+      <div class="projects-current-name" id="current-project-name">Loading...</div>
+      <div class="projects-current-path" id="current-project-path"></div>
+    </div>
+    <div class="projects-list-section">
+      <div class="projects-list-header">Recent Projects</div>
+      <div class="projects-list" id="projects-list">
+        <div class="no-queries">Loading...</div>
+      </div>
+    </div>
+    <div class="projects-add-section">
+      <div class="projects-add-header">Open Project</div>
+      <div class="projects-add-input-wrap">
+        <input type="text" id="project-path-input" placeholder="Enter project path..." onkeydown="if(event.key==='Enter')openProjectFromInput()" />
+        <button onclick="openProjectFromInput()" title="Open" id="open-project-btn">Open</button>
+      </div>
+      <div class="projects-add-hint">Project directory must contain schema_description.md</div>
+      <div class="projects-add-error" id="project-error"></div>
+    </div>
+  </aside>
+  <div class="projects-overlay" id="projects-overlay" onclick="toggleProjectsPanel()"></div>
+
+<script src="/static/app.js?v=29"></script>
 </body>
 </html>

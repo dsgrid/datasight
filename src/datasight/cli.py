@@ -19,8 +19,8 @@ def cli():
 
 @cli.command()
 @click.argument("project_dir", default=".")
-@click.option("--force", is_flag=True, help="Overwrite existing files.")
-def init(project_dir: str, force: bool):
+@click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
+def init(project_dir: str, overwrite: bool):
     """Create a new datasight project with template files.
 
     PROJECT_DIR defaults to the current directory.
@@ -43,7 +43,7 @@ def init(project_dir: str, force: bool):
         src = template_dir / src_name
         dst = dest / dst_name
 
-        if dst.exists() and not force:
+        if dst.exists() and not overwrite:
             skipped.append(dst_name)
             continue
 
@@ -340,142 +340,81 @@ def generate(project_dir, model, overwrite, verbose):
 @cli.command()
 @click.option("--port", type=int, default=None, help="Web UI port (default: 8084).")
 @click.option("--host", default="0.0.0.0", help="Bind address.")
-@click.option(
-    "--db-mode",
-    type=click.Choice(["duckdb", "sqlite", "postgres", "flightsql"]),
-    default=None,
-    help="Database mode (overrides .env).",
-)
-@click.option(
-    "--db-path", type=click.Path(), default=None, help="Path to DuckDB file (overrides .env)."
-)
-@click.option("--model", default=None, help="Anthropic model name (overrides .env).")
+@click.option("--model", default=None, help="LLM model name (overrides .env).")
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
-    default=".",
-    help="Project directory containing .env and config files.",
+    default=None,
+    help="Auto-load this project on startup (optional).",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-@click.option("--query-log", is_flag=True, help="Enable SQL query logging to query_log.jsonl.")
-@click.option("--confirm-sql", is_flag=True, help="Require user approval before executing SQL.")
-@click.option("--explain-sql", is_flag=True, help="Show plain-English SQL explanations.")
-@click.option(
-    "--no-clarify", is_flag=True, help="Disable clarifying questions for ambiguous queries."
-)
 def run(
     port,
     host,
-    db_mode,
-    db_path,
     model,
     project_dir,
     verbose,
-    query_log,
-    confirm_sql,
-    explain_sql,
-    no_clarify,
 ):
-    """Start the datasight web UI."""
-    project_dir = str(Path(project_dir).resolve())
+    """Start the datasight web UI.
 
-    # Load .env from project directory
-    env_path = os.path.join(project_dir, ".env")
-    if os.path.exists(env_path):
-        from dotenv import load_dotenv
+    By default, starts with no project loaded. Use the UI to select a project,
+    or pass --project-dir to auto-load one on startup.
+    """
+    from dotenv import load_dotenv
 
-        load_dotenv(env_path, override=False)
+    # Load .env from current directory or project directory if specified
+    if project_dir:
+        project_dir = str(Path(project_dir).resolve())
+        env_path = os.path.join(project_dir, ".env")
+        if os.path.exists(env_path):
+            load_dotenv(env_path, override=False)
+    else:
+        # Try loading from current directory
+        if os.path.exists(".env"):
+            load_dotenv(".env", override=False)
 
     # Configure logging
     level = "DEBUG" if verbose else "INFO"
     logger.remove()
     logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
 
-    # Resolve settings: CLI flags > env vars > defaults
+    # Resolve LLM settings (API key validation deferred to project load / chat)
     llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
 
     if llm_provider == "ollama":
-        api_key = "ollama"  # not needed
         resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
     elif llm_provider == "github":
-        api_key = os.getenv("GITHUB_TOKEN", "")
-        if not api_key:
-            click.echo(
-                "Error: GITHUB_TOKEN is not set. Add it to .env or your environment.",
-                err=True,
-            )
-            sys.exit(1)
         resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
     else:
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            click.echo(
-                "Error: ANTHROPIC_API_KEY is not set. Add it to .env or your environment.",
-                err=True,
-            )
-            sys.exit(1)
         resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-    from datasight.config import normalize_db_mode
 
-    resolved_db_mode = normalize_db_mode(db_mode or os.getenv("DB_MODE", "duckdb"))
     resolved_port = port or int(os.getenv("PORT", "8084"))
 
-    # Resolve DB_PATH relative to project_dir, not CWD
-    raw_db_path = db_path or os.getenv("DB_PATH", "database.duckdb")
-    if resolved_db_mode in ("duckdb", "sqlite"):
-        resolved_db_path = (
-            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
-        )
-        if not os.path.exists(resolved_db_path):
-            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
-            click.echo("  Set DB_PATH in .env or pass --db-path", err=True)
-            sys.exit(1)
-    elif resolved_db_mode == "postgres":
-        resolved_db_path = ""  # Postgres uses its own env vars
-    else:
-        resolved_db_path = raw_db_path
+    # Set env vars for the FastAPI app
+    os.environ["PORT"] = str(resolved_port)
+    if model:
+        # CLI override for model
+        if llm_provider == "ollama":
+            os.environ["OLLAMA_MODEL"] = resolved_model
+        elif llm_provider == "github":
+            os.environ["GITHUB_MODELS_MODEL"] = resolved_model
+        else:
+            os.environ["ANTHROPIC_MODEL"] = resolved_model
 
-    # Set env vars so the FastAPI app picks them up on startup
-    if llm_provider == "anthropic":
-        os.environ.setdefault("ANTHROPIC_API_KEY", api_key or "")
-        os.environ["ANTHROPIC_MODEL"] = resolved_model
-    elif llm_provider == "github":
-        os.environ["GITHUB_TOKEN"] = api_key
-        os.environ["GITHUB_MODELS_MODEL"] = resolved_model
-    elif llm_provider == "ollama":
-        os.environ["OLLAMA_MODEL"] = resolved_model
-    os.environ["DB_MODE"] = resolved_db_mode
-    os.environ["DB_PATH"] = resolved_db_path
-    os.environ["DATASIGHT_PROJECT_DIR"] = project_dir
-    if query_log:
-        os.environ["QUERY_LOG_ENABLED"] = "true"
-    if confirm_sql:
-        os.environ["CONFIRM_SQL"] = "true"
-    if explain_sql:
-        os.environ["EXPLAIN_SQL"] = "true"
-    if no_clarify:
-        os.environ["CLARIFY_SQL"] = "false"
-
-    flight_uri = os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337")
+    # If project-dir specified, set it for auto-load
+    if project_dir:
+        os.environ["DATASIGHT_AUTO_LOAD_PROJECT"] = project_dir
 
     click.echo(f"datasight v{__version__}")
     click.echo(f"  Model:    {resolved_model}")
-    if resolved_db_mode == "postgres":
-        pg_host = os.getenv("POSTGRES_HOST", "localhost")
-        pg_db = os.getenv("POSTGRES_DATABASE", "")
-        pg_url = os.getenv("POSTGRES_URL", "")
-        db_display = pg_url if pg_url else f"{pg_host}/{pg_db}"
-        click.echo(f"  Database: postgres — {db_display}")
-    elif resolved_db_mode == "flightsql":
-        click.echo(f"  Database: flightsql — {flight_uri}")
+    if project_dir:
+        click.echo(f"  Project:  {project_dir} (auto-load)")
     else:
-        click.echo(f"  Database: {resolved_db_mode} — {resolved_db_path}")
-    click.echo(f"  Project:  {project_dir}")
+        click.echo("  Project:  (none — select in UI)")
     click.echo()
 
     import uvicorn
 
-    os.environ["PORT"] = str(resolved_port)
     click.echo(f"Starting web UI at http://localhost:{resolved_port} ...")
     uvicorn.run(
         "datasight.web.app:app",

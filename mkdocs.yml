@@ -5,6 +5,8 @@ repo_name: dsgrid/datasight
 
 theme:
   name: material
+  logo: assets/datasight-icon-option3.svg
+  favicon: assets/datasight-icon-option3.svg
   palette:
     - scheme: default
       primary: custom

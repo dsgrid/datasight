@@ -4,6 +4,49 @@ The datasight web UI provides a chat-based interface for exploring your data.
 Beyond asking questions, the UI has features for organizing results, tracking
 queries, and navigating your database schema.
 
+## Switch between projects
+
+datasight can work with multiple project directories. Click the **datasight**
+logo or the switch icon in the header to open the project panel.
+
+The panel shows:
+
+- **Current project** — the active project name and path
+- **Recent projects** — previously opened projects (click to switch)
+- **Open project** — enter a path to open a new project
+
+### What is a project?
+
+A project directory contains:
+
+- `schema_description.md` — required, describes your data for the AI
+- `.env` — optional, database connection and settings
+- `queries.yaml` — optional, example queries
+- `.datasight/` — auto-created, stores conversations and bookmarks
+
+### Switching projects
+
+When you switch projects, datasight:
+
+1. Loads the new project's `.env` file
+2. Connects to the new database
+3. Loads the new schema and example queries
+4. Clears the current chat (previous conversations remain in History)
+
+!!! note "Configuration inheritance"
+    **LLM settings** (API keys, model) can come from either the startup
+    directory or the project's `.env`. If you start datasight without an API
+    key, the project's `.env` must provide one.
+    
+    **Database settings** always come from the project's `.env`.
+
+### Starting without a project
+
+You can run `datasight run` from any directory — no project is required at
+startup. The UI will show the project panel so you can select one. This is
+useful when you work with multiple projects and don't want to `cd` between
+them.
+
 ## Explore the sidebar
 
 The left sidebar shows your database tables, example queries, bookmarks, and
