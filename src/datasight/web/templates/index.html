@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-<link rel="stylesheet" href="/static/style.css?v=26">
+<link rel="stylesheet" href="/static/style.css?v=27">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -41,6 +41,9 @@
       <button class="view-tab" onclick="switchView('dashboard')" id="tab-dashboard">Dashboard</button>
     </div>
     <div class="actions">
+      <button class="btn-icon" onclick="summarizeDataset()" title="Summarize dataset" id="summarize-btn">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 6h10M2 9h12M2 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
       <button class="btn-icon" onclick="toggleTheme()" title="Toggle theme" id="theme-toggle">
         <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64a6 6 0 107.42 7.42z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
@@ -56,7 +59,7 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/></svg>
       </button>
       <button class="btn-icon query-log-toggle" onclick="toggleQueryLog()" title="Toggle query logging" id="query-log-toggle">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 6h12M2 9h9M2 12h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <button class="btn-icon" onclick="toggleExportMode()" title="Export conversation" id="export-toggle">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
@@ -114,8 +117,7 @@
           <p style="font-size:0.85rem;">Browse tables in the sidebar, or try one of these:</p>
           <div class="examples">
             <button class="example-btn" onclick="sendExample(this.textContent)">What tables are available and how many rows do they have?</button>
-            <button class="example-btn" onclick="sendExample(this.textContent)">Show me a summary of the data</button>
-            <button class="example-btn" onclick="sendExample(this.textContent)">What are the top 10 records by the largest numeric column?</button>
+            <button class="example-btn" onclick="summarizeDataset()">Show me a summary of the data</button>
           </div>
         </div>
       </div>
@@ -186,6 +188,6 @@
   </aside>
   <div class="projects-overlay" id="projects-overlay" onclick="toggleProjectsPanel()"></div>
 
-<script src="/static/app.js?v=29"></script>
+<script src="/static/app.js?v=30"></script>
 </body>
 </html>

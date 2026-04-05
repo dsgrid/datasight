@@ -242,8 +242,7 @@ function showWelcome() {
       <p style="font-size:0.85rem;">Browse tables in the sidebar, or try one of these:</p>
       <div class="examples">
         <button class="example-btn" onclick="sendExample(this.textContent)">What tables are available and how many rows do they have?</button>
-        <button class="example-btn" onclick="sendExample(this.textContent)">Show me a summary of the data</button>
-        <button class="example-btn" onclick="sendExample(this.textContent)">What are the top 10 records by the largest numeric column?</button>
+        <button class="example-btn" onclick="summarizeDataset()">Show me a summary of the data</button>
       </div>
     </div>
   `;
@@ -828,6 +827,92 @@ function handleSubmit(e) {
 function sendExample(text) {
   if (isStreaming) return;
   sendMessage(text);
+}
+
+async function summarizeDataset() {
+  if (isStreaming) return;
+  if (welcomeEl) welcomeEl.style.display = 'none';
+
+  isStreaming = true;
+  const btn = document.getElementById('summarize-btn');
+  if (btn) btn.disabled = true;
+  sendBtn.disabled = true;
+
+  // Add a "system" style intro message
+  const introRow = document.createElement('div');
+  introRow.className = 'message-row assistant';
+  const introBubble = document.createElement('div');
+  introBubble.className = 'message-bubble';
+  introBubble.innerHTML = '<strong>Dataset Summary</strong>';
+  introRow.appendChild(introBubble);
+  messagesEl.appendChild(introRow);
+
+  const typingEl = addTypingIndicator();
+  let summaryText = '';
+  let summaryBubble = null;
+
+  try {
+    const resp = await fetch('/api/summarize');
+    if (!resp.ok) throw new Error('Summarize API error: ' + resp.status);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let typingRemoved = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      let eventType = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          if (!typingRemoved) {
+            typingEl.remove();
+            typingRemoved = true;
+          }
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (eventType === 'token' && data.text) {
+              summaryText += data.text;
+              if (!summaryBubble) {
+                const row = document.createElement('div');
+                row.className = 'message-row assistant';
+                summaryBubble = document.createElement('div');
+                summaryBubble.className = 'message-bubble';
+                row.appendChild(summaryBubble);
+                messagesEl.appendChild(row);
+              }
+              renderMarkdownInto(summaryBubble, summaryText);
+              scrollToBottom();
+            } else if (eventType === 'error' && data.error) {
+              addMessage('assistant', 'Error: ' + data.error);
+            }
+          } catch (parseErr) {
+            console.error('Failed to parse SSE event:', parseErr, line);
+          }
+          eventType = '';
+        }
+      }
+    }
+
+    if (!typingRemoved) typingEl.remove();
+  } catch (err) {
+    console.error('Summarize error:', err);
+    if (document.contains(typingEl)) typingEl.remove();
+    addMessage('assistant', 'Failed to generate summary. Please try again.');
+  }
+
+  isStreaming = false;
+  if (btn) btn.disabled = false;
+  sendBtn.disabled = false;
+  inputEl.focus();
 }
 
 async function sendMessage(text) {

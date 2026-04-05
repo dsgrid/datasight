@@ -561,6 +561,68 @@ async def get_queries():
     return {"queries": state.example_queries_list}
 
 
+@app.get("/api/summarize")
+async def summarize_dataset():
+    """Generate an LLM-powered summary of the dataset."""
+    if not state.project_loaded or not state.schema_info:
+        return StreamingResponse(
+            iter(['event: error\ndata: {"error":"No dataset loaded"}\n\n']),
+            media_type="text/event-stream",
+        )
+
+    # Build a concise schema description for the prompt
+    schema_parts = []
+    total_rows = 0
+    for t in state.schema_info:
+        row_count = t.get("row_count") or 0
+        total_rows += row_count
+        cols = ", ".join(c["name"] for c in t.get("columns", [])[:10])
+        if len(t.get("columns", [])) > 10:
+            cols += f", ... ({len(t['columns'])} total)"
+        schema_parts.append(f"- **{t['name']}** ({row_count:,} rows): {cols}")
+
+    schema_summary = "\n".join(schema_parts)
+
+    prompt = f"""Summarize this dataset in 2-3 short paragraphs. Describe:
+1. What the data appears to represent (domain/purpose)
+2. The key tables and how they might relate
+3. What kinds of questions or analyses a user could explore
+
+Be concise and helpful. Use markdown formatting.
+
+## Dataset Schema
+{total_rows:,} total rows across {len(state.schema_info)} tables:
+
+{schema_summary}"""
+
+    async def generate():
+        if state.llm_client is None:
+            yield 'event: error\ndata: {"error":"LLM not initialized"}\n\n'
+            return
+
+        try:
+            response = await state.llm_client.create_message(
+                model=state.model,
+                max_tokens=1024,
+                system="You are a helpful data analyst. Provide clear, concise summaries.",
+                tools=[],
+                messages=[{"role": "user", "content": prompt}],
+            )
+            # Stream the response text
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    # Stream word by word for smooth display
+                    for word_i, word in enumerate(block.text.split(" ")):
+                        chunk = word if word_i == 0 else " " + word
+                        yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+        except Exception as e:
+            logger.error(f"Summarize error: {e}")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
 # ---------------------------------------------------------------------------
 # Project management endpoints
 # ---------------------------------------------------------------------------
