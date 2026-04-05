@@ -108,6 +108,236 @@ def demo(project_dir: str, min_year: int):
 
 
 @cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env.",
+)
+@click.option("--model", default=None, help="Model name (overrides .env).")
+@click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def generate(project_dir, model, overwrite, verbose):
+    """Generate schema_description.md and queries.yaml from your database.
+
+    Connects to the database, inspects tables and columns, samples
+    code/enum columns, and asks the LLM to produce documentation
+    and example queries.
+    """
+    import asyncio
+
+    project_dir = str(Path(project_dir).resolve())
+
+    # Check for existing files early
+    schema_path = Path(project_dir) / "schema_description.md"
+    queries_path = Path(project_dir) / "queries.yaml"
+    if not overwrite:
+        existing = []
+        if schema_path.exists():
+            existing.append("schema_description.md")
+        if queries_path.exists():
+            existing.append("queries.yaml")
+        if existing:
+            click.echo(
+                f"Error: {', '.join(existing)} already exist. Use --overwrite to replace.",
+                err=True,
+            )
+            sys.exit(1)
+
+    # Load .env
+    env_path = os.path.join(project_dir, ".env")
+    if os.path.exists(env_path):
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+
+    # Logging
+    level = "DEBUG" if verbose else "WARNING"
+    logger.remove()
+    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+
+    # Resolve LLM
+    from datasight.config import create_sql_runner, normalize_db_mode
+    from datasight.llm import create_llm_client
+
+    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+
+    if llm_provider == "ollama":
+        api_key = "ollama"
+        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
+    elif llm_provider == "github":
+        api_key = os.getenv("GITHUB_TOKEN", "")
+        if not api_key:
+            click.echo("Error: GITHUB_TOKEN is not set.", err=True)
+            sys.exit(1)
+        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
+    else:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
+            sys.exit(1)
+        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+
+    db_mode = normalize_db_mode(os.getenv("DB_MODE", "duckdb"))
+    raw_db_path = os.getenv("DB_PATH", "database.duckdb")
+    if db_mode in ("duckdb", "sqlite"):
+        resolved_db_path = (
+            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
+        )
+        if not os.path.exists(resolved_db_path):
+            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+            sys.exit(1)
+    elif db_mode == "postgres":
+        resolved_db_path = ""
+    else:
+        resolved_db_path = raw_db_path
+
+    _db_mode_dialects = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
+    sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
+
+    click.echo("datasight generate")
+    click.echo(f"  Model:    {resolved_model}")
+    click.echo(f"  Database: {db_mode} — {resolved_db_path or sql_dialect}")
+    click.echo()
+
+    async def _run():
+        from datasight.prompts import DESCRIBE_SYSTEM_PROMPT, DESCRIBE_USER_MESSAGE
+        from datasight.schema import format_schema_context, introspect_schema
+
+        base_url_map = {
+            "ollama": "OLLAMA_BASE_URL",
+            "github": "GITHUB_MODELS_BASE_URL",
+            "anthropic": "ANTHROPIC_BASE_URL",
+        }
+        base_url = os.getenv(base_url_map.get(llm_provider, "ANTHROPIC_BASE_URL"))
+        llm_client = create_llm_client(
+            provider=llm_provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        sql_runner = create_sql_runner(
+            db_mode=db_mode,
+            db_path=resolved_db_path,
+            flight_uri=os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337"),
+            flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
+            flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
+            flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
+            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
+            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
+            postgres_database=os.getenv("POSTGRES_DATABASE", ""),
+            postgres_user=os.getenv("POSTGRES_USER", ""),
+            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
+            postgres_url=os.getenv("POSTGRES_URL", ""),
+            postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
+        )
+
+        # Introspect schema
+        click.echo("Introspecting database schema...")
+        tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+        schema_text = format_schema_context(tables)
+        click.echo(f"  Found {len(tables)} tables")
+
+        # Sample low-cardinality string columns for enum/code detection
+        click.echo("Sampling code/enum columns...")
+        samples_text = await _sample_enum_columns(sql_runner.run_sql, tables)
+
+        schema_and_samples = schema_text
+        if samples_text:
+            schema_and_samples += "\n\n## Sampled Column Values\n\n" + samples_text
+
+        schema_and_samples += f"\n\nSQL dialect: {sql_dialect}\n"
+
+        # Call LLM
+        click.echo("Generating documentation (this may take a moment)...")
+        user_msg = DESCRIBE_USER_MESSAGE.format(schema_and_samples=schema_and_samples)
+        response = await llm_client.create_message(
+            model=resolved_model,
+            system=DESCRIBE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+            tools=[],
+            max_tokens=4096,
+        )
+
+        # Extract text from response
+        from datasight.llm import TextBlock
+
+        parts = [block.text for block in response.content if isinstance(block, TextBlock)]
+        return "".join(parts)
+
+    async def _sample_enum_columns(run_sql, tables):
+        """Sample distinct values from low-cardinality string columns."""
+        from datasight.schema import _validate_identifier
+
+        lines = []
+        string_types = {"VARCHAR", "TEXT", "CHAR", "STRING", "NVARCHAR", "BPCHAR", "NAME"}
+        for table in tables:
+            table_name = _validate_identifier(table.name)
+            for col in table.columns:
+                base_type = col.dtype.upper().split("(")[0].strip()
+                if base_type not in string_types:
+                    continue
+                col_name = _validate_identifier(col.name)
+                try:
+                    count_result = await run_sql(
+                        f"SELECT COUNT(DISTINCT {col_name}) AS n FROM {table_name}"
+                    )
+                    n_distinct = count_result[0]["n"] if count_result else 0
+                    if n_distinct < 1 or n_distinct > 50:
+                        continue
+                    sample_result = await run_sql(
+                        f"SELECT DISTINCT {col_name} AS val FROM {table_name} "
+                        f"WHERE {col_name} IS NOT NULL ORDER BY {col_name} LIMIT 20"
+                    )
+                    values = [str(row["val"]) for row in sample_result if row.get("val")]
+                    if values:
+                        lines.append(
+                            f"**{table.name}.{col.name}** ({n_distinct} distinct): "
+                            f"{', '.join(values)}"
+                        )
+                except Exception:
+                    continue
+        return "\n".join(lines)
+
+    text = asyncio.run(_run())
+
+    # Parse response into two files
+    schema_content = None
+    queries_content = None
+
+    if "--- schema_description.md ---" in text and "--- queries.yaml ---" in text:
+        parts = text.split("--- schema_description.md ---", 1)
+        rest = parts[1]
+        schema_queries = rest.split("--- queries.yaml ---", 1)
+        schema_content = schema_queries[0].strip()
+        queries_content = schema_queries[1].strip()
+    else:
+        click.echo("Warning: Could not parse LLM response into separate files.", err=True)
+        click.echo("Writing raw response to schema_description.md", err=True)
+        schema_content = text.strip()
+
+    # Write files
+    written = []
+    if schema_content:
+        schema_path.write_text(schema_content + "\n")
+        written.append("schema_description.md")
+
+    if queries_content:
+        queries_path.write_text(queries_content + "\n")
+        written.append("queries.yaml")
+
+    click.echo()
+    if written:
+        click.echo(f"Created: {', '.join(written)}")
+        click.echo()
+        click.echo("Next steps:")
+        click.echo("  1. Review and edit the generated files")
+        click.echo("  2. Run: datasight run")
+    else:
+        click.echo("No files were written.", err=True)
+        sys.exit(1)
+
+
+@cli.command()
 @click.option("--port", type=int, default=None, help="Web UI port (default: 8084).")
 @click.option("--host", default="0.0.0.0", help="Bind address.")
 @click.option(

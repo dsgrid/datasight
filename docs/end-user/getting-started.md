@@ -89,8 +89,10 @@ If you have a DuckDB database file ready:
 datasight init ./my-project
 cd my-project
 # Edit .env with your API key and DB_PATH
+datasight generate   # auto-generate schema docs and example queries
 datasight run
 ```
 
-See [Quickstart](quickstart.md) for a full walkthrough of connecting your own
-data and writing schema descriptions.
+`datasight generate` connects to your database and uses the LLM to draft
+`schema_description.md` and `queries.yaml` so you don't have to write them
+from scratch. See [Quickstart](quickstart.md) for a full walkthrough.

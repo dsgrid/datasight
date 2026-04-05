@@ -149,6 +149,53 @@ _CLARIFY_PROMPT = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Describe command prompt
+# ---------------------------------------------------------------------------
+
+DESCRIBE_SYSTEM_PROMPT = (
+    "You are an expert data analyst. You will be given the schema of a "
+    "database (tables, columns, types, row counts) and sampled values from "
+    "low-cardinality string columns. Your job is to produce two files that "
+    "help an AI assistant write better SQL against this database.\n\n"
+    "Output EXACTLY two sections separated by marker lines. No other text "
+    "before, between, or after the sections.\n\n"
+    "--- schema_description.md ---\n"
+    "(content)\n"
+    "--- queries.yaml ---\n"
+    "(content)\n"
+)
+
+DESCRIBE_USER_MESSAGE = (
+    "Based on the database schema and sample values below, generate two files.\n\n"
+    "1. **schema_description.md** — a Markdown file that explains:\n"
+    "   - What this data likely represents (domain, source)\n"
+    "   - What key columns mean, especially codes, enums, and IDs\n"
+    "   - Relationships between tables (join keys)\n"
+    "   - Time granularity of the data and how to query at different "
+    "resolutions (monthly, yearly, etc.). If the data has a date/time column, "
+    "determine the finest granularity present (e.g. daily, monthly, yearly) "
+    "and instruct the AI to ask the user whether they want results at that "
+    "granularity or a coarser one when they request data 'over time' without "
+    "specifying. Include the SQL patterns for each resolution.\n"
+    "   - Tips for writing correct queries against this schema\n\n"
+    "2. **queries.yaml** — a YAML file with 5-8 example questions and SQL, "
+    "covering different patterns (aggregation, filtering, joins, time series). "
+    "Format:\n"
+    "   ```\n"
+    '   - question: "..."\n'
+    "     sql: |\n"
+    "       SELECT ...\n"
+    "   ```\n\n"
+    "Output each file between these exact markers:\n"
+    "--- schema_description.md ---\n"
+    "(content)\n"
+    "--- queries.yaml ---\n"
+    "(content)\n\n"
+    "{schema_and_samples}"
+)
+
+
 def build_system_prompt(
     schema_text: str,
     *,

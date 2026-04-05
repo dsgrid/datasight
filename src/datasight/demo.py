@@ -73,6 +73,20 @@ sector, regulatory status. Joined to generation_fuel via plant_id_eia.
 - HY = Hydraulic Turbine, PS = Pumped Storage
 - IC = Internal Combustion, BA = Battery Storage
 
+## Time Granularity
+
+The data is at **monthly** granularity — one row per plant x fuel x prime mover
+x month. The `report_date` column is the first day of each month (e.g.
+2023-01-01 for January 2023).
+
+When the user asks for data "over time" or "trends" without specifying
+granularity, **ask whether they want monthly or yearly resolution** before
+writing the query. Monthly gives more detail but can be noisy; yearly is
+smoother and better for long-term trends.
+
+- For monthly: use `report_date` directly (it is already month-level)
+- For yearly: use `EXTRACT(YEAR FROM report_date)` or `DATE_TRUNC('year', report_date)`
+
 ## Tips
 
 - Join generation_fuel to plants on plant_id_eia for plant names and locations

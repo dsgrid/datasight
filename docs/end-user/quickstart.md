@@ -115,6 +115,30 @@ POSTGRES_PASSWORD=secret
 See [Configuration reference](../reference/configuration.md) for all
 PostgreSQL options.
 
+### Auto-generate documentation
+
+Instead of writing `schema_description.md` and `queries.yaml` by hand,
+you can let the AI generate them from your database:
+
+```bash
+datasight generate
+```
+
+This connects to your database, inspects tables and columns, samples
+code/enum columns to identify their meanings, and produces draft versions
+of both files. Review and edit the results — the AI gets you a solid
+starting point but you know your data best.
+
+To regenerate after making database changes:
+
+```bash
+datasight generate --overwrite
+```
+
+### Manual editing
+
+You can also write these files by hand, or refine the generated versions.
+
 Edit `schema_description.md` to explain your data — domain concepts, column
 meanings, code lookups, and query tips. The AI uses this context to write
 better SQL. See [Write a schema description](../dataset-developer/schema-description.md) for guidance.
