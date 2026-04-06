@@ -95,6 +95,51 @@ class TestEnvIsolation:
 class TestSettingsFromEnv:
     """Tests for Settings.from_env()."""
 
+    def test_shell_env_takes_precedence_over_dotenv(self, tmp_path, monkeypatch):
+        """Shell-exported env vars should override .env file values by default.
+
+        This is critical for allowing users to override project config via
+        shell exports like: ANTHROPIC_MODEL=claude-sonnet datasight ask ...
+        """
+        # Create a .env file with specific values
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "ANTHROPIC_MODEL=model-from-dotenv\nLLM_PROVIDER=anthropic\nDB_MODE=sqlite\n"
+        )
+
+        # Simulate shell-exported env var (set BEFORE loading .env)
+        monkeypatch.setenv("ANTHROPIC_MODEL", "model-from-shell")
+
+        # Load settings from the .env file (default override=False)
+        settings = Settings.from_env(env_file)
+
+        # Shell value should win over .env value
+        assert settings.llm.anthropic_model == "model-from-shell"
+        # Values only in .env should still be loaded
+        assert settings.database.mode == "sqlite"
+
+    def test_dotenv_takes_precedence_with_override_true(self, tmp_path, monkeypatch):
+        """With override=True, .env file values should override shell env vars.
+
+        This is used for web app project switching where project config
+        should take precedence over any baseline/shell values.
+        """
+        # Create a .env file with specific values
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "ANTHROPIC_MODEL=model-from-dotenv\nLLM_PROVIDER=anthropic\nDB_MODE=sqlite\n"
+        )
+
+        # Simulate shell-exported env var (set BEFORE loading .env)
+        monkeypatch.setenv("ANTHROPIC_MODEL", "model-from-shell")
+
+        # Load settings with override=True
+        settings = Settings.from_env(env_file, override=True)
+
+        # .env value should win over shell value
+        assert settings.llm.anthropic_model == "model-from-dotenv"
+        assert settings.database.mode == "sqlite"
+
     def test_invalid_db_mode_raises_error(self, monkeypatch):
         """Invalid DB_MODE should raise ConfigurationError."""
         monkeypatch.setenv("DB_MODE", "postgress")  # typo

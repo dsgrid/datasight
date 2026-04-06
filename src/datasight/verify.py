@@ -19,6 +19,7 @@ import pandas as pd
 
 from datasight.llm import LLMClient, TextBlock, ToolUseBlock, serialize_content
 from datasight.prompts import VERIFY_TOOLS
+from datasight.runner import RunSql
 
 
 @dataclass
@@ -160,7 +161,7 @@ async def run_single_verification(
     llm_client: LLMClient,
     model: str,
     system_prompt: str,
-    run_sql,
+    run_sql: RunSql,
     max_iterations: int = 10,
 ) -> VerifyResult:
     """Run a single question through the LLM and verify the result."""
@@ -413,7 +414,7 @@ async def run_verification(
     llm_client: LLMClient,
     model: str,
     system_prompt: str,
-    run_sql,
+    run_sql: RunSql,
 ) -> list[VerifyResult]:
     """Run all queries through verification sequentially."""
     results = []

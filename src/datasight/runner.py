@@ -169,10 +169,13 @@ class PostgresRunner:
         sslmode: str = "prefer",
     ):
         self._conn = None
+        self._psycopg = None  # Store module reference for exception handling
         self._connection_info = f"{host}:{port}/{dbname}" if not url else "via URL"
 
         try:
             import psycopg  # ty: ignore[unresolved-import]
+
+            self._psycopg = psycopg
         except ImportError as e:
             raise ImportError(
                 "The 'psycopg' package is required for PostgreSQL support. "
@@ -230,7 +233,7 @@ class PostgresRunner:
                 return pd.DataFrame(columns=cols)
             cols = [desc[0] for desc in cursor.description]
             return pd.DataFrame(rows, columns=cols)
-        except Exception as e:
+        except self._psycopg.Error as e:  # ty: ignore[unresolved-attribute]
             logger.debug(f"PostgreSQL query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
 
@@ -256,6 +259,26 @@ class FlightSqlRunner:
         self.password = password
         self.timeout = timeout
         self._conn = None
+        self._connect()
+
+    def _connect(self) -> None:
+        """Establish connection to the Flight SQL server."""
+        try:
+            import adbc_driver_flightsql.dbapi as flightsql
+
+            db_kwargs = {}
+            if self.username:
+                db_kwargs["username"] = self.username
+            if self.password:
+                db_kwargs["password"] = self.password
+            if self.token:
+                db_kwargs["authorization"] = f"Bearer {self.token}"
+
+            self._conn = flightsql.connect(uri=self.uri, db_kwargs=db_kwargs)
+            logger.info(f"Connected to Flight SQL server: {self.uri}")
+        except Exception as e:
+            logger.error(f"Flight SQL connection error:\n{traceback.format_exc()}")
+            raise ConnectionError(f"Failed to connect to Flight SQL server: {e}") from e
 
     def close(self) -> None:
         """Close the database connection."""
@@ -278,32 +301,12 @@ class FlightSqlRunner:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
-    def _get_conn(self):
-        """Get or create a connection to the Flight SQL server."""
-        if self._conn is None:
-            try:
-                import adbc_driver_flightsql.dbapi as flightsql
-
-                db_kwargs = {}
-                if self.username:
-                    db_kwargs["username"] = self.username
-                if self.password:
-                    db_kwargs["password"] = self.password
-                if self.token:
-                    db_kwargs["authorization"] = f"Bearer {self.token}"
-
-                self._conn = flightsql.connect(uri=self.uri, db_kwargs=db_kwargs)
-                logger.info("Connected to Flight SQL server via ADBC")
-            except Exception as e:
-                logger.error(f"Flight SQL connection error:\n{traceback.format_exc()}")
-                raise ConnectionError(f"Failed to connect to Flight SQL server: {e}") from e
-        return self._conn
-
     def get_table_names(self) -> list[str]:
         """Use the ADBC GetObjects RPC to list tables."""
-        conn = self._get_conn()
+        if self._conn is None:
+            raise ConnectionError("FlightSqlRunner is closed")
         try:
-            objects = conn.adbc_get_objects().read_all()
+            objects = self._conn.adbc_get_objects().read_all()
             names = []
             for catalog_batch in objects.column("catalog_db_schemas"):
                 if catalog_batch is None:
@@ -321,11 +324,12 @@ class FlightSqlRunner:
 
     def _execute(self, sql: str) -> pd.DataFrame:
         """Execute SQL synchronously."""
+        if self._conn is None:
+            raise ConnectionError("FlightSqlRunner is closed")
         sql = sql.strip().rstrip(";")
         logger.info(f"Flight SQL query: {sql[:200]}")
-        conn = self._get_conn()
         try:
-            cursor = conn.cursor()
+            cursor = self._conn.cursor()
             cursor.execute(sql)
             table = cursor.fetch_arrow_table()
             df = table.to_pandas()

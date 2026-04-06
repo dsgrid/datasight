@@ -9,6 +9,60 @@ import rich_click as click
 from loguru import logger
 
 from datasight import __version__
+from datasight.config import create_sql_runner_from_settings
+from datasight.llm import create_llm_client
+from datasight.settings import Settings
+
+
+def _resolve_settings(
+    project_dir: str,
+    model_override: str | None = None,
+) -> tuple[Settings, str]:
+    """Load settings from project directory and apply any CLI overrides.
+
+    Parameters
+    ----------
+    project_dir:
+        Path to the project directory containing .env.
+    model_override:
+        Optional model name to override settings.
+
+    Returns
+    -------
+    Tuple of (settings, resolved_model).
+    """
+    env_path = os.path.join(project_dir, ".env")
+    settings = Settings.from_env(env_path if os.path.exists(env_path) else None)
+
+    # Apply model override if provided
+    resolved_model = model_override if model_override else settings.llm.model
+
+    return settings, resolved_model
+
+
+def _validate_settings_for_llm(settings: Settings) -> None:
+    """Validate that required LLM settings are present. Exits on error."""
+    errors = settings.validate()
+    for error in errors:
+        if "API_KEY" in error or "TOKEN" in error:
+            click.echo(f"Error: {error}", err=True)
+            sys.exit(1)
+
+
+def _resolve_db_path(settings: Settings, project_dir: str) -> str:
+    """Resolve database path, making relative paths absolute.
+
+    Returns
+    -------
+    Resolved database path, or empty string for non-file databases.
+    """
+    if settings.database.mode not in ("duckdb", "sqlite"):
+        return ""
+
+    raw_path = settings.database.path
+    if os.path.isabs(raw_path):
+        return raw_path
+    return str(Path(project_dir) / raw_path)
 
 
 @click.group()
@@ -144,92 +198,37 @@ def generate(project_dir, model, overwrite, verbose):
             )
             sys.exit(1)
 
-    # Load .env
-    env_path = os.path.join(project_dir, ".env")
-    if os.path.exists(env_path):
-        from dotenv import load_dotenv
-
-        load_dotenv(env_path, override=False)
-
     # Logging
     level = "DEBUG" if verbose else "WARNING"
     logger.remove()
     logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
 
-    # Resolve LLM
-    from datasight.config import create_sql_runner, normalize_db_mode
-    from datasight.llm import create_llm_client
+    # Load settings and validate
+    settings, resolved_model = _resolve_settings(project_dir, model)
+    _validate_settings_for_llm(settings)
 
-    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
 
-    if llm_provider == "ollama":
-        api_key = "ollama"
-        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
-    elif llm_provider == "github":
-        api_key = os.getenv("GITHUB_TOKEN", "")
-        if not api_key:
-            click.echo("Error: GITHUB_TOKEN is not set.", err=True)
-            sys.exit(1)
-        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
-    else:
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
-            sys.exit(1)
-        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-
-    db_mode = normalize_db_mode(os.getenv("DB_MODE", "duckdb"))
-    raw_db_path = os.getenv("DB_PATH", "database.duckdb")
-    if db_mode in ("duckdb", "sqlite"):
-        resolved_db_path = (
-            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
-        )
-        if not os.path.exists(resolved_db_path):
-            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
-            sys.exit(1)
-    elif db_mode == "postgres":
-        resolved_db_path = ""
-    else:
-        resolved_db_path = raw_db_path
-
-    _db_mode_dialects = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
-    sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
+    sql_dialect = settings.database.sql_dialect
 
     click.echo("datasight generate")
     click.echo(f"  Model:    {resolved_model}")
-    click.echo(f"  Database: {db_mode} — {resolved_db_path or sql_dialect}")
+    click.echo(f"  Database: {settings.database.mode} — {resolved_db_path or sql_dialect}")
     click.echo()
 
     async def _run():
         from datasight.prompts import DESCRIBE_SYSTEM_PROMPT, DESCRIBE_USER_MESSAGE
         from datasight.schema import format_schema_context, introspect_schema
 
-        base_url_map = {
-            "ollama": "OLLAMA_BASE_URL",
-            "github": "GITHUB_MODELS_BASE_URL",
-            "anthropic": "ANTHROPIC_BASE_URL",
-        }
-        base_url = os.getenv(base_url_map.get(llm_provider, "ANTHROPIC_BASE_URL"))
         llm_client = create_llm_client(
-            provider=llm_provider,
-            api_key=api_key,
-            base_url=base_url,
+            provider=settings.llm.provider,
+            api_key=settings.llm.api_key,
+            base_url=settings.llm.base_url,
         )
-        sql_runner = create_sql_runner(
-            db_mode=db_mode,
-            db_path=resolved_db_path,
-            flight_uri=os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337"),
-            flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
-            flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
-            flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
-            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
-            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
-            postgres_database=os.getenv("POSTGRES_DATABASE", ""),
-            postgres_user=os.getenv("POSTGRES_USER", ""),
-            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
-            postgres_url=os.getenv("POSTGRES_URL", ""),
-            postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
-        )
+        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
         # Introspect schema
         click.echo("Introspecting database schema...")
@@ -388,28 +387,22 @@ def run(
     logger.remove()
     logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
 
-    # Resolve LLM settings (API key validation deferred to project load / chat)
-    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
-
-    if llm_provider == "ollama":
-        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
-    elif llm_provider == "github":
-        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
-    else:
-        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-
-    resolved_port = port or int(os.getenv("PORT", "8084"))
+    # Load settings (API key validation deferred to project load / chat)
+    settings = Settings.from_env()
+    resolved_model = model if model else settings.llm.model
+    resolved_port = port if port else settings.app.port
 
     # Set env vars for the FastAPI app
     os.environ["PORT"] = str(resolved_port)
     if model:
-        # CLI override for model
-        if llm_provider == "ollama":
-            os.environ["OLLAMA_MODEL"] = resolved_model
-        elif llm_provider == "github":
-            os.environ["GITHUB_MODELS_MODEL"] = resolved_model
-        else:
-            os.environ["ANTHROPIC_MODEL"] = resolved_model
+        # CLI override for model - set the appropriate env var
+        match settings.llm.provider:
+            case "ollama":
+                os.environ["OLLAMA_MODEL"] = resolved_model
+            case "github":
+                os.environ["GITHUB_MODELS_MODEL"] = resolved_model
+            case _:
+                os.environ["ANTHROPIC_MODEL"] = resolved_model
 
     # If project-dir specified, set it for auto-load
     if project_dir:
@@ -474,13 +467,6 @@ def verify(project_dir, model, queries_path, verbose):
 
     project_dir = str(Path(project_dir).resolve())
 
-    # Load .env
-    env_path = os.path.join(project_dir, ".env")
-    if os.path.exists(env_path):
-        from dotenv import load_dotenv
-
-        load_dotenv(env_path, override=False)
-
     # Logging
     level = "DEBUG" if verbose else "WARNING"
     logger.remove()
@@ -494,85 +480,35 @@ def verify(project_dir, model, queries_path, verbose):
         click.echo("No queries found. Add questions to queries.yaml first.", err=True)
         sys.exit(1)
 
-    # Resolve LLM
-    from datasight.config import create_sql_runner, load_schema_description
-    from datasight.llm import create_llm_client
-    from datasight.schema import introspect_schema, format_schema_context
+    # Load settings and validate
+    settings, resolved_model = _resolve_settings(project_dir, model)
+    _validate_settings_for_llm(settings)
 
-    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
 
-    if llm_provider == "ollama":
-        api_key = "ollama"
-        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
-    elif llm_provider == "github":
-        api_key = os.getenv("GITHUB_TOKEN", "")
-        if not api_key:
-            click.echo("Error: GITHUB_TOKEN is not set.", err=True)
-            sys.exit(1)
-        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
-    else:
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
-            sys.exit(1)
-        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-
-    from datasight.config import normalize_db_mode
-
-    db_mode = normalize_db_mode(os.getenv("DB_MODE", "duckdb"))
-    raw_db_path = os.getenv("DB_PATH", "database.duckdb")
-    if db_mode in ("duckdb", "sqlite"):
-        resolved_db_path = (
-            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
-        )
-        if not os.path.exists(resolved_db_path):
-            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
-            sys.exit(1)
-    elif db_mode == "postgres":
-        resolved_db_path = ""
-    else:
-        resolved_db_path = raw_db_path
-
-    _db_mode_dialects = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
-    sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
+    sql_dialect = settings.database.sql_dialect
 
     click.echo("datasight verify")
     click.echo(f"  Model:    {resolved_model}")
-    click.echo(f"  Database: {db_mode} — {resolved_db_path or sql_dialect}")
+    click.echo(f"  Database: {settings.database.mode} — {resolved_db_path or sql_dialect}")
     click.echo(f"  Queries:  {len(queries)}")
     click.echo()
 
     async def _run():
-        from datasight.config import format_example_queries
+        from datasight.config import format_example_queries, load_schema_description
         from datasight.prompts import build_system_prompt
+        from datasight.schema import format_schema_context, introspect_schema
         from datasight.verify import run_ambiguity_analysis, run_verification
 
-        base_url_map = {
-            "ollama": "OLLAMA_BASE_URL",
-            "github": "GITHUB_MODELS_BASE_URL",
-            "anthropic": "ANTHROPIC_BASE_URL",
-        }
-        base_url = os.getenv(base_url_map.get(llm_provider, "ANTHROPIC_BASE_URL"))
         llm_client = create_llm_client(
-            provider=llm_provider,
-            api_key=api_key,
-            base_url=base_url,
+            provider=settings.llm.provider,
+            api_key=settings.llm.api_key,
+            base_url=settings.llm.base_url,
         )
-        sql_runner = create_sql_runner(
-            db_mode=db_mode,
-            db_path=resolved_db_path,
-            flight_uri=os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337"),
-            flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
-            flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
-            flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
-            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
-            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
-            postgres_database=os.getenv("POSTGRES_DATABASE", ""),
-            postgres_user=os.getenv("POSTGRES_USER", ""),
-            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
-            postgres_url=os.getenv("POSTGRES_URL", ""),
-            postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
-        )
+        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
         # Build system prompt
         tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
@@ -764,91 +700,38 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
 
     project_dir = str(Path(project_dir).resolve())
 
-    # Load .env
-    env_path = os.path.join(project_dir, ".env")
-    if os.path.exists(env_path):
-        from dotenv import load_dotenv
-
-        load_dotenv(env_path, override=False)
-
     # Logging
     level = "DEBUG" if verbose else "WARNING"
     logger.remove()
     logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
 
-    # Resolve LLM
-    from datasight.config import create_sql_runner, load_schema_description, load_example_queries
-    from datasight.llm import create_llm_client
+    # Load settings and validate
+    settings, resolved_model = _resolve_settings(project_dir, model)
+    _validate_settings_for_llm(settings)
 
-    llm_provider = os.getenv("LLM_PROVIDER", "anthropic")
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
 
-    if llm_provider == "ollama":
-        api_key = "ollama"
-        resolved_model = model or os.getenv("OLLAMA_MODEL", "qwen3.5:35b-a3b")
-    elif llm_provider == "github":
-        api_key = os.getenv("GITHUB_TOKEN", "")
-        if not api_key:
-            click.echo("Error: GITHUB_TOKEN is not set.", err=True)
-            sys.exit(1)
-        resolved_model = model or os.getenv("GITHUB_MODELS_MODEL", "gpt-4o")
-    else:
-        api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            click.echo("Error: ANTHROPIC_API_KEY is not set.", err=True)
-            sys.exit(1)
-        resolved_model = model or os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-
-    from datasight.config import normalize_db_mode
-
-    db_mode = normalize_db_mode(os.getenv("DB_MODE", "duckdb"))
-    raw_db_path = os.getenv("DB_PATH", "database.duckdb")
-    if db_mode in ("duckdb", "sqlite"):
-        resolved_db_path = (
-            str(Path(project_dir) / raw_db_path) if not os.path.isabs(raw_db_path) else raw_db_path
-        )
-        if not os.path.exists(resolved_db_path):
-            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
-            sys.exit(1)
-    elif db_mode == "postgres":
-        resolved_db_path = ""
-    else:
-        resolved_db_path = raw_db_path
-
-    _db_mode_dialects = {"duckdb": "duckdb", "sqlite": "sqlite", "postgres": "postgres"}
-    sql_dialect = _db_mode_dialects.get(db_mode, "duckdb")
+    sql_dialect = settings.database.sql_dialect
 
     async def _run():
         from datasight.agent import run_agent_loop
-        from datasight.config import format_example_queries
+        from datasight.config import (
+            format_example_queries,
+            load_example_queries,
+            load_schema_description,
+        )
         from datasight.prompts import build_system_prompt
-        from datasight.schema import introspect_schema, format_schema_context
+        from datasight.schema import format_schema_context, introspect_schema
 
-        base_url_map = {
-            "ollama": "OLLAMA_BASE_URL",
-            "github": "GITHUB_MODELS_BASE_URL",
-            "anthropic": "ANTHROPIC_BASE_URL",
-        }
-        base_url = os.getenv(base_url_map.get(llm_provider, "ANTHROPIC_BASE_URL"))
         llm_client = create_llm_client(
-            provider=llm_provider,
-            api_key=api_key,
-            base_url=base_url,
+            provider=settings.llm.provider,
+            api_key=settings.llm.api_key,
+            base_url=settings.llm.base_url,
         )
-        sql_runner = create_sql_runner(
-            db_mode=db_mode,
-            db_path=resolved_db_path,
-            flight_uri=os.getenv("FLIGHT_SQL_URI", "grpc://localhost:31337"),
-            flight_token=os.getenv("FLIGHT_SQL_TOKEN"),
-            flight_username=os.getenv("FLIGHT_SQL_USERNAME"),
-            flight_password=os.getenv("FLIGHT_SQL_PASSWORD"),
-            postgres_host=os.getenv("POSTGRES_HOST", "localhost"),
-            postgres_port=int(os.getenv("POSTGRES_PORT", "5432")),
-            postgres_database=os.getenv("POSTGRES_DATABASE", ""),
-            postgres_user=os.getenv("POSTGRES_USER", ""),
-            postgres_password=os.getenv("POSTGRES_PASSWORD", ""),
-            postgres_url=os.getenv("POSTGRES_URL", ""),
-            postgres_sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
-        )
+        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
         # Build system prompt
         tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)

@@ -430,9 +430,10 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     # Restore original shell env vars to prevent leaking settings between projects
     restore_original_env()
 
-    # Load settings from project .env
+    # Load settings from project .env (override=True so project config wins
+    # over any shell/baseline env vars that were restored above)
     env_path = os.path.join(project_dir, ".env")
-    settings = Settings.from_env(env_path if os.path.exists(env_path) else None)
+    settings = Settings.from_env(env_path if os.path.exists(env_path) else None, override=True)
 
     # Reinitialize LLM client
     init_llm_client(state)

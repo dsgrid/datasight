@@ -22,8 +22,10 @@ from datasight.chart import build_chart_html
 from datasight.exceptions import QueryError
 from datasight.llm import LLMClient, TextBlock, ToolUseBlock, serialize_content
 from datasight.prompts import WEB_TOOLS
+from datasight.query_log import QueryLogger
 from datasight.runner import RunSql
 from datasight.sql_validation import validate_sql
+from datasight.templating import escape_html
 
 
 # ---------------------------------------------------------------------------
@@ -165,17 +167,6 @@ def extract_suggestions(text: str) -> list[str]:
         return []
 
 
-def _escape_html(text: str) -> str:
-    """Escape HTML special characters."""
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#x27;")
-    )
-
-
 def df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     """Render a DataFrame as a styled HTML table string."""
     if df.empty:
@@ -192,7 +183,7 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     )
     html += "<table class='result-table'><thead><tr>"
     for i, col in enumerate(display_df.columns):
-        html += f"<th data-col='{i}'>{_escape_html(str(col))}<span class='sort-arrow'></span></th>"
+        html += f"<th data-col='{i}'>{escape_html(str(col))}<span class='sort-arrow'></span></th>"
     html += "</tr></thead><tbody>"
     for _, row in display_df.iterrows():
         html += "<tr>"
@@ -201,7 +192,7 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
             if pd.isna(val):
                 html += "<td class='null-val'>NULL</td>"
             else:
-                html += f"<td>{_escape_html(str(val))}</td>"
+                html += f"<td>{escape_html(str(val))}</td>"
         html += "</tr>"
     html += "</tbody></table>"
     html += "<div class='table-pagination'></div>"
@@ -309,7 +300,7 @@ def _build_tool_meta(
 
 
 def _log_query(
-    query_logger,
+    query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
     tool: str,
@@ -336,7 +327,7 @@ async def _execute_run_sql(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None,
     dialect: str,
-    query_logger,
+    query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
 ) -> ToolResult:
@@ -360,7 +351,7 @@ async def _execute_run_sql(
         hint = sql_error_hint(result.error, dialect=dialect)
         return ToolResult(
             result_text=f"SQL error: {result.error}{hint}",
-            result_html=f"<p class='sql-error'>SQL error: {_escape_html(result.error)}</p>",
+            result_html=f"<p class='sql-error'>SQL error: {escape_html(result.error)}</p>",
             meta=meta,
         )
 
@@ -392,7 +383,7 @@ async def _execute_visualize_data(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None,
     dialect: str,
-    query_logger,
+    query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
 ) -> ToolResult:
@@ -418,7 +409,7 @@ async def _execute_visualize_data(
         hint = sql_error_hint(result.error, dialect=dialect)
         return ToolResult(
             result_text=f"Visualization error: {result.error}{hint}",
-            result_html=f"<p class='sql-error'>Visualization error: {_escape_html(result.error)}</p>",
+            result_html=f"<p class='sql-error'>Visualization error: {escape_html(result.error)}</p>",
             meta=meta,
         )
 
@@ -452,7 +443,7 @@ async def _execute_visualize_data(
         logger.error(f"Chart building error:\n{traceback.format_exc()}")
         return ToolResult(
             result_text=f"Chart building error: {e}",
-            result_html=f"<p class='sql-error'>Chart error: {_escape_html(str(e))}</p>",
+            result_html=f"<p class='sql-error'>Chart error: {escape_html(str(e))}</p>",
             meta=meta,
             df=df,
         )
@@ -465,7 +456,7 @@ async def execute_tool(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
-    query_logger=None,
+    query_logger: QueryLogger | None = None,
     session_id: str = "",
     user_question: str = "",
 ) -> ToolResult:
@@ -533,7 +524,7 @@ async def run_agent_loop(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
-    query_logger=None,
+    query_logger: QueryLogger | None = None,
     session_id: str = "",
     messages: list[dict[str, Any]] | None = None,
     tools: list[dict[str, Any]] | None = None,

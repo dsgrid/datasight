@@ -3,14 +3,13 @@ Auto-discover database schema by querying INFORMATION_SCHEMA or DuckDB-specific
 system tables.
 """
 
-from collections.abc import Callable, Awaitable
 from dataclasses import dataclass, field
+from typing import Any
 
 import pandas as pd
 from loguru import logger
 
-# Type alias for the async run_sql callable used throughout this module.
-RunSql = Callable[[str], Awaitable[pd.DataFrame]]
+from datasight.runner import RunSql
 
 
 @dataclass
@@ -27,7 +26,7 @@ class TableInfo:
     row_count: int | None = None
 
 
-async def introspect_schema(run_sql: RunSql, runner=None) -> list[TableInfo]:
+async def introspect_schema(run_sql: RunSql, runner: Any = None) -> list[TableInfo]:
     """Discover tables and columns from the database.
 
     Parameters

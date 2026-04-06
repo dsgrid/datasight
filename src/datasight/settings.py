@@ -100,6 +100,14 @@ def restore_original_env() -> None:
 LLMProvider = Literal["anthropic", "ollama", "github"]
 DBMode = Literal["duckdb", "sqlite", "postgres", "flightsql"]
 
+# Mapping from database mode to SQL dialect for query generation
+DB_MODE_TO_DIALECT: dict[str, str] = {
+    "duckdb": "duckdb",
+    "sqlite": "sqlite",
+    "postgres": "postgres",
+    "flightsql": "duckdb",  # Flight SQL uses DuckDB dialect
+}
+
 
 @dataclass
 class LLMSettings:
@@ -180,13 +188,7 @@ class DatabaseSettings:
     @property
     def sql_dialect(self) -> str:
         """Get the SQL dialect for the current mode."""
-        dialects = {
-            "duckdb": "duckdb",
-            "sqlite": "sqlite",
-            "postgres": "postgres",
-            "flightsql": "duckdb",
-        }
-        return dialects.get(self.mode, "duckdb")
+        return DB_MODE_TO_DIALECT.get(self.mode, "duckdb")
 
 
 @dataclass
@@ -211,7 +213,7 @@ class Settings:
     app: AppSettings = field(default_factory=AppSettings)
 
     @classmethod
-    def from_env(cls, env_path: str | Path | None = None) -> Settings:
+    def from_env(cls, env_path: str | Path | None = None, *, override: bool = False) -> Settings:
         """Load settings from environment variables.
 
         Parameters
@@ -219,13 +221,19 @@ class Settings:
         env_path:
             Optional path to a .env file. If provided, it will be loaded
             before reading environment variables.
+        override:
+            If False (default), existing env vars (e.g. shell exports) take
+            precedence over .env file values - use for CLI commands where
+            users may want to override project config via shell.
+            If True, .env file values override existing env vars - use for
+            web app project switching where project config should win.
 
         Returns
         -------
         A Settings instance populated from the environment.
         """
         if env_path:
-            load_dotenv(env_path, override=True)
+            load_dotenv(env_path, override=override)
 
         # Parse and validate LLM provider
         llm_provider_raw = os.environ.get("LLM_PROVIDER", "anthropic")
