@@ -357,10 +357,20 @@ def run(
 ):
     """Start the datasight web UI.
 
-    By default, starts with no project loaded. Use the UI to select a project,
-    or pass --project-dir to auto-load one on startup.
+    If the current directory contains schema_description.md, it will be
+    auto-loaded as the project. Otherwise, use the UI to select a project,
+    or pass --project-dir to specify one explicitly.
     """
     from dotenv import load_dotenv
+
+    from datasight.recent_projects import validate_project_dir
+
+    # Auto-detect project in current directory if not specified
+    if project_dir is None:
+        cwd = str(Path.cwd().resolve())
+        is_valid, _ = validate_project_dir(cwd)
+        if is_valid:
+            project_dir = cwd
 
     # Load .env from current directory or project directory if specified
     if project_dir:

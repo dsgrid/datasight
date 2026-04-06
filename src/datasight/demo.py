@@ -93,6 +93,10 @@ smoother and better for long-term trends.
 - Use fuel_type_code_agg for broad fuel categories (fewer codes than energy_source_code)
 - This is a DuckDB database — use DuckDB SQL syntax
 - For state-level analysis, use the `state` column from the plants table
+- **Always display readable fuel names, not codes.** Use a CASE statement to convert fuel_type_code_agg:
+  - 'COL' → 'Coal', 'NG' → 'Natural Gas', 'NUC' → 'Nuclear', 'HYC' → 'Hydro',
+  - 'SUN' → 'Solar', 'WND' → 'Wind', 'GEO' → 'Geothermal', 'OOG' → 'Other Gas',
+  - 'DFO' → 'Distillate Fuel Oil', 'OTH' → 'Other', 'PET' → 'Petroleum', 'WAS' → 'Waste'
 """
 
 EXAMPLE_QUERIES = """\

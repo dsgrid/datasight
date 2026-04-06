@@ -195,6 +195,55 @@ class BookmarkStore:
         self._save()
 
 
+class DashboardStore:
+    """Persist dashboard items as a JSON file."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._items: list[dict[str, Any]] = []
+        self._columns: int = 0  # 0 = auto
+        self._next_id = 1
+        if self._path.exists():
+            try:
+                data = json.loads(self._path.read_text())
+                self._items = data.get("items", [])
+                self._columns = data.get("columns", 0)
+                if self._items:
+                    self._next_id = max(item.get("id", 0) for item in self._items) + 1
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(
+            json.dumps({"items": self._items, "columns": self._columns}, indent=2)
+        )
+
+    def get_all(self) -> dict[str, Any]:
+        return {"items": list(self._items), "columns": self._columns}
+
+    def save_all(self, items: list[dict[str, Any]], columns: int | None = None) -> dict[str, Any]:
+        # Assign IDs to items that don't have them
+        for item in items:
+            if "id" not in item:
+                item["id"] = self._next_id
+                self._next_id += 1
+        self._items = items
+        if columns is not None:
+            self._columns = columns
+        # Update next_id based on saved items
+        if self._items:
+            self._next_id = max(item.get("id", 0) for item in self._items) + 1
+        self._save()
+        return self.get_all()
+
+    def clear(self) -> None:
+        self._items = []
+        self._columns = 0
+        self._next_id = 1
+        self._save()
+
+
 class AppState:
     """Runtime state for the datasight web application, populated on startup."""
 
@@ -205,6 +254,7 @@ class AppState:
         self.model: str = "claude-haiku-4-5-20251001"
         self.conversations: ConversationStore | None = None
         self.bookmarks: BookmarkStore | None = None
+        self.dashboard: DashboardStore | None = None
         self.schema_info: list[dict[str, Any]] = []
         self.example_queries_list: list[dict[str, str]] = []
         self.query_logger: QueryLogger | None = None
@@ -242,6 +292,7 @@ class AppState:
         self.project_loaded = False
         self.conversations = None
         self.bookmarks = None
+        self.dashboard = None
         self.query_logger = None
         self._response_cache.clear()
 
@@ -485,6 +536,7 @@ async def load_project(project_dir: str) -> dict[str, Any]:
     # Set up project-specific storage
     state.conversations = ConversationStore(Path(project_dir) / ".datasight" / "conversations")
     state.bookmarks = BookmarkStore(Path(project_dir) / ".datasight" / "bookmarks.json")
+    state.dashboard = DashboardStore(Path(project_dir) / ".datasight" / "dashboard.json")
 
     # Load settings from env
     state.confirm_sql = os.environ.get("CONFIRM_SQL", "false").lower() == "true"
@@ -831,6 +883,35 @@ async def clear_bookmarks():
     if state.bookmarks is None:
         raise RuntimeError("App not initialised")
     state.bookmarks.clear()
+    return {"ok": True}
+
+
+@app.get("/api/dashboard")
+async def get_dashboard():
+    """Return all dashboard items and layout settings."""
+    if state.dashboard is None:
+        return {"items": [], "columns": 0}
+    return state.dashboard.get_all()
+
+
+@app.post("/api/dashboard")
+async def save_dashboard(request: Request):
+    """Save dashboard items and layout settings."""
+    if state.dashboard is None:
+        raise RuntimeError("App not initialised")
+    body = await request.json()
+    items = body.get("items", [])
+    columns = body.get("columns")
+    result = state.dashboard.save_all(items, columns)
+    return result
+
+
+@app.delete("/api/dashboard")
+async def clear_dashboard():
+    """Clear all dashboard items."""
+    if state.dashboard is None:
+        raise RuntimeError("App not initialised")
+    state.dashboard.clear()
     return {"ok": True}
 
 
@@ -1240,5 +1321,24 @@ async def export_session(session_id: str, request: Request):
         content=html,
         headers={
             "Content-Disposition": 'attachment; filename="datasight-export.html"',
+        },
+    )
+
+
+@app.post("/api/dashboard/export")
+async def export_dashboard(request: Request):
+    """Export dashboard as self-contained HTML."""
+    from datasight.export import export_dashboard_html
+
+    body = await request.json()
+    items = body.get("items", [])
+    title = body.get("title", "datasight dashboard")
+    columns = body.get("columns", 2)
+
+    html = export_dashboard_html(items, title=title, columns=columns)
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Content-Disposition": 'attachment; filename="datasight-dashboard.html"',
         },
     )

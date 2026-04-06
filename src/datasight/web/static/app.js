@@ -19,6 +19,8 @@ let sessionQueries = [];
 let pinnedItems = [];
 let pinnedIdCounter = 0;
 let currentView = 'chat';
+let fullscreenCardId = null;
+let selectedCardIdx = -1;
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
@@ -202,6 +204,7 @@ async function doLoadProject(path) {
     await loadQueries();
     await loadConversations();
     await loadBookmarks();
+    await loadDashboard();
 
     // Show welcome message for the new project
     showWelcome();
@@ -231,6 +234,13 @@ async function clearChatForProjectSwitch() {
   if (historyEl) {
     historyEl.innerHTML = '<span class="no-sql">No queries yet.</span>';
   }
+
+  // Clear dashboard (will be reloaded from new project)
+  pinnedItems = [];
+  pinnedIdCounter = 0;
+  dashboardColumns = 0;
+  updateDashboardBadge();
+  renderDashboard();
 }
 
 function showWelcome() {
@@ -283,7 +293,13 @@ function switchView(view) {
   document.getElementById('tab-dashboard').classList.toggle('active', view === 'dashboard');
   chatArea.style.display = view === 'chat' ? '' : 'none';
   dashboard.style.display = view === 'dashboard' ? '' : 'none';
-  if (view === 'dashboard') broadcastThemeToDashboard();
+  if (view === 'dashboard') {
+    broadcastThemeToDashboard();
+  } else {
+    // Reset selection when leaving dashboard
+    selectedCardIdx = -1;
+    renderDashboard();
+  }
 }
 
 let dashboardColumns = 0; // 0 = auto
@@ -294,10 +310,13 @@ function pinResult(btn) {
   const iframe = resultEl.querySelector('iframe');
   const type = iframe ? 'chart' : 'table';
   const html = iframe ? iframe.srcdoc : resultEl.querySelector('.result-table-wrap').outerHTML;
+  // Get title from result data attribute, or try to find from chart title
+  let title = resultEl.dataset.title || '';
   pinnedIdCounter++;
-  pinnedItems.push({ id: pinnedIdCounter, type, html });
+  pinnedItems.push({ id: pinnedIdCounter, type, html, title });
   updateDashboardBadge();
   renderDashboard();
+  saveDashboard();
   const pinIcon = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg>';
   btn.innerHTML = pinIcon + ' Pinned!';
   setTimeout(() => { btn.innerHTML = pinIcon + ' Pin'; }, 1200);
@@ -307,6 +326,28 @@ function unpinItem(id) {
   pinnedItems = pinnedItems.filter(item => item.id !== id);
   updateDashboardBadge();
   renderDashboard();
+  saveDashboard();
+}
+
+function toggleCardFullscreen(id) {
+  if (fullscreenCardId === id) {
+    // Exit fullscreen
+    fullscreenCardId = null;
+    document.body.classList.remove('dashboard-fullscreen-active');
+  } else {
+    // Enter fullscreen
+    fullscreenCardId = id;
+    document.body.classList.add('dashboard-fullscreen-active');
+  }
+  renderDashboard();
+}
+
+function exitCardFullscreen() {
+  if (fullscreenCardId !== null) {
+    fullscreenCardId = null;
+    document.body.classList.remove('dashboard-fullscreen-active');
+    renderDashboard();
+  }
 }
 
 function updateDashboardBadge() {
@@ -340,6 +381,8 @@ function setDashboardColumns(cols) {
   grid.querySelectorAll('iframe').forEach(iframe => {
     try { iframe.contentWindow.Plotly.Plots.resize(iframe.contentDocument.getElementById('chart')); } catch(e) {}
   });
+  // Persist column setting
+  saveDashboard();
 }
 
 function renderDashboard() {
@@ -358,15 +401,47 @@ function renderDashboard() {
 
   pinnedItems.forEach((item, idx) => {
     const card = document.createElement('div');
-    card.className = 'dashboard-card';
+    let cardClass = 'dashboard-card';
+    if (fullscreenCardId === item.id) cardClass += ' fullscreen';
+    if (selectedCardIdx === idx) cardClass += ' selected';
+    card.className = cardClass;
     card.draggable = true;
     card.dataset.idx = idx;
 
-    // Drag handle
+    // Card header with drag handle and title
+    const header = document.createElement('div');
+    header.className = 'dashboard-card-header';
+
     const handle = document.createElement('div');
     handle.className = 'dashboard-drag-handle';
     handle.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" opacity="0.4"><circle cx="5" cy="3" r="1.5"/><circle cx="11" cy="3" r="1.5"/><circle cx="5" cy="8" r="1.5"/><circle cx="11" cy="8" r="1.5"/><circle cx="5" cy="13" r="1.5"/><circle cx="11" cy="13" r="1.5"/></svg>';
-    card.appendChild(handle);
+    header.appendChild(handle);
+
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'dashboard-card-title';
+    titleInput.placeholder = 'Add title...';
+    titleInput.value = item.title || '';
+    titleInput.addEventListener('change', () => {
+      item.title = titleInput.value;
+      saveDashboard();
+    });
+    titleInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') titleInput.blur();
+    });
+    header.appendChild(titleInput);
+
+    const fullscreenBtn = document.createElement('button');
+    fullscreenBtn.className = 'dashboard-fullscreen-btn';
+    fullscreenBtn.title = 'Toggle fullscreen';
+    fullscreenBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>';
+    fullscreenBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleCardFullscreen(item.id);
+    };
+    header.appendChild(fullscreenBtn);
+
+    card.appendChild(header);
 
     if (item.type === 'chart') {
       const iframe = document.createElement('iframe');
@@ -424,6 +499,7 @@ function renderDashboard() {
         const moved = pinnedItems.splice(fromIdx, 1)[0];
         pinnedItems.splice(toIdx, 0, moved);
         renderDashboard();
+        saveDashboard();
       }
     });
 
@@ -443,27 +519,152 @@ function broadcastThemeToDashboard() {
   });
 }
 
+async function loadDashboard() {
+  try {
+    const data = await fetchJson('/api/dashboard');
+    pinnedItems = data.items || [];
+    dashboardColumns = data.columns || 0;
+    // Update next ID counter
+    if (pinnedItems.length > 0) {
+      pinnedIdCounter = Math.max(...pinnedItems.map(item => item.id || 0)) + 1;
+    }
+    updateDashboardBadge();
+    renderDashboard();
+  } catch (e) {
+    console.error('Failed to load dashboard:', e);
+  }
+}
+
+async function saveDashboard() {
+  try {
+    await fetch('/api/dashboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: pinnedItems, columns: dashboardColumns })
+    });
+  } catch (e) {
+    console.error('Failed to save dashboard:', e);
+  }
+}
+
+function syncChartScales() {
+  const grid = document.getElementById('dashboard-grid');
+  const iframes = grid.querySelectorAll('iframe');
+
+  if (iframes.length < 2) {
+    window.alert('Need at least 2 charts to sync scales.');
+    return;
+  }
+
+  // Collect y-axis ranges from all charts
+  let globalMin = Infinity;
+  let globalMax = -Infinity;
+  const chartFrames = [];
+
+  iframes.forEach(iframe => {
+    try {
+      const plotlyDiv = iframe.contentDocument.getElementById('chart');
+      if (plotlyDiv && plotlyDiv.data) {
+        chartFrames.push(iframe);
+        // Find min/max across all traces
+        plotlyDiv.data.forEach(trace => {
+          const values = trace.y || trace.values || [];
+          values.forEach(v => {
+            if (typeof v === 'number' && isFinite(v)) {
+              if (v < globalMin) globalMin = v;
+              if (v > globalMax) globalMax = v;
+            }
+          });
+        });
+      }
+    } catch (e) {
+      // Cross-origin or no Plotly - skip
+    }
+  });
+
+  if (chartFrames.length < 2 || !isFinite(globalMin) || !isFinite(globalMax)) {
+    window.alert('Could not read chart data. Make sure charts are fully loaded.');
+    return;
+  }
+
+  // Add 5% padding to the range
+  const padding = (globalMax - globalMin) * 0.05;
+  const yMin = globalMin - padding;
+  const yMax = globalMax + padding;
+
+  // Apply the common range to all charts
+  chartFrames.forEach(iframe => {
+    try {
+      const Plotly = iframe.contentWindow.Plotly;
+      const plotlyDiv = iframe.contentDocument.getElementById('chart');
+      if (Plotly && plotlyDiv) {
+        Plotly.relayout(plotlyDiv, {
+          'yaxis.range': [yMin, yMax],
+          'yaxis.autorange': false
+        });
+      }
+    } catch (e) {
+      // Skip on error
+    }
+  });
+}
+
+async function exportDashboard() {
+  if (pinnedItems.length === 0) {
+    window.alert('No items to export. Pin some charts or tables first.');
+    return;
+  }
+
+  // Prepare items for export
+  const items = pinnedItems.map(item => ({
+    type: item.type,
+    html: item.html,
+    title: item.title || ''
+  }));
+
+  // Determine columns from current setting
+  const columns = dashboardColumns > 0 ? dashboardColumns : 2;
+
+  try {
+    const response = await fetch('/api/dashboard/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, columns, title: 'datasight dashboard' })
+    });
+
+    if (!response.ok) throw new Error('Export failed');
+
+    // Download the HTML file
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'datasight-dashboard.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error('Failed to export dashboard:', e);
+    window.alert('Failed to export dashboard. Please try again.');
+  }
+}
+
 async function toggleQueryLog() {
   try {
     const data = await fetchJson('/api/query-log/toggle', { method: 'POST' });
     queryLogEnabled = data.enabled;
-    updateQueryLogButton();
+    updateSettingsButtons();
   } catch (e) {
     console.error('Failed to toggle query log:', e);
   }
-}
-
-function updateQueryLogButton() {
-  const btn = document.getElementById('query-log-toggle');
-  btn.classList.toggle('active', queryLogEnabled);
-  btn.title = queryLogEnabled ? 'Query logging ON — click to disable' : 'Query logging OFF — click to enable';
 }
 
 async function loadQueryLogState() {
   try {
     const data = await fetchJson('/api/query-log?n=0');
     queryLogEnabled = data.enabled;
-    updateQueryLogButton();
+    updateSettingsButtons();
   } catch (e) {
     // Ignore — button defaults to off
   }
@@ -508,20 +709,37 @@ function toggleClarifySql() {
 }
 
 function updateSettingsButtons() {
-  const confirmBtn = document.getElementById('confirm-sql-toggle');
-  const explainBtn = document.getElementById('explain-sql-toggle');
-  if (confirmBtn) {
-    confirmBtn.classList.toggle('active', confirmSqlEnabled);
-    confirmBtn.title = confirmSqlEnabled ? 'SQL approval ON — click to disable' : 'SQL approval OFF — click to enable';
+  // Update settings panel checkboxes
+  const confirmCheck = document.getElementById('setting-confirm-sql');
+  const explainCheck = document.getElementById('setting-explain-sql');
+  const clarifyCheck = document.getElementById('setting-clarify-sql');
+  const queryLogCheck = document.getElementById('setting-query-log');
+
+  if (confirmCheck) confirmCheck.checked = confirmSqlEnabled;
+  if (explainCheck) explainCheck.checked = explainSqlEnabled;
+  if (clarifyCheck) clarifyCheck.checked = clarifySqlEnabled;
+  if (queryLogCheck) queryLogCheck.checked = queryLogEnabled;
+
+  // Update settings gear button to show if any non-default settings are active
+  const settingsBtn = document.getElementById('settings-toggle');
+  if (settingsBtn) {
+    const hasActiveSettings = confirmSqlEnabled || explainSqlEnabled || !clarifySqlEnabled || queryLogEnabled;
+    settingsBtn.classList.toggle('active', hasActiveSettings);
   }
-  if (explainBtn) {
-    explainBtn.classList.toggle('active', explainSqlEnabled);
-    explainBtn.title = explainSqlEnabled ? 'SQL explanations ON — click to disable' : 'SQL explanations OFF — click to enable';
-  }
-  const clarifyBtn = document.getElementById('clarify-sql-toggle');
-  if (clarifyBtn) {
-    clarifyBtn.classList.toggle('active', clarifySqlEnabled);
-    clarifyBtn.title = clarifySqlEnabled ? 'Clarify ambiguous queries ON — click to disable' : 'Clarify ambiguous queries OFF — click to enable';
+}
+
+function toggleSettingsPanel() {
+  const panel = document.getElementById('settings-panel');
+  const overlay = document.getElementById('settings-overlay');
+  const isOpen = panel.classList.contains('open');
+  if (isOpen) {
+    panel.classList.remove('open');
+    overlay.classList.remove('open');
+  } else {
+    panel.classList.add('open');
+    overlay.classList.add('open');
+    // Sync checkbox states when opening
+    updateSettingsButtons();
   }
 }
 
@@ -1943,7 +2161,10 @@ function showShortcutsModal() {
         '<div class="shortcut-row"><kbd>/</kbd> or <kbd>' + mod + '</kbd>+<kbd>K</kbd><span>Focus question input</span></div>' +
         '<div class="shortcut-row"><kbd>' + mod + '</kbd>+<kbd>B</kbd><span>Toggle sidebar</span></div>' +
         '<div class="shortcut-row"><kbd>N</kbd><span>New conversation</span></div>' +
-        '<div class="shortcut-row"><kbd>Escape</kbd><span>Close modal / deselect</span></div>' +
+        '<div class="shortcut-row"><kbd>D</kbd><span>Toggle dashboard view</span></div>' +
+        '<div class="shortcut-row"><kbd>&#8592;&#8593;&#8594;&#8595;</kbd><span>Navigate dashboard cards</span></div>' +
+        '<div class="shortcut-row"><kbd>Enter</kbd><span>Fullscreen selected card</span></div>' +
+        '<div class="shortcut-row"><kbd>Escape</kbd><span>Exit fullscreen / close modal</span></div>' +
         '<div class="shortcut-row"><kbd>?</kbd><span>Show this help</span></div>' +
       '</div>' +
     '</div>';
@@ -1961,8 +2182,9 @@ document.addEventListener('keydown', function(e) {
   const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement.isContentEditable;
   const mod = e.metaKey || e.ctrlKey;
 
-  // Escape: close modals or blur input
+  // Escape: exit fullscreen, close modals, or blur input
   if (e.key === 'Escape') {
+    if (fullscreenCardId !== null) { exitCardFullscreen(); return; }
     if (shortcutsModalOpen) { hideShortcutsModal(); return; }
     if (isInput) { document.activeElement.blur(); return; }
     return;
@@ -2004,6 +2226,59 @@ document.addEventListener('keydown', function(e) {
     showShortcutsModal();
     return;
   }
+
+  // D: toggle dashboard view
+  if (e.key === 'd' && !mod && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    switchView(currentView === 'dashboard' ? 'chat' : 'dashboard');
+    return;
+  }
+
+  // Arrow keys: navigate dashboard cards (only when in dashboard view)
+  if (currentView === 'dashboard' && pinnedItems.length > 0) {
+    const cols = dashboardColumns > 0 ? dashboardColumns : Math.floor(document.getElementById('dashboard-grid').offsetWidth / 466) || 1;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      selectedCardIdx = Math.min(selectedCardIdx + 1, pinnedItems.length - 1);
+      if (selectedCardIdx < 0) selectedCardIdx = 0;
+      renderDashboard();
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      selectedCardIdx = Math.max(selectedCardIdx - 1, 0);
+      renderDashboard();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const newIdx = selectedCardIdx + cols;
+      if (newIdx < pinnedItems.length) selectedCardIdx = newIdx;
+      else if (selectedCardIdx < 0) selectedCardIdx = 0;
+      renderDashboard();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const newIdx = selectedCardIdx - cols;
+      if (newIdx >= 0) selectedCardIdx = newIdx;
+      renderDashboard();
+      return;
+    }
+    // Enter: toggle fullscreen on selected card
+    if (e.key === 'Enter' && selectedCardIdx >= 0 && selectedCardIdx < pinnedItems.length) {
+      e.preventDefault();
+      toggleCardFullscreen(pinnedItems[selectedCardIdx].id);
+      return;
+    }
+    // Delete/Backspace: unpin selected card
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedCardIdx >= 0 && selectedCardIdx < pinnedItems.length) {
+      e.preventDefault();
+      unpinItem(pinnedItems[selectedCardIdx].id);
+      if (selectedCardIdx >= pinnedItems.length) selectedCardIdx = pinnedItems.length - 1;
+      return;
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -2034,6 +2309,7 @@ async function initApp() {
   loadSettings();
   loadConversations();
   loadBookmarks();
+  loadDashboard();
   restoreSession();
 }
 

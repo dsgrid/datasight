@@ -222,3 +222,195 @@ def _escape(text: str) -> str:
 
 def _escape_attr(text: str) -> str:
     return _escape(text).replace("'", "&#x27;")
+
+
+def _extract_plotly_spec(srcdoc: str) -> dict[str, Any] | None:
+    """Extract the Plotly spec JSON from a chart iframe's srcdoc."""
+    import re
+
+    match = re.search(r"var spec = ({.*?});", srcdoc, re.DOTALL)
+    if match:
+        import json
+
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def export_dashboard_html(
+    items: list[dict[str, Any]],
+    title: str = "datasight dashboard",
+    columns: int = 2,
+) -> str:
+    """Render dashboard items as a self-contained HTML page with unified Plotly.
+
+    Parameters
+    ----------
+    items:
+        List of dashboard item dicts with keys:
+        - type: "chart" or "table"
+        - html: For charts, the iframe srcdoc; for tables, the HTML content
+        - title: Optional card title
+    title:
+        Page title.
+    columns:
+        Number of grid columns (1, 2, or 3).
+
+    Returns
+    -------
+    A complete HTML string.
+    """
+    import json
+
+    # Build chart specs and card HTML
+    chart_specs: list[dict[str, Any]] = []
+    cards_html: list[str] = []
+
+    for idx, item in enumerate(items):
+        item_type = item.get("type", "table")
+        item_title = _escape(item.get("title", ""))
+        title_html = f'<div class="card-title">{item_title}</div>' if item_title else ""
+
+        if item_type == "chart":
+            spec = _extract_plotly_spec(item.get("html", ""))
+            if spec:
+                chart_specs.append({"idx": idx, "spec": spec})
+                cards_html.append(
+                    f'<div class="dashboard-card">'
+                    f"{title_html}"
+                    f'<div class="chart-container" id="chart-{idx}"></div>'
+                    f"</div>"
+                )
+            else:
+                # Fallback to iframe if spec extraction fails
+                cards_html.append(
+                    f'<div class="dashboard-card">'
+                    f"{title_html}"
+                    f'<iframe sandbox="allow-scripts allow-same-origin" '
+                    f'srcdoc="{_escape_attr(item.get("html", ""))}"></iframe>'
+                    f"</div>"
+                )
+        else:
+            # Table
+            table_html = item.get("html", "")
+            cards_html.append(
+                f'<div class="dashboard-card">'
+                f"{title_html}"
+                f'<div class="table-container">{table_html}</div>'
+                f"</div>"
+            )
+
+    cards_body = "\n".join(cards_html)
+    chart_specs_json = json.dumps(chart_specs)
+
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_escape(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="{PLOTLY_CDN}"></script>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    background: #f8f9fa; color: #1a1a2e;
+    padding: 24px;
+    line-height: 1.6;
+  }}
+  h1 {{
+    font-size: 1.5rem; font-weight: 600; margin-bottom: 20px;
+    padding-bottom: 12px; border-bottom: 2px solid #15a8a8;
+    color: #15a8a8;
+  }}
+  .dashboard-grid {{
+    display: grid;
+    grid-template-columns: repeat({columns}, 1fr);
+    gap: 16px;
+  }}
+  @media (max-width: 900px) {{
+    .dashboard-grid {{ grid-template-columns: 1fr; }}
+  }}
+  .dashboard-card {{
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }}
+  .card-title {{
+    padding: 12px 16px 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #666;
+    border-bottom: 1px solid #f0f0f0;
+  }}
+  .chart-container {{
+    height: 400px;
+    width: 100%;
+  }}
+  .table-container {{
+    overflow-x: auto;
+    padding: 8px;
+  }}
+  .table-container table {{
+    width: 100%; border-collapse: collapse; font-size: 0.85rem;
+  }}
+  .table-container th {{
+    background: #f1f3f5; padding: 8px 12px; text-align: left;
+    font-weight: 600; border-bottom: 2px solid #dee2e6;
+  }}
+  .table-container td {{
+    padding: 6px 12px; border-bottom: 1px solid #e5e7eb;
+  }}
+  .table-container tr:hover td {{ background: #f8f9fa; }}
+  .table-toolbar, .table-pagination {{ display: none; }}
+  iframe {{
+    width: 100%; height: 400px; border: none;
+  }}
+  .footer {{
+    margin-top: 24px; padding-top: 16px; border-top: 1px solid #dee2e6;
+    font-size: 0.8rem; color: #999; text-align: center;
+  }}
+</style>
+</head>
+<body>
+<h1>{_escape(title)}</h1>
+<div class="dashboard-grid">
+{cards_body}
+</div>
+<div class="footer">Exported from datasight</div>
+<script>
+  var chartSpecs = {chart_specs_json};
+  chartSpecs.forEach(function(item) {{
+    var spec = item.spec;
+    var data = spec.data || [];
+    var layout = Object.assign({{}}, spec.layout || {{}}, {{
+      autosize: true,
+      height: undefined,
+      paper_bgcolor: 'white',
+      plot_bgcolor: 'white',
+      font: {{ color: '#1a1a1a' }},
+      xaxis: Object.assign(spec.layout && spec.layout.xaxis || {{}}, {{
+        gridcolor: '#eee', linecolor: '#ddd', zerolinecolor: '#ddd'
+      }}),
+      yaxis: Object.assign(spec.layout && spec.layout.yaxis || {{}}, {{
+        gridcolor: '#eee', linecolor: '#ddd', zerolinecolor: '#ddd'
+      }})
+    }});
+    Plotly.newPlot('chart-' + item.idx, data, layout, {{
+      responsive: true,
+      displayModeBar: true,
+      modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+      displaylogo: false
+    }});
+  }});
+</script>
+</body>
+</html>"""
