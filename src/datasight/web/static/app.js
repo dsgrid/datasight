@@ -1609,6 +1609,12 @@ async function clearChat() {
   lastSql = '';
   renderQueryHistory();
   loadConversations();
+
+  // Clear dashboard
+  pinnedItems = [];
+  pinnedIdCounter = 0;
+  updateDashboardBadge();
+  renderDashboard();
 }
 
 // ---------------------------------------------------------------------------
@@ -2046,21 +2052,27 @@ function toggleExportMode() {
 }
 
 function addExportCheckboxes() {
-  let msgIdx = 0;
-  // Group message-rows with their following tool indicators and tool results
-  // so the trash button excludes the entire Q&A block
+  let turnIdx = 0;
+  // Group turns: user message + tools + assistant response(s) until next user
+  // This matches the backend's turn-based exclusion semantics
   const children = Array.from(messagesEl.children);
   let i = 0;
   while (i < children.length) {
     const el = children[i];
-    if (el.classList.contains('message-row')) {
-      const idx = msgIdx;
-      // Collect this message row and all following non-message-row siblings
-      // (tool indicators, tool results, suggestions, clarify options) as one block
+    // Only process user message rows (turns are user-initiated)
+    if (el.classList.contains('message-row') && el.classList.contains('user')) {
+      const idx = turnIdx;
+      // Collect user message and ALL following siblings until the next user message
+      // This includes tools, assistant responses, suggestions, etc.
       const block = [el];
       let j = i + 1;
-      while (j < children.length && !children[j].classList.contains('message-row')) {
-        block.push(children[j]);
+      while (j < children.length) {
+        const child = children[j];
+        // Stop at the next user message (start of next turn)
+        if (child.classList.contains('message-row') && child.classList.contains('user')) {
+          break;
+        }
+        block.push(child);
         j++;
       }
 
@@ -2085,7 +2097,7 @@ function addExportCheckboxes() {
         }
       };
       el.appendChild(btn);
-      msgIdx++;
+      turnIdx++;
       i = j;
     } else {
       i++;

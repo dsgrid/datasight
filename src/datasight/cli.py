@@ -975,7 +975,7 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
 @click.option(
     "--exclude",
     default=None,
-    help="Comma-separated message indices to exclude (0-based).",
+    help="Comma-separated turn indices to exclude (0-based, each turn is a Q&A pair).",
 )
 @click.option("--list-sessions", is_flag=True, help="List available sessions and exit.")
 def export(session_id, output_path, project_dir, exclude, list_sessions):

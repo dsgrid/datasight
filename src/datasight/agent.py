@@ -11,15 +11,18 @@ from __future__ import annotations
 import json
 import re
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 from loguru import logger
 
-from datasight.chart import _build_artifact_html
+from datasight.chart import build_chart_html
+from datasight.exceptions import QueryError
 from datasight.llm import LLMClient, TextBlock, ToolUseBlock, serialize_content
 from datasight.prompts import WEB_TOOLS
+from datasight.runner import RunSql
 from datasight.sql_validation import validate_sql
 
 
@@ -126,18 +129,21 @@ def sql_error_hint(error_msg: str, dialect: str = "duckdb") -> str:
     if "ambiguous" in lower:
         hints.append("HINT: Qualify the column with a table alias.")
     if "scalar function" in lower and "does not exist" in lower:
-        if dialect == "postgres":
-            hints.append("HINT: PostgreSQL syntax — use DATE_TRUNC, EXTRACT, TO_CHAR, col::type.")
-        elif dialect == "sqlite":
-            hints.append(
-                "HINT: SQLite syntax — use strftime(), date(), datetime(). "
-                "No DATE_TRUNC or EXTRACT."
-            )
-        else:
-            hints.append(
-                "HINT: DuckDB syntax — use DATE_TRUNC, EXTRACT, STRFTIME, col::DATE. "
-                "Not TO_DATE, DATE_FORMAT, TO_CHAR."
-            )
+        match dialect:
+            case "postgres":
+                hints.append(
+                    "HINT: PostgreSQL syntax — use DATE_TRUNC, EXTRACT, TO_CHAR, col::type."
+                )
+            case "sqlite":
+                hints.append(
+                    "HINT: SQLite syntax — use strftime(), date(), datetime(). "
+                    "No DATE_TRUNC or EXTRACT."
+                )
+            case _:
+                hints.append(
+                    "HINT: DuckDB syntax — use DATE_TRUNC, EXTRACT, STRFTIME, col::DATE. "
+                    "Not TO_DATE, DATE_FORMAT, TO_CHAR."
+                )
     if "table with name" in lower and "does not exist" in lower:
         hints.append("HINT: Table not found. Check the schema for available tables.")
     if "syntax error" in lower:
@@ -159,21 +165,23 @@ def extract_suggestions(text: str) -> list[str]:
         return []
 
 
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
 def df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     """Render a DataFrame as a styled HTML table string."""
     if df.empty:
         return "<p class='empty-result'>Query returned no rows.</p>"
 
     display_df = df.head(max_rows)
-
-    def _escape(text: str) -> str:
-        return (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&#x27;")
-        )
 
     html = f"<div class='result-table-wrap' data-total-rows='{len(df)}'>"
     html += (
@@ -184,7 +192,7 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
     )
     html += "<table class='result-table'><thead><tr>"
     for i, col in enumerate(display_df.columns):
-        html += f"<th data-col='{i}'>{_escape(str(col))}<span class='sort-arrow'></span></th>"
+        html += f"<th data-col='{i}'>{_escape_html(str(col))}<span class='sort-arrow'></span></th>"
     html += "</tr></thead><tbody>"
     for _, row in display_df.iterrows():
         html += "<tr>"
@@ -193,12 +201,75 @@ def df_to_html_table(df: pd.DataFrame, max_rows: int = 200) -> str:
             if pd.isna(val):
                 html += "<td class='null-val'>NULL</td>"
             else:
-                html += f"<td>{_escape(str(val))}</td>"
+                html += f"<td>{_escape_html(str(val))}</td>"
         html += "</tr>"
     html += "</tbody></table>"
     html += "<div class='table-pagination'></div>"
     html += "</div>"
     return html
+
+
+# ---------------------------------------------------------------------------
+# SQL execution with validation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SqlExecutionResult:
+    """Result of executing SQL with validation."""
+
+    df: pd.DataFrame | None = None
+    elapsed_ms: float = 0.0
+    error: str | None = None
+    validation_error: str | None = None
+
+
+async def execute_sql_with_validation(
+    sql: str,
+    run_sql: RunSql,
+    schema_map: dict[str, set[str]] | None = None,
+    dialect: str = "duckdb",
+) -> SqlExecutionResult:
+    """Execute SQL with optional schema validation.
+
+    Parameters
+    ----------
+    sql:
+        The SQL query to execute.
+    run_sql:
+        Async function that executes SQL and returns a DataFrame.
+    schema_map:
+        Optional mapping of table names to column names for validation.
+    dialect:
+        SQL dialect for validation and error hints.
+
+    Returns
+    -------
+    SqlExecutionResult with the DataFrame or error information.
+    """
+    # Validate SQL against schema if available
+    if schema_map:
+        vr = validate_sql(sql, schema_map, dialect=dialect)
+        if not vr.valid:
+            logger.warning(f"SQL validation failed: {vr.error_message}")
+            return SqlExecutionResult(
+                elapsed_ms=0.0,
+                validation_error=vr.error_message,
+            )
+
+    # Execute the query
+    t0 = time.perf_counter()
+    try:
+        df = await run_sql(sql)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return SqlExecutionResult(df=df, elapsed_ms=elapsed_ms)
+    except QueryError as e:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
+    except Exception as e:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.error(f"Unexpected SQL error:\n{traceback.format_exc()}")
+        return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -217,201 +288,223 @@ class ToolResult:
     plotly_spec: dict[str, Any] | None = None  # Resolved Plotly spec for export
 
 
+def _build_tool_meta(
+    tool: str,
+    sql: str,
+    execution_result: SqlExecutionResult,
+) -> dict[str, Any]:
+    """Build metadata dict for tool result."""
+    meta: dict[str, Any] = {
+        "tool": tool,
+        "sql": sql,
+        "execution_time_ms": round(execution_result.elapsed_ms, 1),
+        "row_count": None,
+        "column_count": None,
+        "error": execution_result.error or execution_result.validation_error,
+    }
+    if execution_result.df is not None:
+        meta["row_count"] = len(execution_result.df)
+        meta["column_count"] = len(execution_result.df.columns)
+    return meta
+
+
+def _log_query(
+    query_logger,
+    session_id: str,
+    user_question: str,
+    tool: str,
+    sql: str,
+    execution_result: SqlExecutionResult,
+) -> None:
+    """Log a query execution if logger is available."""
+    if not query_logger:
+        return
+    query_logger.log(
+        session_id=session_id,
+        user_question=user_question,
+        tool=tool,
+        sql=sql,
+        execution_time_ms=execution_result.elapsed_ms,
+        row_count=len(execution_result.df) if execution_result.df is not None else None,
+        column_count=len(execution_result.df.columns) if execution_result.df is not None else None,
+        error=execution_result.error or execution_result.validation_error,
+    )
+
+
+async def _execute_run_sql(
+    input_data: dict[str, Any],
+    run_sql: RunSql,
+    schema_map: dict[str, set[str]] | None,
+    dialect: str,
+    query_logger,
+    session_id: str,
+    user_question: str,
+) -> ToolResult:
+    """Execute the run_sql tool."""
+    sql = input_data.get("sql", "")
+
+    result = await execute_sql_with_validation(sql, run_sql, schema_map, dialect)
+    _log_query(query_logger, session_id, user_question, "run_sql", sql, result)
+    meta = _build_tool_meta("run_sql", sql, result)
+
+    # Handle validation error
+    if result.validation_error:
+        return ToolResult(
+            result_text=f"SQL validation error: {result.validation_error}\n"
+            "HINT: Check the schema and fix the table/column names.",
+            meta=meta,
+        )
+
+    # Handle execution error
+    if result.error:
+        hint = sql_error_hint(result.error, dialect=dialect)
+        return ToolResult(
+            result_text=f"SQL error: {result.error}{hint}",
+            result_html=f"<p class='sql-error'>SQL error: {_escape_html(result.error)}</p>",
+            meta=meta,
+        )
+
+    # Handle empty result
+    df = result.df
+    if df is None or df.empty:
+        return ToolResult(
+            result_text="Query executed successfully. No rows returned.",
+            meta=meta,
+            df=df,
+        )
+
+    # Build success response
+    csv = df.to_csv(index=False)
+    preview = csv if len(csv) <= 500 else csv[:500] + "\n..."
+    result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
+    result_html = df_to_html_table(df)
+
+    return ToolResult(
+        result_text=result_text,
+        result_html=result_html,
+        meta=meta,
+        df=df,
+    )
+
+
+async def _execute_visualize_data(
+    input_data: dict[str, Any],
+    run_sql: RunSql,
+    schema_map: dict[str, set[str]] | None,
+    dialect: str,
+    query_logger,
+    session_id: str,
+    user_question: str,
+) -> ToolResult:
+    """Execute the visualize_data tool."""
+    sql = input_data.get("sql", "")
+    title = input_data.get("title", "Chart")
+    plotly_spec = input_data.get("plotly_spec", {})
+
+    result = await execute_sql_with_validation(sql, run_sql, schema_map, dialect)
+    _log_query(query_logger, session_id, user_question, "visualize_data", sql, result)
+    meta = _build_tool_meta("visualize_data", sql, result)
+
+    # Handle validation error
+    if result.validation_error:
+        return ToolResult(
+            result_text=f"SQL validation error: {result.validation_error}\n"
+            "HINT: Check the schema and fix the table/column names.",
+            meta=meta,
+        )
+
+    # Handle execution error
+    if result.error:
+        hint = sql_error_hint(result.error, dialect=dialect)
+        return ToolResult(
+            result_text=f"Visualization error: {result.error}{hint}",
+            result_html=f"<p class='sql-error'>Visualization error: {_escape_html(result.error)}</p>",
+            meta=meta,
+        )
+
+    # Handle empty result
+    df = result.df
+    if df is None or df.empty:
+        return ToolResult(
+            result_text="Query returned no rows — nothing to visualize.",
+            meta=meta,
+            df=df,
+        )
+
+    # Build chart
+    try:
+        resolved = resolve_plotly_spec(plotly_spec, df)
+        layout = resolved.get("layout", {})
+        if "title" not in layout:
+            layout["title"] = title
+            resolved["layout"] = layout
+        chart_html = build_chart_html(resolved, title)
+        result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
+
+        return ToolResult(
+            result_text=result_text,
+            result_html=chart_html,
+            meta=meta,
+            df=df,
+            plotly_spec=resolved,
+        )
+    except Exception as e:
+        logger.error(f"Chart building error:\n{traceback.format_exc()}")
+        return ToolResult(
+            result_text=f"Chart building error: {e}",
+            result_html=f"<p class='sql-error'>Chart error: {_escape_html(str(e))}</p>",
+            meta=meta,
+            df=df,
+        )
+
+
 async def execute_tool(
     name: str,
     input_data: dict[str, Any],
     *,
-    run_sql,
+    run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
     query_logger=None,
     session_id: str = "",
     user_question: str = "",
 ) -> ToolResult:
-    """Execute a tool call and return structured results."""
-    if name == "run_sql":
-        sql = input_data.get("sql", "")
+    """Execute a tool call and return structured results.
 
-        if schema_map:
-            vr = validate_sql(sql, schema_map, dialect=dialect)
-            if not vr.valid:
-                logger.warning(f"SQL validation failed: {vr.error_message}")
-                meta = {
-                    "tool": name,
-                    "sql": sql,
-                    "execution_time_ms": 0,
-                    "row_count": None,
-                    "column_count": None,
-                    "error": vr.error_message,
-                }
-                return ToolResult(
-                    result_text=f"SQL validation error: {vr.error_message}\n"
-                    "HINT: Check the schema and fix the table/column names.",
-                    meta=meta,
-                )
+    Parameters
+    ----------
+    name:
+        Tool name ("run_sql" or "visualize_data").
+    input_data:
+        Tool input parameters.
+    run_sql:
+        Async function that executes SQL and returns a DataFrame.
+    schema_map:
+        Optional mapping of table names to column names for validation.
+    dialect:
+        SQL dialect for validation and error hints.
+    query_logger:
+        Optional query logger instance.
+    session_id:
+        Session ID for logging.
+    user_question:
+        User question for logging context.
 
-        t0 = time.perf_counter()
-        try:
-            df = await run_sql(sql)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if query_logger:
-                query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    row_count=len(df),
-                    column_count=len(df.columns),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": len(df),
-                "column_count": len(df.columns),
-                "error": None,
-            }
-            if df.empty:
-                meta["row_count"] = 0
-                return ToolResult(
-                    result_text="Query executed successfully. No rows returned.",
-                    meta=meta,
-                    df=df,
-                )
-            csv = df.to_csv(index=False)
-            preview = csv if len(csv) <= 500 else csv[:500] + "\n..."
-            result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
-            result_html = df_to_html_table(df)
-            return ToolResult(
-                result_text=result_text,
-                result_html=result_html,
-                meta=meta,
-                df=df,
+    Returns
+    -------
+    ToolResult with execution results and metadata.
+    """
+    match name:
+        case "run_sql":
+            return await _execute_run_sql(
+                input_data, run_sql, schema_map, dialect, query_logger, session_id, user_question
             )
-        except Exception as e:
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            error = f"SQL error: {e}"
-            logger.error(error)
-            if query_logger:
-                query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    error=str(e),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": None,
-                "column_count": None,
-                "error": str(e),
-            }
-            hint = sql_error_hint(str(e), dialect=dialect)
-            return ToolResult(
-                result_text=error + hint,
-                result_html=f"<p class='sql-error'>{error}</p>",
-                meta=meta,
+        case "visualize_data":
+            return await _execute_visualize_data(
+                input_data, run_sql, schema_map, dialect, query_logger, session_id, user_question
             )
-
-    elif name == "visualize_data":
-        sql = input_data.get("sql", "")
-        title = input_data.get("title", "Chart")
-        plotly_spec = input_data.get("plotly_spec", {})
-
-        if schema_map:
-            vr = validate_sql(sql, schema_map, dialect=dialect)
-            if not vr.valid:
-                logger.warning(f"SQL validation failed: {vr.error_message}")
-                meta = {
-                    "tool": name,
-                    "sql": sql,
-                    "execution_time_ms": 0,
-                    "row_count": None,
-                    "column_count": None,
-                    "error": vr.error_message,
-                }
-                return ToolResult(
-                    result_text=f"SQL validation error: {vr.error_message}\n"
-                    "HINT: Check the schema and fix the table/column names.",
-                    meta=meta,
-                )
-
-        t0 = time.perf_counter()
-        try:
-            df = await run_sql(sql)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            if query_logger:
-                query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    row_count=len(df),
-                    column_count=len(df.columns),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": len(df),
-                "column_count": len(df.columns),
-                "error": None,
-            }
-            if df.empty:
-                meta["row_count"] = 0
-                return ToolResult(
-                    result_text="Query returned no rows — nothing to visualize.",
-                    meta=meta,
-                    df=df,
-                )
-            resolved = resolve_plotly_spec(plotly_spec, df)
-            layout = resolved.get("layout", {})
-            if "title" not in layout:
-                layout["title"] = title
-                resolved["layout"] = layout
-            chart_html = _build_artifact_html(resolved, title)
-            result_text = f"Created chart: {title} ({len(df)} rows, {len(df.columns)} columns)."
-            return ToolResult(
-                result_text=result_text,
-                result_html=chart_html,
-                meta=meta,
-                df=df,
-                plotly_spec=resolved,
-            )
-        except Exception as e:
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            error = f"Visualization error: {e}"
-            logger.error(error)
-            if query_logger:
-                query_logger.log(
-                    session_id=session_id,
-                    user_question=user_question,
-                    tool=name,
-                    sql=sql,
-                    execution_time_ms=elapsed_ms,
-                    error=str(e),
-                )
-            meta = {
-                "tool": name,
-                "sql": sql,
-                "execution_time_ms": round(elapsed_ms, 1),
-                "row_count": None,
-                "column_count": None,
-                "error": str(e),
-            }
-            hint = sql_error_hint(str(e), dialect=dialect)
-            return ToolResult(
-                result_text=error + hint,
-                result_html=f"<p class='sql-error'>{error}</p>",
-                meta=meta,
-            )
-
-    return ToolResult(result_text=f"Unknown tool: {name}", meta={})
+        case _:
+            return ToolResult(result_text=f"Unknown tool: {name}", meta={})
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +530,7 @@ async def run_agent_loop(
     llm_client: LLMClient,
     model: str,
     system_prompt: str,
-    run_sql,
+    run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
     query_logger=None,
@@ -451,6 +544,37 @@ async def run_agent_loop(
     This is a non-streaming version suitable for CLI / headless use.
     The web app uses its own streaming variant but shares the same
     ``execute_tool`` function.
+
+    Parameters
+    ----------
+    question:
+        User's question to answer.
+    llm_client:
+        LLM client for making API calls.
+    model:
+        Model name to use.
+    system_prompt:
+        System prompt with schema context.
+    run_sql:
+        Async function that executes SQL.
+    schema_map:
+        Optional schema map for validation.
+    dialect:
+        SQL dialect.
+    query_logger:
+        Optional query logger.
+    session_id:
+        Session ID for logging.
+    messages:
+        Optional existing message history.
+    tools:
+        Optional tool definitions (defaults to WEB_TOOLS).
+    max_iterations:
+        Maximum number of LLM calls.
+
+    Returns
+    -------
+    AgentResult with final response and collected tool results.
     """
     if messages is None:
         messages = []

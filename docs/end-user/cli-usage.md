@@ -192,7 +192,7 @@ datasight export --list-sessions
 # Export a conversation to HTML
 datasight export a1b2c3d4 -o analysis.html
 
-# Exclude specific messages by index (0-based)
+# Exclude specific turns by index (0-based, each turn is a Q&A pair)
 datasight export e5f6g7h8 --exclude 0,3 -o wind-report.html
 ```
 

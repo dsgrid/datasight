@@ -163,9 +163,10 @@ Failed queries are highlighted with an orange border.
 ## Export a conversation
 
 Click the **export** button (download icon) in the header to enter export
-mode. Each message gets a checkbox — uncheck messages you want to exclude,
-then click **Export HTML**. The browser downloads a self-contained HTML page
-with all selected messages, SQL, tables, and interactive charts.
+mode. Each question gets a trash button — click it to exclude that entire
+Q&A turn (question, SQL, results, and answer) from the export. Then click
+**Export HTML**. The browser downloads a self-contained HTML page with all
+selected content, SQL, tables, and interactive charts.
 
 You can also export from the command line:
 
@@ -176,7 +177,7 @@ datasight export --list-sessions
 # Export a session
 datasight export <session-id> -o my-analysis.html
 
-# Exclude specific messages by index
+# Exclude specific turns by index (0-based, each turn is a Q&A pair)
 datasight export <session-id> --exclude 2,3
 ```
 

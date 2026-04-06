@@ -29,6 +29,7 @@ dependencies = [
     "loguru>=0.7,<1",
     "truststore>=0.10.4",
     "sqlglot>=26,<27",
+    "chevron>=0.14,<1",
 ]
 
 [project.optional-dependencies]

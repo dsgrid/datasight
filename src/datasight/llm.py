@@ -8,11 +8,14 @@ Provides a common async interface for interacting with different LLM providers
 from __future__ import annotations
 
 import json
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import anthropic
 from loguru import logger
+
+from datasight.exceptions import LLMConnectionError, LLMResponseError
 
 
 # ---------------------------------------------------------------------------
@@ -22,11 +25,15 @@ from loguru import logger
 
 @dataclass
 class TextBlock:
+    """A text content block from an LLM response."""
+
     text: str
 
 
 @dataclass
 class ToolUseBlock:
+    """A tool use request block from an LLM response."""
+
     id: str
     name: str
     input: dict[str, Any]
@@ -34,6 +41,8 @@ class ToolUseBlock:
 
 @dataclass
 class Usage:
+    """Token usage statistics from an LLM response."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     cache_creation_input_tokens: int = 0
@@ -42,6 +51,8 @@ class Usage:
 
 @dataclass
 class LLMResponse:
+    """Response from an LLM API call."""
+
     content: list[TextBlock | ToolUseBlock]
     stop_reason: str  # "end_turn" or "tool_use"
     usage: Usage = field(default_factory=Usage)
@@ -51,8 +62,18 @@ ContentBlock = TextBlock | ToolUseBlock
 
 
 def serialize_content(content: list[ContentBlock]) -> list[dict[str, Any]]:
-    """Serialize content blocks to Anthropic-style dicts for message history."""
-    serialized = []
+    """Serialize content blocks to Anthropic-style dicts for message history.
+
+    Parameters
+    ----------
+    content:
+        List of TextBlock or ToolUseBlock instances.
+
+    Returns
+    -------
+    List of serialized content block dictionaries.
+    """
+    serialized: list[dict[str, Any]] = []
     for block in content:
         if isinstance(block, TextBlock):
             serialized.append({"type": "text", "text": block.text})
@@ -79,7 +100,27 @@ class LLMClient(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
-    ) -> LLMResponse: ...
+    ) -> LLMResponse:
+        """Create a message with the LLM.
+
+        Parameters
+        ----------
+        model:
+            Model name to use.
+        system:
+            System prompt.
+        messages:
+            Conversation history.
+        tools:
+            Available tool definitions.
+        max_tokens:
+            Maximum tokens in response.
+
+        Returns
+        -------
+        LLMResponse with content blocks and usage statistics.
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -91,10 +132,22 @@ class AnthropicLLMClient:
     """LLM client backed by the Anthropic API."""
 
     def __init__(self, api_key: str, base_url: str | None = None):
+        """Initialize the Anthropic client.
+
+        Parameters
+        ----------
+        api_key:
+            Anthropic API key.
+        base_url:
+            Optional custom base URL for the API.
+        """
         kwargs: dict[str, Any] = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
-        self._client = anthropic.AsyncAnthropic(**kwargs)
+        try:
+            self._client = anthropic.AsyncAnthropic(**kwargs)
+        except anthropic.APIConnectionError as e:
+            raise LLMConnectionError(f"Failed to initialize Anthropic client: {e}") from e
 
     async def create_message(
         self,
@@ -105,20 +158,28 @@ class AnthropicLLMClient:
         tools: list[dict[str, Any]],
         max_tokens: int,
     ) -> LLMResponse:
-        response = await self._client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=0,
-            system=[
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=tools,
-            messages=messages,
-        )
+        """Create a message using the Anthropic API."""
+        try:
+            response = await self._client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                tools=tools,
+                messages=messages,
+            )
+        except anthropic.APIConnectionError as e:
+            logger.error(f"Anthropic connection error:\n{traceback.format_exc()}")
+            raise LLMConnectionError(f"Failed to connect to Anthropic API: {e}") from e
+        except anthropic.APIStatusError as e:
+            logger.error(f"Anthropic API error:\n{traceback.format_exc()}")
+            raise LLMResponseError(f"Anthropic API error: {e}") from e
 
         content: list[ContentBlock] = []
         for block in response.content:
@@ -151,7 +212,7 @@ class AnthropicLLMClient:
 
 def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Anthropic-style tool definitions to OpenAI function-calling format."""
-    result = []
+    result: list[dict[str, Any]] = []
     for tool in tools:
         result.append(
             {
@@ -196,8 +257,8 @@ def _convert_messages_to_openai(
 
         elif role == "assistant" and isinstance(content, list):
             # Assistant message with potential tool calls
-            text_parts = []
-            tool_calls = []
+            text_parts: list[str] = []
+            tool_calls: list[dict[str, Any]] = []
             for block in content:
                 if isinstance(block, dict):
                     if block.get("type") == "text":
@@ -230,14 +291,26 @@ class _OpenAICompatibleClient:
     """Base class for LLM clients using OpenAI-compatible APIs."""
 
     def __init__(self, base_url: str, api_key: str = "ollama"):
+        """Initialize the OpenAI-compatible client.
+
+        Parameters
+        ----------
+        base_url:
+            Base URL for the API.
+        api_key:
+            API key (defaults to "ollama" for local Ollama).
+        """
         try:
             from openai import AsyncOpenAI
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "The 'openai' package is required for this provider. "
                 "Install it with: pip install openai"
-            )
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+            ) from e
+        try:
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        except Exception as e:
+            raise LLMConnectionError(f"Failed to initialize OpenAI client: {e}") from e
 
     async def create_message(
         self,
@@ -248,16 +321,21 @@ class _OpenAICompatibleClient:
         tools: list[dict[str, Any]],
         max_tokens: int,
     ) -> LLMResponse:
+        """Create a message using the OpenAI-compatible API."""
         openai_messages = _convert_messages_to_openai(system, messages)
         openai_tools = _convert_tools_to_openai(tools)
 
-        response = await self._client.chat.completions.create(
-            model=model,
-            messages=openai_messages,
-            tools=openai_tools if openai_tools else None,
-            max_tokens=max_tokens,
-            temperature=0,
-        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=openai_messages,
+                tools=openai_tools if openai_tools else None,
+                max_tokens=max_tokens,
+                temperature=0,
+            )
+        except Exception as e:
+            logger.error(f"OpenAI-compatible API error:\n{traceback.format_exc()}")
+            raise LLMConnectionError(f"API request failed: {e}") from e
 
         choice = response.choices[0]
         content: list[ContentBlock] = []
@@ -270,6 +348,7 @@ class _OpenAICompatibleClient:
             try:
                 args = json.loads(tc.function.arguments)
             except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Failed to parse tool arguments: {tc.function.arguments}")
                 args = {}
             content.append(
                 ToolUseBlock(
@@ -291,6 +370,13 @@ class OllamaLLMClient(_OpenAICompatibleClient):
     """LLM client backed by Ollama's OpenAI-compatible API."""
 
     def __init__(self, base_url: str = "http://localhost:11434/v1"):
+        """Initialize the Ollama client.
+
+        Parameters
+        ----------
+        base_url:
+            Ollama API base URL.
+        """
         super().__init__(base_url=base_url, api_key="ollama")
 
 
@@ -309,6 +395,15 @@ class GitHubModelsLLMClient(_OpenAICompatibleClient):
         api_key: str,
         base_url: str = GITHUB_MODELS_BASE_URL,
     ):
+        """Initialize the GitHub Models client.
+
+        Parameters
+        ----------
+        api_key:
+            GitHub token for authentication.
+        base_url:
+            API base URL.
+        """
         super().__init__(base_url=base_url, api_key=api_key)
 
 
@@ -322,18 +417,42 @@ def create_llm_client(
     api_key: str = "",
     base_url: str | None = None,
 ) -> LLMClient:
-    """Create an LLM client for the given provider."""
-    if provider == "ollama":
-        url = base_url or "http://localhost:11434/v1"
-        logger.info(f"Using Ollama LLM backend: {url}")
-        return OllamaLLMClient(base_url=url)
-    elif provider == "github":
-        url = base_url or GITHUB_MODELS_BASE_URL
-        logger.info(f"Using GitHub Models LLM backend: {url}")
-        return GitHubModelsLLMClient(api_key=api_key, base_url=url)
-    else:
-        if base_url:
-            logger.info(f"Using Anthropic LLM backend: {base_url}")
-        else:
-            logger.info("Using Anthropic LLM backend")
-        return AnthropicLLMClient(api_key=api_key, base_url=base_url)
+    """Create an LLM client for the given provider.
+
+    Parameters
+    ----------
+    provider:
+        Provider name: "anthropic", "ollama", or "github".
+    api_key:
+        API key for the provider.
+    base_url:
+        Optional custom base URL.
+
+    Returns
+    -------
+    An LLM client instance.
+
+    Raises
+    ------
+    LLMConnectionError:
+        If client initialization fails.
+    ValueError:
+        If provider is not recognized.
+    """
+    match provider:
+        case "ollama":
+            url = base_url or "http://localhost:11434/v1"
+            logger.info(f"Using Ollama LLM backend: {url}")
+            return OllamaLLMClient(base_url=url)
+        case "github":
+            url = base_url or GITHUB_MODELS_BASE_URL
+            logger.info(f"Using GitHub Models LLM backend: {url}")
+            return GitHubModelsLLMClient(api_key=api_key, base_url=url)
+        case "anthropic":
+            if base_url:
+                logger.info(f"Using Anthropic LLM backend: {base_url}")
+            else:
+                logger.info("Using Anthropic LLM backend")
+            return AnthropicLLMClient(api_key=api_key, base_url=base_url)
+        case _:
+            raise ValueError(f"Unknown LLM provider: {provider}")
