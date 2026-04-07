@@ -1338,6 +1338,28 @@ a.btn-icon {
   fill: white;
 }
 
+#stop-btn {
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  width: 38px;
+  height: 38px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+#stop-btn:hover { background: #c82333; }
+
+#stop-btn svg {
+  width: 14px; height: 14px;
+  fill: white;
+}
+
 /* Right panel — last SQL */
 .right-panel {
   width: 340px;

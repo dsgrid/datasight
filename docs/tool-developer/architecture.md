@@ -61,20 +61,20 @@ flowchart TB
     RUNNER --> PG
     RUNNER --> FLIGHT
 
-    style WEB fill:#15a8a8,stroke:#023d60,color:#fff
-    style HTML fill:#15a8a8,stroke:#023d60,color:#fff
-    style LLM fill:#023d60,stroke:#023d60,color:#fff
-    style ANTH fill:#023d60,stroke:#023d60,color:#fff
-    style GH fill:#023d60,stroke:#023d60,color:#fff
-    style OLL fill:#023d60,stroke:#023d60,color:#fff
-    style SQL fill:#023d60,stroke:#023d60,color:#fff
-    style VIZ fill:#023d60,stroke:#023d60,color:#fff
-    style RUNNER fill:#bf1363,stroke:#023d60,color:#fff
-    style CHART fill:#bf1363,stroke:#023d60,color:#fff
-    style DUCK fill:#fe5d26,stroke:#023d60,color:#fff
-    style SQLITE fill:#fe5d26,stroke:#023d60,color:#fff
-    style PG fill:#fe5d26,stroke:#023d60,color:#fff
-    style FLIGHT fill:#fe5d26,stroke:#023d60,color:#fff
+    style WEB fill:#15a8a8,stroke:#023d60
+    style HTML fill:#15a8a8,stroke:#023d60
+    style LLM fill:#023d60,stroke:#023d60
+    style ANTH fill:#023d60,stroke:#023d60
+    style GH fill:#023d60,stroke:#023d60
+    style OLL fill:#023d60,stroke:#023d60
+    style SQL fill:#023d60,stroke:#023d60
+    style VIZ fill:#023d60,stroke:#023d60
+    style RUNNER fill:#bf1363,stroke:#023d60
+    style CHART fill:#bf1363,stroke:#023d60
+    style DUCK fill:#fe5d26,stroke:#023d60
+    style SQLITE fill:#fe5d26,stroke:#023d60
+    style PG fill:#fe5d26,stroke:#023d60
+    style FLIGHT fill:#fe5d26,stroke:#023d60
     style ui fill:#f0fafa,stroke:#15a8a8
     style agent fill:#f0f0fa,stroke:#023d60
     style db fill:#fff5f0,stroke:#fe5d26
@@ -165,11 +165,11 @@ flowchart LR
     C[queries.yaml<br>few-shot examples] --> D
     D --> E[LLM]
 
-    style A fill:#2e7ebb,stroke:#1a5c8a,color:#fff
-    style B fill:#8a7d55,stroke:#6b6040,color:#fff
-    style C fill:#8a7d55,stroke:#6b6040,color:#fff
-    style D fill:#15a8a8,stroke:#023d60,color:#fff
-    style E fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style A fill:#2e7ebb,stroke:#1a5c8a
+    style B fill:#8a7d55,stroke:#6b6040
+    style C fill:#8a7d55,stroke:#6b6040
+    style D fill:#15a8a8,stroke:#023d60
+    style E fill:#fe5d26,stroke:#c44a1e
 ```
 
 The schema is introspected once at startup. The description and example queries

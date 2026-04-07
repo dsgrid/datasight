@@ -21,10 +21,12 @@ let pinnedIdCounter = 0;
 let currentView = 'chat';
 let fullscreenCardId = null;
 let selectedCardIdx = -1;
+let currentAbortController = null;
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
+const stopBtn = document.getElementById('stop-btn');
 const welcomeEl = document.getElementById('welcome');
 const sidebar = document.getElementById('sidebar');
 
@@ -774,6 +776,10 @@ function renderQueryHistory() {
     const meta = document.createElement('span');
     meta.className = 'query-card-meta';
     const parts = [];
+    if (q.timestamp) {
+      const ts = new Date(q.timestamp);
+      parts.push(ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }
     if (q.execution_time_ms != null) parts.push(Math.round(q.execution_time_ms) + ' ms');
     if (q.row_count != null) parts.push(q.row_count + ' rows');
     if (q.error) parts.push('error');
@@ -1054,7 +1060,8 @@ async function summarizeDataset() {
   isStreaming = true;
   const btn = document.getElementById('summarize-btn');
   if (btn) btn.disabled = true;
-  sendBtn.disabled = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = '';
 
   // Add a "system" style intro message
   const introRow = document.createElement('div');
@@ -1065,12 +1072,15 @@ async function summarizeDataset() {
   introRow.appendChild(introBubble);
   messagesEl.appendChild(introRow);
 
+  currentAbortController = new window.AbortController();
   const typingEl = addTypingIndicator();
   let summaryText = '';
   let summaryBubble = null;
 
   try {
-    const resp = await fetch('/api/summarize');
+    const resp = await fetch('/api/summarize', {
+      signal: currentAbortController.signal,
+    });
     if (!resp.ok) throw new Error('Summarize API error: ' + resp.status);
 
     const reader = resp.body.getReader();
@@ -1122,14 +1132,21 @@ async function summarizeDataset() {
 
     if (!typingRemoved) typingEl.remove();
   } catch (err) {
-    console.error('Summarize error:', err);
-    if (document.contains(typingEl)) typingEl.remove();
-    addMessage('assistant', 'Failed to generate summary. Please try again.');
+    if (err.name === 'AbortError') {
+      if (document.contains(typingEl)) typingEl.remove();
+      addMessage('assistant', 'Summary generation stopped.');
+    } else {
+      console.error('Summarize error:', err);
+      if (document.contains(typingEl)) typingEl.remove();
+      addMessage('assistant', 'Failed to generate summary. Please try again.');
+    }
   }
 
   isStreaming = false;
+  currentAbortController = null;
   if (btn) btn.disabled = false;
-  sendBtn.disabled = false;
+  sendBtn.style.display = '';
+  stopBtn.style.display = 'none';
   inputEl.focus();
 }
 
@@ -1144,10 +1161,12 @@ async function sendMessage(text) {
   inputEl.style.height = 'auto';
 
   isStreaming = true;
-  sendBtn.disabled = true;
+  sendBtn.style.display = 'none';
+  stopBtn.style.display = '';
   currentAssistantText = '';
   currentAssistantBubble = null;
 
+  currentAbortController = new window.AbortController();
   const typingEl = addTypingIndicator();
 
   try {
@@ -1155,6 +1174,7 @@ async function sendMessage(text) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, session_id: sessionId }),
+      signal: currentAbortController.signal,
     });
 
     if (!resp.ok) throw new Error('Chat API error: ' + resp.status);
@@ -1194,16 +1214,29 @@ async function sendMessage(text) {
 
     if (!typingRemoved) typingEl.remove();
   } catch (err) {
-    console.error('Stream error:', err);
-    if (document.contains(typingEl)) typingEl.remove();
-    addMessage('assistant', 'Connection error. Please try again.');
+    if (err.name === 'AbortError') {
+      if (document.contains(typingEl)) typingEl.remove();
+      addMessage('assistant', 'Generation stopped.');
+    } else {
+      console.error('Stream error:', err);
+      if (document.contains(typingEl)) typingEl.remove();
+      addMessage('assistant', 'Connection error. Please try again.');
+    }
   }
 
   isStreaming = false;
-  sendBtn.disabled = false;
+  currentAbortController = null;
+  sendBtn.style.display = '';
+  stopBtn.style.display = 'none';
   currentAssistantBubble = null;
   inputEl.focus();
   loadConversations();
+}
+
+function stopGeneration() {
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
 }
 
 // ---------------------------------------------------------------------------

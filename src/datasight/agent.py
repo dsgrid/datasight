@@ -285,6 +285,8 @@ def _build_tool_meta(
     execution_result: SqlExecutionResult,
 ) -> dict[str, Any]:
     """Build metadata dict for tool result."""
+    from datetime import datetime, timezone
+
     meta: dict[str, Any] = {
         "tool": tool,
         "sql": sql,
@@ -292,6 +294,7 @@ def _build_tool_meta(
         "row_count": None,
         "column_count": None,
         "error": execution_result.error or execution_result.validation_error,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     if execution_result.df is not None:
         meta["row_count"] = len(execution_result.df)

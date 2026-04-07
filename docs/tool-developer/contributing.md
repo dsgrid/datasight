@@ -92,10 +92,10 @@ datasight verify -v
 
 ## Documentation
 
-Docs use MkDocs with the Material theme.
+Docs use Zensical (successor to MkDocs Material).
 
 ```bash
 pip install -e ".[dev]"
-mkdocs serve
+zensical serve
 # Open http://localhost:8000
 ```

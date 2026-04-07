@@ -116,6 +116,9 @@
       <form id="chat-form" onsubmit="return handleSubmit(event)">
         <div class="input-wrap">
           <textarea id="user-input" rows="1" placeholder="Ask about your data..." autofocus></textarea>
+          <button type="button" id="stop-btn" title="Stop" style="display:none;" onclick="stopGeneration()">
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
           <button type="submit" id="send-btn" title="Send">
             <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
