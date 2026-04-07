@@ -51,6 +51,12 @@ from datasight.recent_projects import (
     remove_recent_project,
     validate_project_dir,
 )
+from datasight.explore import (
+    add_files_to_connection,
+    create_ephemeral_session,
+    save_ephemeral_as_project,
+)
+from datasight.generate import build_generation_context, parse_generation_response
 from datasight.runner import SqlRunner
 from datasight.schema import format_schema_context, introspect_schema
 from datasight.settings import Settings, capture_original_env, restore_original_env
@@ -286,6 +292,9 @@ class AppState:
         self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._response_cache_max = 100
         self._max_history_pairs = 10
+        # Ephemeral explore session state
+        self.is_ephemeral: bool = False
+        self.ephemeral_tables_info: list[dict[str, Any]] = []
 
     def clear_project(self) -> None:
         """Clear project-specific state."""
@@ -310,6 +319,10 @@ class AppState:
         self.dashboard = None
         self.query_logger = None
         self._response_cache.clear()
+        # Reset ephemeral state
+        self.is_ephemeral = False
+        self.ephemeral_tables_info = []
+        self._ephemeral_messages = {}
 
     def rebuild_system_prompt(self) -> None:
         """Rebuild the system prompt after settings change."""
@@ -343,9 +356,17 @@ class AppState:
 
     def get_session_messages(self, session_id: str) -> list[dict[str, Any]]:
         """Get messages for a session."""
-        if self.conversations is None:
-            raise ConfigurationError("App not initialized")
-        return self.conversations.get(session_id)["messages"]
+        if self.conversations is not None:
+            return self.conversations.get(session_id)["messages"]
+        # Ephemeral session — use in-memory message list
+        if not hasattr(self, "_ephemeral_messages"):
+            self._ephemeral_messages: dict[str, list[dict[str, Any]]] = {}
+        return self._ephemeral_messages.setdefault(session_id, [])
+
+    def save_session(self, session_id: str) -> None:
+        """Save session data if conversations store is available (no-op for ephemeral)."""
+        if self.conversations is not None:
+            self.conversations.save(session_id)
 
     def trim_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep only recent messages to bound input token growth."""
@@ -622,19 +643,19 @@ async def generate_chat_response(
     state: AppState,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a chat message."""
-    if state.conversations is None or state.llm_client is None:
-        raise ConfigurationError("App not initialized")
+    if state.llm_client is None:
+        raise ConfigurationError("LLM not configured. Open Settings to add your API key.")
 
     messages = state.get_session_messages(session_id)
     messages.append({"role": "user", "content": message})
 
-    conv = state.conversations.get(session_id)
-    evt_log = conv["events"]
+    conv = state.conversations.get(session_id) if state.conversations else None
+    evt_log = conv["events"] if conv else []
     evt_log.append({"event": EventType.USER_MESSAGE, "data": {"text": message}})
 
-    if conv["title"] == "Untitled":
+    if conv and conv["title"] == "Untitled":
         conv["title"] = message[:80] + ("..." if len(message) > 80 else "")
-    state.conversations.save(session_id)
+    state.save_session(session_id)
 
     is_first_turn = len(messages) == 1
     max_iterations = 15
@@ -649,7 +670,7 @@ async def generate_chat_response(
                 yield f"event: {evt['event']}\ndata: {json.dumps(evt['data'])}\n\n"
             for msg in cached["messages"]:
                 messages.append(msg)
-            state.conversations.save(session_id)
+            state.save_session(session_id)
             yield "event: done\ndata: {}\n\n"
             if cached.get("suggestions"):
                 evt_log.append(
@@ -658,7 +679,7 @@ async def generate_chat_response(
                         "data": {"suggestions": cached["suggestions"]},
                     }
                 )
-                state.conversations.save(session_id)
+                state.save_session(session_id)
                 yield f"event: {EventType.SUGGESTIONS}\ndata: {json.dumps({'suggestions': cached['suggestions']})}\n\n"
             return
 
@@ -687,7 +708,7 @@ async def generate_chat_response(
                     "data": {"text": f"Error: {e}"},
                 }
             )
-            state.conversations.save(session_id)
+            state.save_session(session_id)
             yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
             yield "event: done\ndata: {}\n\n"
             return
@@ -699,7 +720,7 @@ async def generate_chat_response(
                     "data": {"text": f"Error: {e}"},
                 }
             )
-            state.conversations.save(session_id)
+            state.save_session(session_id)
             yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
             yield "event: done\ndata: {}\n\n"
             return
@@ -788,7 +809,7 @@ async def generate_chat_response(
                 if meta:
                     evt_log.append({"event": EventType.TOOL_DONE, "data": meta})
                     yield f"event: {EventType.TOOL_DONE}\ndata: {json.dumps(meta)}\n\n"
-                    state.conversations.save(session_id)
+                    state.save_session(session_id)
 
                 tool_results.append(
                     {
@@ -809,7 +830,7 @@ async def generate_chat_response(
 
         messages.append({"role": "assistant", "content": text})
         evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": text}})
-        state.conversations.save(session_id)
+        state.save_session(session_id)
 
         for i, word in enumerate(text.split(" ")):
             chunk = word if i == 0 else " " + word
@@ -841,14 +862,14 @@ async def generate_chat_response(
                     "data": {"suggestions": suggestions},
                 }
             )
-            state.conversations.save(session_id)
+            state.save_session(session_id)
             yield f"event: {EventType.SUGGESTIONS}\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
         return
 
     log_query_cost(state.model, api_calls, total_input_tokens, total_output_tokens)
     max_iter_text = "Reached maximum number of tool calls. Please try a simpler question."
     evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": max_iter_text}})
-    state.conversations.save(session_id)
+    state.save_session(session_id)
     yield f"event: token\ndata: {json.dumps({'text': max_iter_text})}\n\n"
     yield "event: done\ndata: {}\n\n"
 
@@ -976,12 +997,21 @@ Be concise and helpful. Use markdown formatting.
 @app.get("/api/project")
 async def get_current_project(state: AppState = Depends(get_state)):
     """Return current project info, or null if no project is loaded."""
+    if state.is_ephemeral:
+        return {
+            "loaded": True,
+            "path": None,
+            "name": "Quick Explore",
+            "is_ephemeral": True,
+            "tables": state.ephemeral_tables_info,
+        }
     if not state.project_loaded or state.project_dir is None:
-        return {"loaded": False, "path": None, "name": None}
+        return {"loaded": False, "path": None, "name": None, "is_ephemeral": False}
     return {
         "loaded": True,
         "path": state.project_dir,
         "name": get_project_name(state.project_dir),
+        "is_ephemeral": False,
     }
 
 
@@ -1038,6 +1068,383 @@ async def remove_project_from_recent(project_path: str):
         decoded_path = "/" + decoded_path
     remove_recent_project(decoded_path)
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Explore endpoints (quick file exploration without project setup)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/explore")
+async def explore_files(request: Request, state: AppState = Depends(get_state)):
+    """Create an ephemeral session from file paths.
+
+    Request body:
+        paths: list of file/directory paths to explore
+
+    Returns:
+        success: bool
+        tables: list of table info dicts (name, path, type)
+        error: optional error message
+    """
+    body = await request.json()
+    file_paths = body.get("paths", [])
+
+    if not file_paths:
+        return {"success": False, "error": "No file paths provided"}
+
+    try:
+        # Clear any existing project/session
+        state.clear_project()
+
+        # Restore original env to prevent leaking settings from previous projects
+        restore_original_env()
+
+        # Load settings from environment (for LLM config, app preferences)
+        settings = Settings.from_env(None)
+
+        # Try to initialize LLM client (not required for data loading)
+        init_llm_client(state)
+
+        # Apply app settings
+        state.confirm_sql = settings.app.confirm_sql
+        state.explain_sql = settings.app.explain_sql
+        state.clarify_sql = settings.app.clarify_sql
+        state._max_history_pairs = settings.app.max_history_pairs
+        state._response_cache_max = settings.app.response_cache_max
+
+        # Create ephemeral session
+        runner, tables_info = create_ephemeral_session(file_paths)
+        state.sql_runner = runner
+        state.is_ephemeral = True
+        state.ephemeral_tables_info = tables_info
+        state.sql_dialect = "duckdb"
+        state.project_loaded = True
+
+        # Introspect schema
+        tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+        state.schema_info = [
+            {
+                "name": t.name,
+                "row_count": t.row_count,
+                "columns": [
+                    {"name": c.name, "dtype": c.dtype, "nullable": c.nullable} for c in t.columns
+                ],
+            }
+            for t in tables
+        ]
+
+        # Build schema context (no user description for ephemeral sessions)
+        state.schema_text = format_schema_context(tables, user_description=None)
+        state.schema_map = build_schema_map(state.schema_info)
+
+        # Build system prompt (use rebuild to get mode="web")
+        state.rebuild_system_prompt()
+
+        # Set up ephemeral storage (in-memory only)
+        state.conversations = None
+        state.bookmarks = None
+        state.dashboard = None
+        state.query_logger = QueryLogger(path="", enabled=False)
+        state.example_queries_list = []
+
+        logger.info(f"Created ephemeral session with {len(tables_info)} tables")
+
+        return {
+            "success": True,
+            "tables": tables_info,
+            "schema_info": state.schema_info,
+            "llm_connected": state.llm_client is not None and _has_llm_api_key(),
+        }
+
+    except ConfigurationError as e:
+        logger.error(f"Failed to create ephemeral session: {e}")
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Unexpected error creating ephemeral session:\n{traceback.format_exc()}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/explore/check-project-path")
+async def check_project_path(request: Request):
+    """Check if a project directory already contains project files.
+
+    Returns which files already exist so the frontend can prompt to overwrite.
+    """
+    body = await request.json()
+    project_path = body.get("path", "")
+    if not project_path:
+        return {"exists": False, "files": []}
+
+    dest = Path(project_path).resolve()
+    existing: list[str] = []
+    for name in (".env", "schema_description.md", "queries.yaml", "data.duckdb"):
+        if (dest / name).exists():
+            existing.append(name)
+
+    return {"exists": bool(existing), "files": existing}
+
+
+@app.post("/api/explore/save-project")
+async def save_explore_as_project(request: Request, state: AppState = Depends(get_state)):
+    """Save the current ephemeral session as a project.
+
+    Request body:
+        path: directory path to create the project in
+        name: optional project name
+
+    Returns:
+        success: bool
+        path: path to the created project
+        error: optional error message
+    """
+    if not state.is_ephemeral:
+        return {"success": False, "error": "No ephemeral session active"}
+
+    body = await request.json()
+    project_path = body.get("path", "")
+    project_name = body.get("name")
+
+    if not project_path:
+        return {"success": False, "error": "Project path is required"}
+
+    try:
+        # Save as project
+        saved_path = save_ephemeral_as_project(
+            runner=state.sql_runner,
+            tables_info=state.ephemeral_tables_info,
+            project_dir=project_path,
+            project_name=project_name,
+        )
+
+        # Load the newly created project
+        result = await load_project(saved_path, state)
+
+        return {"success": True, "path": saved_path, **result}
+
+    except Exception as e:
+        logger.error(f"Failed to save project:\n{traceback.format_exc()}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/add-files")
+async def add_files_endpoint(request: Request, state: AppState = Depends(get_state)):
+    """Add files/tables to the current session (explore or project).
+
+    Request body:
+        paths: list of file/directory paths to add
+
+    Returns:
+        success: bool
+        added: list of table info dicts for newly created views
+        error: optional error message
+    """
+    body = await request.json()
+    file_paths = body.get("paths", [])
+
+    if not file_paths:
+        return {"success": False, "error": "No file paths provided"}
+    if state.sql_runner is None:
+        return {"success": False, "error": "No data loaded"}
+
+    try:
+        # Get existing table names to avoid collisions
+        existing_names = {t["name"] for t in state.schema_info}
+
+        # Get a writable DuckDB connection
+        import duckdb as _duckdb
+
+        from datasight.runner import DuckDBRunner, EphemeralDuckDBRunner
+
+        runner = state.sql_runner
+        conn: _duckdb.DuckDBPyConnection | None = None
+        reopen_readonly = False
+
+        if isinstance(runner, EphemeralDuckDBRunner) and runner._conn is not None:
+            conn = runner._conn
+        elif isinstance(runner, DuckDBRunner):
+            db_path = runner._database_path
+            runner.close()
+            conn = _duckdb.connect(db_path, read_only=False)
+            reopen_readonly = True
+
+        if conn is None:
+            return {"success": False, "error": "Cannot add files to this database type"}
+
+        new_tables = add_files_to_connection(conn, file_paths, existing_names)
+
+        # For project mode DuckDB, close writable connection and reopen read-only
+        if reopen_readonly and isinstance(runner, DuckDBRunner):
+            conn.close()
+            runner._connect()
+
+        # Update state
+        if state.is_ephemeral:
+            state.ephemeral_tables_info.extend(new_tables)
+
+        # Re-introspect schema
+        tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+        state.schema_info = [
+            {
+                "name": t.name,
+                "row_count": t.row_count,
+                "columns": [
+                    {"name": c.name, "dtype": c.dtype, "nullable": c.nullable} for c in t.columns
+                ],
+            }
+            for t in tables
+        ]
+        state.schema_text = format_schema_context(
+            tables,
+            user_description=None if state.is_ephemeral else _load_user_description(state),
+        )
+        state.schema_map = build_schema_map(state.schema_info)
+        state.rebuild_system_prompt()
+
+        logger.info(f"Added {len(new_tables)} table(s) to session")
+
+        return {
+            "success": True,
+            "added": new_tables,
+            "schema_info": state.schema_info,
+        }
+
+    except ConfigurationError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to add files:\n{traceback.format_exc()}")
+        return {"success": False, "error": str(e)}
+
+
+def _load_user_description(state: AppState) -> str | None:
+    """Load user schema description for the current project."""
+    if state.project_dir:
+        return load_schema_description(
+            os.environ.get("SCHEMA_DESCRIPTION_PATH"), state.project_dir
+        )
+    return None
+
+
+@app.get("/api/explore/status")
+async def explore_status(state: AppState = Depends(get_state)):
+    """Get the current explore session status."""
+    return {
+        "is_ephemeral": state.is_ephemeral,
+        "tables": state.ephemeral_tables_info if state.is_ephemeral else [],
+        "project_loaded": state.project_loaded,
+        "project_dir": state.project_dir,
+    }
+
+
+@app.post("/api/explore/generate-project")
+async def generate_project(request: Request, state: AppState = Depends(get_state)):
+    """Save ephemeral session as a project with LLM-generated documentation.
+
+    Streams SSE events for progress, token output, and completion.
+
+    Request body:
+        path: project directory
+        name: optional project name
+        description: optional user description of the data
+    """
+    body = await request.json()
+    project_path = body.get("path", "")
+    project_name = body.get("name")
+    user_description = body.get("description")
+
+    async def generate():
+        try:
+            # Validate state
+            if state.sql_runner is None:
+                yield _sse("error", {"error": "No data loaded"})
+                return
+            if not project_path:
+                yield _sse("error", {"error": "Project path is required"})
+                return
+            if state.llm_client is None:
+                yield _sse("error", {"error": "LLM client not configured. Check API key."})
+                return
+
+            # Step 1: Save base project structure
+            yield _sse("status", {"step": "saving", "message": "Creating project structure..."})
+            saved_path = save_ephemeral_as_project(
+                runner=state.sql_runner,
+                tables_info=state.ephemeral_tables_info,
+                project_dir=project_path,
+                project_name=project_name,
+            )
+
+            # Step 2: Sample enum columns
+            yield _sse("status", {"step": "sampling", "message": "Sampling column values..."})
+            tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+            samples_text = await _generate_sample_enum_columns(state.sql_runner.run_sql, tables)
+
+            # Step 3: Call LLM to generate documentation
+            yield _sse("status", {"step": "generating", "message": "Generating documentation..."})
+            system_prompt, user_msg = build_generation_context(
+                tables, state.sql_dialect, samples_text, user_description=user_description
+            )
+
+            response = await state.llm_client.create_message(
+                model=state.model,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_msg}],
+                tools=[],
+                max_tokens=4096,
+            )
+
+            # Stream tokens from response
+            full_text = ""
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    full_text += block.text
+                    for word_i, word in enumerate(block.text.split(" ")):
+                        chunk = word if word_i == 0 else " " + word
+                        yield _sse("token", {"text": chunk})
+
+            # Step 4: Parse and write files
+            yield _sse("status", {"step": "writing", "message": "Writing project files..."})
+            schema_content, queries_content = parse_generation_response(full_text)
+
+            project_dir_path = Path(saved_path)
+            files_written = []
+            if schema_content:
+                (project_dir_path / "schema_description.md").write_text(schema_content + "\n")
+                files_written.append("schema_description.md")
+            if queries_content:
+                (project_dir_path / "queries.yaml").write_text(queries_content + "\n")
+                files_written.append("queries.yaml")
+
+            # Step 5: Load the project
+            yield _sse("status", {"step": "loading", "message": "Loading project..."})
+            await load_project(saved_path, state)
+
+            yield _sse(
+                "done",
+                {
+                    "path": saved_path,
+                    "name": project_name or Path(saved_path).name,
+                    "files": files_written,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Generate project error:\n{traceback.format_exc()}")
+            yield _sse("error", {"error": str(e)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+def _sse(event: str, data: dict) -> str:
+    """Format a single SSE event."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _generate_sample_enum_columns(run_sql, tables):
+    """Wrapper to import and call sample_enum_columns."""
+    from datasight.generate import sample_enum_columns
+
+    return await sample_enum_columns(run_sql, tables)
 
 
 @app.get("/api/preview/{table_name}")
@@ -1143,7 +1550,7 @@ async def get_query_log(n: int = 50, state: AppState = Depends(get_state)):
 async def list_bookmarks(state: AppState = Depends(get_state)):
     """Return all bookmarked queries."""
     if state.bookmarks is None:
-        raise ConfigurationError("App not initialized")
+        return {"bookmarks": []}
     return {"bookmarks": state.bookmarks.list_all()}
 
 
@@ -1151,7 +1558,7 @@ async def list_bookmarks(state: AppState = Depends(get_state)):
 async def add_bookmark(request: Request, state: AppState = Depends(get_state)):
     """Add a bookmarked query."""
     if state.bookmarks is None:
-        raise ConfigurationError("App not initialized")
+        return {"ok": False, "error": "No project loaded"}
     body = await request.json()
     sql = body.get("sql", "").strip()
     tool = body.get("tool", "run_sql")
@@ -1166,7 +1573,7 @@ async def add_bookmark(request: Request, state: AppState = Depends(get_state)):
 async def remove_bookmark(bookmark_id: int, state: AppState = Depends(get_state)):
     """Remove a bookmarked query."""
     if state.bookmarks is None:
-        raise ConfigurationError("App not initialized")
+        return {"ok": True}
     state.bookmarks.delete(bookmark_id)
     return {"ok": True}
 
@@ -1175,7 +1582,7 @@ async def remove_bookmark(bookmark_id: int, state: AppState = Depends(get_state)
 async def clear_bookmarks(state: AppState = Depends(get_state)):
     """Remove all bookmarks."""
     if state.bookmarks is None:
-        raise ConfigurationError("App not initialized")
+        return {"ok": True}
     state.bookmarks.clear()
     return {"ok": True}
 
@@ -1192,7 +1599,7 @@ async def get_dashboard(state: AppState = Depends(get_state)):
 async def save_dashboard(request: Request, state: AppState = Depends(get_state)):
     """Save dashboard items and layout settings."""
     if state.dashboard is None:
-        raise ConfigurationError("App not initialized")
+        return {"items": [], "columns": 0}
     body = await request.json()
     items = body.get("items", [])
     columns = body.get("columns")
@@ -1204,7 +1611,7 @@ async def save_dashboard(request: Request, state: AppState = Depends(get_state))
 async def clear_dashboard(state: AppState = Depends(get_state)):
     """Clear all dashboard items."""
     if state.dashboard is None:
-        raise ConfigurationError("App not initialized")
+        return {"ok": True}
     state.dashboard.clear()
     return {"ok": True}
 
@@ -1249,6 +1656,101 @@ async def update_settings(request: Request, state: AppState = Depends(get_state)
     }
 
 
+def _has_llm_api_key() -> bool:
+    """Check if a real API key is configured for the current provider."""
+    provider = os.environ.get("LLM_PROVIDER", "anthropic")
+    if provider == "ollama":
+        return True
+    if provider == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    if provider == "github":
+        return bool(os.environ.get("GITHUB_TOKEN", "").strip())
+    return False
+
+
+@app.get("/api/settings/llm")
+async def get_llm_settings(state: AppState = Depends(get_state)):
+    """Return current LLM configuration (never exposes actual API key)."""
+    provider = os.environ.get("LLM_PROVIDER", "anthropic")
+
+    has_key = _has_llm_api_key()
+    connected = state.llm_client is not None and has_key
+
+    return {
+        "provider": provider,
+        "model": state.model or "",
+        "base_url": os.environ.get(
+            {
+                "ollama": "OLLAMA_BASE_URL",
+                "github": "GITHUB_MODELS_BASE_URL",
+            }.get(provider, "ANTHROPIC_BASE_URL"),
+            "",
+        )
+        or "",
+        "has_api_key": has_key,
+        "connected": connected,
+    }
+
+
+@app.post("/api/settings/llm")
+async def update_llm_settings(request: Request, state: AppState = Depends(get_state)):
+    """Update LLM configuration and reinitialize the client.
+
+    Request body:
+        provider: "anthropic" | "ollama" | "github"
+        api_key: API key (optional for ollama)
+        model: model name
+        base_url: custom base URL (optional)
+    """
+    body = await request.json()
+    provider = body.get("provider", "anthropic")
+    api_key = body.get("api_key", "")
+    model = body.get("model", "")
+    base_url = body.get("base_url", "")
+
+    # Set environment variables for the chosen provider
+    os.environ["LLM_PROVIDER"] = provider
+
+    if provider == "anthropic":
+        if api_key:
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+        if model:
+            os.environ["ANTHROPIC_MODEL"] = model
+        if base_url:
+            os.environ["ANTHROPIC_BASE_URL"] = base_url
+    elif provider == "ollama":
+        if model:
+            os.environ["OLLAMA_MODEL"] = model
+        if base_url:
+            os.environ["OLLAMA_BASE_URL"] = base_url
+    elif provider == "github":
+        if api_key:
+            os.environ["GITHUB_TOKEN"] = api_key
+        if model:
+            os.environ["GITHUB_MODELS_MODEL"] = model
+        if base_url:
+            os.environ["GITHUB_MODELS_BASE_URL"] = base_url
+
+    # Reinitialize LLM client
+    init_llm_client(state)
+
+    # Rebuild system prompt if schema is loaded
+    if state.schema_text:
+        state.rebuild_system_prompt()
+
+    connected = state.llm_client is not None
+    if connected:
+        logger.info(f"LLM configured: provider={provider}, model={state.model}")
+    else:
+        logger.warning(f"LLM configuration failed for provider={provider}")
+
+    return {
+        "connected": connected,
+        "provider": provider,
+        "model": state.model or "",
+    }
+
+
 @app.post("/api/sql-confirm/{request_id}")
 async def sql_confirm(request_id: str, request: Request, state: AppState = Depends(get_state)):
     """Approve, edit, or reject a pending SQL confirmation."""
@@ -1271,7 +1773,7 @@ async def sql_confirm(request_id: str, request: Request, state: AppState = Depen
 async def clear_conversations(state: AppState = Depends(get_state)):
     """Remove all conversations."""
     if state.conversations is None:
-        raise ConfigurationError("App not initialized")
+        return {"ok": True}
     state.conversations.clear_all()
     return {"ok": True}
 
@@ -1280,7 +1782,7 @@ async def clear_conversations(state: AppState = Depends(get_state)):
 async def list_conversations(state: AppState = Depends(get_state)):
     """Return a list of all conversations with titles."""
     if state.conversations is None:
-        raise ConfigurationError("App not initialized")
+        return {"conversations": []}
     return {"conversations": list(reversed(state.conversations.list_all()))}
 
 
@@ -1288,7 +1790,7 @@ async def list_conversations(state: AppState = Depends(get_state)):
 async def get_conversation(session_id: str, state: AppState = Depends(get_state)):
     """Return the event log for a conversation (for replay)."""
     if state.conversations is None:
-        raise ConfigurationError("App not initialized")
+        return {"events": [], "title": "Untitled"}
     data = state.conversations.get(session_id)
     return {"events": data["events"], "title": data.get("title", "Untitled")}
 
@@ -1326,7 +1828,7 @@ async def clear_session(request: Request, state: AppState = Depends(get_state)):
     body = await request.json()
     session_id = body.get("session_id", "default")
     if state.conversations is None:
-        raise ConfigurationError("App not initialized")
+        return {"ok": True}
     state.conversations.delete(session_id)
     return {"ok": True}
 
@@ -1337,7 +1839,7 @@ async def export_session(session_id: str, request: Request, state: AppState = De
     from datasight.export import export_session_html
 
     if state.conversations is None:
-        raise ConfigurationError("App not initialized")
+        return HTMLResponse(content="<p>No conversation data available.</p>", status_code=200)
     body = await request.json()
     exclude = body.get("exclude_indices", [])
     exclude_set = set(exclude) if exclude else None

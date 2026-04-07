@@ -6,7 +6,7 @@ you find the right documentation and get the most out of the tool.
 ```mermaid
 flowchart LR
     TD[Tool developer] -->|builds| DS[datasight]
-    DD[Dataset developer] -->|configures| PROJ[Project]
+    DD[Project developer] -->|configures| PROJ[Project]
     EU[End user] -->|explores| WEB[Web UI]
     DS --> PROJ
     PROJ --> WEB
@@ -33,17 +33,17 @@ End users need to know:
 - How to review SQL with approval and explanation modes
 
 An end user should never need to understand the system prompt, schema
-introspection, or verification pipeline. The dataset developer has already
+introspection, or verification pipeline. The project developer has already
 configured those.
 
-## Dataset developer
+## Project developer
 
-The dataset developer creates a datasight project for a team. They connect
+The project developer creates a datasight project for a team. They connect
 a database, write a schema description to give the AI domain context, curate
 example queries that teach the AI correct SQL patterns, and run verification
 to ensure the AI produces reliable results.
 
-Dataset developers need to know:
+Project developers need to know:
 
 - How to initialize a project and configure the database connection
 - How to write effective schema descriptions and example queries
@@ -51,7 +51,7 @@ Dataset developers need to know:
 - How to write deterministic questions that minimize ambiguity
 - How to deploy for end users (configuration, remote databases)
 
-The dataset developer is the quality gate. When an end user gets a wrong
+The project developer is the quality gate. When an end user gets a wrong
 answer, it's usually because the schema description was incomplete, an
 example query was missing, or the question was ambiguous. The verification
 system helps catch these issues before end users encounter them.

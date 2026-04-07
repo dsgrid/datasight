@@ -1,15 +1,12 @@
-# Quickstart
+# Project setup guide
 
-This tutorial walks you through setting up datasight with your own database.
+This guide walks you through creating a datasight project for your database.
 
 ## Prerequisites
 
-- Python 3.10+
-- A database: DuckDB file, SQLite file, or PostgreSQL server
-- **One of the following LLM backends:**
-  - An Anthropic API key ([get one here](https://console.anthropic.com/)), **or**
-  - A GitHub Copilot subscription (uses [GitHub Models](https://github.com/marketplace/models)), **or**
-  - [Ollama](https://ollama.com/) installed locally (free, no API key needed)
+- Python 3.13+
+- A database: DuckDB file, SQLite file, PostgreSQL server, or CSV/Parquet files
+- An LLM provider: Anthropic API key, GitHub Copilot subscription, or Ollama (free, local)
 
 ## Install datasight
 
@@ -17,24 +14,8 @@ This tutorial walks you through setting up datasight with your own database.
 pip install git+https://github.com/dsgrid/datasight.git
 ```
 
-To use GitHub Models or Ollama as the LLM backend, install with the optional
-dependency:
-
-```bash
-# GitHub Models (Copilot subscription)
-pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"
-
-# Ollama (local)
-pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"
-```
-
-Or install from source:
-
-```bash
-git clone https://github.com/dsgrid/datasight.git
-cd datasight
-pip install -e ".[github]"  # or ".[ollama]"
-```
+All database backends (DuckDB, SQLite, PostgreSQL) and LLM providers
+(Anthropic, GitHub Models, Ollama) are included.
 
 ## Create a project
 
@@ -101,7 +82,7 @@ DB_PATH=./my_database.duckdb
 DB_MODE=sqlite
 DB_PATH=./my_database.sqlite
 
-# PostgreSQL (install with: pip install "datasight[postgres]")
+# PostgreSQL
 DB_MODE=postgres
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
@@ -141,10 +122,10 @@ You can also write these files by hand, or refine the generated versions.
 
 Edit `schema_description.md` to explain your data — domain concepts, column
 meanings, code lookups, and query tips. The AI uses this context to write
-better SQL. See [Write a schema description](../dataset-developer/schema-description.md) for guidance.
+better SQL. See [Write a schema description](../project-developer/schema-description.md) for guidance.
 
 Edit `queries.yaml` with example questions and their correct SQL. See
-[Create example queries](../dataset-developer/example-queries.md) for guidance.
+[Create example queries](../project-developer/example-queries.md) for guidance.
 
 ## Run
 

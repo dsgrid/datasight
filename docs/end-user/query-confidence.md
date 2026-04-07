@@ -65,7 +65,7 @@ following in mind:
 
 Enable **SQL approval mode** and **SQL explanations** (described above) to
 review every query before it runs. For high-stakes analyses, use the
-[query verification](../dataset-developer/verification.md) workflow to
+[query verification](../project-developer/verification.md) workflow to
 validate results against known expected outputs.
 
 ## Tips for getting consistent results

@@ -1,11 +1,25 @@
 # Query CSV and Parquet files directly
 
 DuckDB can query CSV and Parquet files using SQL — without importing or
-copying any data. You create lightweight **views** that point at your
-files, and datasight treats them like regular database tables.
+copying any data. datasight creates lightweight **views** that point at your
+files and treats them like regular database tables.
 
-This means you can explore flat files with natural language immediately,
-with no ETL step and no data duplication.
+## Quick explore (no setup)
+
+The fastest way to query files is the **Explore Files** feature on the
+landing page. Run `datasight run`, enter a file or directory path, and click
+**Explore**. datasight creates views automatically and you can start asking
+questions immediately.
+
+You can add more files at any time from the sidebar. When you're ready to
+save your work, click **Save** in the header to create a project.
+
+See [Getting started](../end-user/getting-started.md) for a walkthrough.
+
+## Manual setup
+
+For full control over view definitions, create a DuckDB file and define
+views yourself.
 
 ## How it works
 
@@ -90,6 +104,42 @@ SELECT * FROM read_parquet('data/generation/**/*.parquet', hive_partitioning=tru
 ```
 
 This avoids scanning partitions that a query doesn't need.
+
+### Remote files on S3
+
+DuckDB can read Parquet files directly from S3 (and S3-compatible stores
+like GCS and MinIO) — no download step required. This is especially
+powerful for large datasets that you don't want to copy locally.
+
+```sql
+-- Public bucket (no credentials needed)
+CREATE VIEW measurements AS
+SELECT * FROM read_parquet('s3://my-bucket/data/measurements.parquet');
+
+-- Hive-partitioned dataset on S3
+CREATE VIEW generation AS
+SELECT * FROM read_parquet('s3://my-bucket/data/generation/**/*.parquet', hive_partitioning=true);
+```
+
+For private buckets, configure credentials before creating views:
+
+```sql
+-- Set S3 credentials
+SET s3_region = 'us-west-2';
+SET s3_access_key_id = 'AKIA...';
+SET s3_secret_access_key = '...';
+
+-- Or use environment-based credentials (IAM roles, SSO, etc.)
+CALL load_aws_credentials();
+
+CREATE VIEW private_data AS
+SELECT * FROM read_parquet('s3://private-bucket/data/*.parquet');
+```
+
+DuckDB handles predicate pushdown and column pruning over HTTP range
+requests, so only the data needed by each query is transferred. See the
+[DuckDB S3 documentation](https://duckdb.org/docs/extensions/httpfs/s3api)
+for all configuration options.
 
 ## Point datasight at the database
 

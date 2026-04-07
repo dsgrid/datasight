@@ -95,6 +95,59 @@ class DuckDBRunner:
         return await asyncio.to_thread(self._execute, sql)
 
 
+class EphemeralDuckDBRunner:
+    """Execute SQL against an in-memory DuckDB connection.
+
+    Used for ephemeral "explore" sessions where users want to quickly
+    analyze CSV/Parquet files without setting up a project.
+    """
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection):
+        """Initialize with an existing DuckDB connection.
+
+        Parameters
+        ----------
+        conn:
+            An existing DuckDB connection (typically in-memory).
+        """
+        self._conn = conn
+
+    def close(self) -> None:
+        """Close the database connection."""
+        if self._conn:
+            try:
+                self._conn.close()
+            except duckdb.Error:
+                pass
+            self._conn = None
+
+    def __enter__(self) -> "EphemeralDuckDBRunner":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "EphemeralDuckDBRunner":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def _execute(self, sql: str) -> pd.DataFrame:
+        """Execute SQL synchronously."""
+        if self._conn is None:
+            raise ConnectionError("EphemeralDuckDBRunner is closed")
+        try:
+            return self._conn.execute(sql).fetchdf()
+        except duckdb.Error as e:
+            logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
+            raise QueryError(str(e)) from e
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        """Execute SQL asynchronously."""
+        return await asyncio.to_thread(self._execute, sql)
+
+
 class SQLiteRunner:
     """Execute SQL against a local SQLite file."""
 
@@ -168,19 +221,11 @@ class PostgresRunner:
         url: str = "",
         sslmode: str = "prefer",
     ):
+        import psycopg
+
         self._conn = None
-        self._psycopg = None  # Store module reference for exception handling
+        self._psycopg = psycopg
         self._connection_info = f"{host}:{port}/{dbname}" if not url else "via URL"
-
-        try:
-            import psycopg  # ty: ignore[unresolved-import]
-
-            self._psycopg = psycopg
-        except ImportError as e:
-            raise ImportError(
-                "The 'psycopg' package is required for PostgreSQL support. "
-                "Install it with: pip install 'datasight[postgres]'"
-            ) from e
 
         try:
             if url:
@@ -226,14 +271,14 @@ class PostgresRunner:
         if self._conn is None:
             raise ConnectionError("PostgresRunner is closed")
         try:
-            cursor = self._conn.execute(sql)
+            cursor = self._conn.execute(sql)  # ty: ignore[no-matching-overload]
             rows = cursor.fetchall()
             if not rows:
                 cols = [desc[0] for desc in cursor.description] if cursor.description else []
                 return pd.DataFrame(columns=cols)
             cols = [desc[0] for desc in cursor.description]
             return pd.DataFrame(rows, columns=cols)
-        except self._psycopg.Error as e:  # ty: ignore[unresolved-attribute]
+        except self._psycopg.Error as e:
             logger.debug(f"PostgreSQL query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
 

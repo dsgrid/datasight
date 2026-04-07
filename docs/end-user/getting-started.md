@@ -8,67 +8,49 @@ Install datasight and start exploring data in under five minutes.
 pip install git+https://github.com/dsgrid/datasight.git
 ```
 
-Optional extras for different databases and LLM providers:
+This includes support for DuckDB, SQLite, PostgreSQL, Anthropic, GitHub
+Models, and Ollama — no extras needed.
+
+!!! note "PNG chart export"
+    The `datasight ask --chart-format png` CLI command requires an additional
+    package: `pip install 'datasight[export]'`. The web UI uses interactive
+    HTML charts and does not need this.
+
+## Explore your files
+
+The fastest way to get started — no project setup required:
 
 ```bash
-# PostgreSQL support
-pip install "datasight[postgres] @ git+https://github.com/dsgrid/datasight.git"
-
-# GitHub Models (included with Copilot subscriptions)
-pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"
-
-# Ollama (free, local models)
-pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"
-
-# PNG chart export (for datasight ask --chart-format png)
-pip install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"
+datasight run
 ```
 
-SQLite support is built in (no extra install needed).
+Open <http://localhost:8084>. The landing page shows two options:
 
-## Set up your API key
+1. **Configure your LLM** — if you haven't set environment variables, enter
+   your provider and API key. (If you exported `ANTHROPIC_API_KEY` or similar
+   in your shell, this step is skipped automatically.)
 
-datasight needs an LLM to translate your questions into SQL. Choose one:
+2. **Explore Files** — enter the path to a CSV, Parquet, or DuckDB file
+   (or a directory of Parquet files) and click **Explore**.
 
-**Option A — Anthropic (recommended)**
+datasight creates an in-memory database, introspects the schema, and drops
+you into the chat UI. Start asking questions immediately.
 
-1. Create an account at [console.anthropic.com](https://console.anthropic.com/)
-2. Go to **API Keys** and create a new key
-3. Add it to the `.env` file in your project directory:
+!!! tip "Adding more files"
+    Use the input at the top of the sidebar (below **Tables**) to add more
+    files to your session at any time.
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-...
-```
+### Save as a project
 
-**Option B — GitHub Models (uses your Copilot subscription)**
+Once you're comfortable with your data, click **Save** in the header to
+persist your session as a project. datasight will:
 
-No per-token billing — uses your existing GitHub Copilot subscription. Get your
-token from [github.com/settings/tokens](https://github.com/settings/tokens) or
-run `gh auth token` if you use the GitHub CLI.
-
-```bash
-LLM_PROVIDER=github
-GITHUB_TOKEN=ghp_...
-GITHUB_MODELS_MODEL=gpt-4o
-```
-
-**Option C — Ollama (free, runs locally)**
-
-No API key needed. Install [Ollama](https://ollama.com/), pull a model with
-tool-calling support, and configure `.env`:
-
-```bash
-ollama pull qwen3.5:35b-a3b
-```
-
-```bash
-LLM_PROVIDER=ollama
-OLLAMA_MODEL=qwen3.5:35b-a3b
-```
+- Create a project directory with a DuckDB database (views pointing to your
+  original files — no data copying)
+- Auto-generate `schema_description.md` and `queries.yaml` using the LLM
+- Load the project so future sessions remember your schema context
 
 ## Try the demo
-
-The fastest way to see datasight in action:
 
 ```bash
 datasight demo ./my-project
@@ -83,7 +65,7 @@ EIA energy data.
 
 ## Use your own database
 
-If you have a DuckDB database file ready:
+If you have a DuckDB or SQLite database and want a curated project:
 
 ```bash
 datasight init ./my-project
@@ -95,4 +77,4 @@ datasight run
 
 `datasight generate` connects to your database and uses the LLM to draft
 `schema_description.md` and `queries.yaml` so you don't have to write them
-from scratch. See [Quickstart](quickstart.md) for a full walkthrough.
+from scratch. See the [Project setup guide](quickstart.md) for a full walkthrough.

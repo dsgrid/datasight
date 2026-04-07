@@ -43,8 +43,6 @@ in the project directory. CLI flags override `.env` values.
 
 #### PostgreSQL settings (when `DB_MODE=postgres`)
 
-Install with: `pip install "datasight[postgres]"`
-
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `POSTGRES_URL` | — | Connection string (takes precedence over individual fields). Example: `postgresql://user:pass@host:5432/dbname` |
@@ -87,8 +85,8 @@ A datasight project directory contains:
 | File | Required | Description |
 |------|----------|-------------|
 | `.env` | Yes | API key and connection settings |
-| `schema_description.md` | No | Domain context for the AI ([guide](../dataset-developer/schema-description.md)). Always a local file, even when using Flight SQL. |
-| `queries.yaml` | No | Example question/SQL pairs ([guide](../dataset-developer/example-queries.md)). Always a local file, even when using Flight SQL. |
+| `schema_description.md` | No | Domain context for the AI ([guide](../project-developer/schema-description.md)). Always a local file, even when using Flight SQL. |
+| `queries.yaml` | No | Example question/SQL pairs ([guide](../project-developer/example-queries.md)). Always a local file, even when using Flight SQL. |
 | `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../end-user/query-log.md)) |
 | `.datasight/` | No | Auto-created directory for app state (see below) |
 

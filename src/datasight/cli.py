@@ -226,8 +226,11 @@ def generate(project_dir, model, overwrite, table, verbose):
     click.echo()
 
     async def _run():
-        from datasight.prompts import DESCRIBE_SYSTEM_PROMPT, DESCRIBE_USER_MESSAGE
-        from datasight.schema import format_schema_context, introspect_schema
+        from datasight.generate import (
+            build_generation_context,
+            sample_enum_columns,
+        )
+        from datasight.schema import introspect_schema
 
         llm_client = create_llm_client(
             provider=settings.llm.provider,
@@ -248,86 +251,37 @@ def generate(project_dir, model, overwrite, table, verbose):
                 click.echo(f"Error: No matching tables found for: {', '.join(table)}", err=True)
                 sys.exit(1)
 
-        schema_text = format_schema_context(tables)
         click.echo(f"  Found {len(tables)} tables")
 
         # Sample low-cardinality string columns for enum/code detection
         click.echo("Sampling code/enum columns...")
-        samples_text = await _sample_enum_columns(sql_runner.run_sql, tables)
+        samples_text = await sample_enum_columns(sql_runner.run_sql, tables)
 
-        schema_and_samples = schema_text
-        if samples_text:
-            schema_and_samples += "\n\n## Sampled Column Values\n\n" + samples_text
-
-        schema_and_samples += f"\n\nSQL dialect: {sql_dialect}\n"
-
-        # Call LLM
+        # Build LLM prompt and call
         click.echo("Generating documentation (this may take a moment)...")
-        user_msg = DESCRIBE_USER_MESSAGE.format(schema_and_samples=schema_and_samples)
+        system_prompt, user_msg = build_generation_context(tables, sql_dialect, samples_text)
+
+        from datasight.llm import TextBlock
+
         response = await llm_client.create_message(
             model=resolved_model,
-            system=DESCRIBE_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_msg}],
             tools=[],
             max_tokens=4096,
         )
 
-        # Extract text from response
-        from datasight.llm import TextBlock
-
         parts = [block.text for block in response.content if isinstance(block, TextBlock)]
         return "".join(parts)
-
-    async def _sample_enum_columns(run_sql, tables):
-        """Sample distinct values from low-cardinality string columns."""
-        from datasight.schema import _validate_identifier
-
-        lines = []
-        string_types = {"VARCHAR", "TEXT", "CHAR", "STRING", "NVARCHAR", "BPCHAR", "NAME"}
-        for table in tables:
-            table_name = _validate_identifier(table.name)
-            for col in table.columns:
-                base_type = col.dtype.upper().split("(")[0].strip()
-                if base_type not in string_types:
-                    continue
-                col_name = _validate_identifier(col.name)
-                try:
-                    count_result = await run_sql(
-                        f"SELECT COUNT(DISTINCT {col_name}) AS n FROM {table_name}"
-                    )
-                    n_distinct = count_result[0]["n"] if count_result else 0
-                    if n_distinct < 1 or n_distinct > 50:
-                        continue
-                    sample_result = await run_sql(
-                        f"SELECT DISTINCT {col_name} AS val FROM {table_name} "
-                        f"WHERE {col_name} IS NOT NULL ORDER BY {col_name} LIMIT 20"
-                    )
-                    values = [str(row["val"]) for row in sample_result if row.get("val")]
-                    if values:
-                        lines.append(
-                            f"**{table.name}.{col.name}** ({n_distinct} distinct): "
-                            f"{', '.join(values)}"
-                        )
-                except Exception:
-                    continue
-        return "\n".join(lines)
 
     text = asyncio.run(_run())
 
     # Parse response into two files
-    schema_content = None
-    queries_content = None
+    from datasight.generate import parse_generation_response
 
-    if "--- schema_description.md ---" in text and "--- queries.yaml ---" in text:
-        parts = text.split("--- schema_description.md ---", 1)
-        rest = parts[1]
-        schema_queries = rest.split("--- queries.yaml ---", 1)
-        schema_content = schema_queries[0].strip()
-        queries_content = schema_queries[1].strip()
-    else:
-        click.echo("Warning: Could not parse LLM response into separate files.", err=True)
-        click.echo("Writing raw response to schema_description.md", err=True)
-        schema_content = text.strip()
+    schema_content, queries_content = parse_generation_response(text)
+    if schema_content is None:
+        click.echo("Warning: Could not parse LLM response.", err=True)
 
     # Write files
     written = []

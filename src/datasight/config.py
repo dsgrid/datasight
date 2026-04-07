@@ -186,7 +186,11 @@ def load_example_queries(path: str | None, project_dir: str) -> list[dict[str, A
         logger.warning(f"Example queries file not found: {path}")
         return []
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse {path}: {e}")
+            return []
     if not isinstance(data, list):
         logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
         return []

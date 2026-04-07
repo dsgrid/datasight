@@ -69,19 +69,19 @@ nav:
   - End user:
       - Getting started: end-user/getting-started.md
       - Try the demo dataset: end-user/demo-dataset.md
-      - Quickstart: end-user/quickstart.md
+      - Project setup guide: end-user/quickstart.md
       - Use the web UI: end-user/web-ui.md
       - Use the CLI: end-user/cli-usage.md
       - Create visualizations: end-user/visualizations.md
       - Query confidence features: end-user/query-confidence.md
       - Log and review SQL queries: end-user/query-log.md
       - Connect to a remote HPC: end-user/remote-hpc.md
-  - Dataset developer:
-      - Database connections: dataset-developer/database-connections.md
-      - Query CSV and Parquet files: dataset-developer/querying-files.md
-      - Write a schema description: dataset-developer/schema-description.md
-      - Create example queries: dataset-developer/example-queries.md
-      - Verify queries across models: dataset-developer/verification.md
+  - Project developer:
+      - Database connections: project-developer/database-connections.md
+      - Query CSV and Parquet files: project-developer/querying-files.md
+      - Write a schema description: project-developer/schema-description.md
+      - Create example queries: project-developer/example-queries.md
+      - Verify queries across models: project-developer/verification.md
   - Tool developer:
       - Architecture: tool-developer/architecture.md
       - Contributing: tool-developer/contributing.md

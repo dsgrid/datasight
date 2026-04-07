@@ -8,7 +8,7 @@ each one and how to configure the connection.
 | | DuckDB | SQLite | PostgreSQL | Flight SQL |
 |---|---|---|---|---|
 | **Best for** | Local analytics on Parquet/CSV files | Existing SQLite databases from other apps | Production databases, multi-user access | Remote HPC or distributed query engines |
-| **Install** | Built in | Built in | `pip install "datasight[postgres]"` | Built in |
+| **Install** | Built in | Built in | Built in | Built in |
 | **DB_MODE** | `duckdb` | `sqlite` | `postgres` | `flightsql` |
 | **Connection** | Local file path | Local file path | Host/port or connection string | gRPC URI |
 | **Concurrent users** | Single process | Single process | Multi-user | Multi-user |
@@ -97,12 +97,6 @@ DB_PATH=./my_database.sqlite
     helps the AI write correct date queries for SQLite.
 
 ## PostgreSQL
-
-Install the PostgreSQL extra:
-
-```bash
-pip install "datasight[postgres] @ git+https://github.com/dsgrid/datasight.git"
-```
 
 ### Connect with individual fields
 

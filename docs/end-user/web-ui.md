@@ -4,14 +4,64 @@ The datasight web UI provides a chat-based interface for exploring your data.
 Beyond asking questions, the UI has features for organizing results, tracking
 queries, and navigating your database schema.
 
+## Landing page
+
+When you open datasight with no project loaded, you see a landing page with
+up to three sections:
+
+### LLM configuration
+
+Shown only if no LLM provider is detected from environment variables. Select
+a provider (Anthropic, Ollama, or GitHub Models), enter your API key and
+model, and click **Connect**. This section disappears once connected.
+
+You can also configure the LLM from the **Settings** panel (gear icon in the
+header) at any time. Settings configured via environment variables
+(`ANTHROPIC_API_KEY`, etc.) are detected automatically.
+
+### Explore Files
+
+Enter the path to a data file or directory:
+
+- **Single file** — `.csv`, `.parquet`, or `.duckdb`
+- **Parquet directory** — a folder containing `*.parquet` files (hive-partitioned datasets)
+- **DuckDB database** — opens directly with all its tables
+
+Click **Explore** to load the data instantly. No project setup, no
+configuration files — just your data and the chat interface.
+
+### Open Project
+
+Shows your recent projects (click to open) and a path input for opening a
+project directory manually. A project directory must contain
+`schema_description.md`.
+
+## Explore mode
+
+After exploring files, the header shows an **Explore** indicator with a table
+count and a **Save** button.
+
+### Adding files
+
+Use the input at the top of the sidebar (below the **Tables** header) to add
+more files to your session. This works in both explore mode and project mode.
+
+### Saving as a project
+
+Click **Save** in the header to persist your session. Enter a directory path
+and optional name. If an LLM is configured, datasight automatically generates
+`schema_description.md` and `queries.yaml` in the background. You can also
+provide a description of your data to improve the generated documentation.
+
+After saving, the indicator switches to **Project** mode and future sessions
+can reload the project from the landing page.
+
 ## Switch between projects
 
-datasight can work with multiple project directories. Click the **datasight**
-logo or the switch icon in the header to open the project panel.
+Click the **datasight** logo or the switch icon in the header to open the
+project switcher panel. The panel shows:
 
-The panel shows:
-
-- **Current project** — the active project name and path
+- **Quick Explore** — enter a file path to start a new explore session
 - **Recent projects** — previously opened projects (click to switch)
 - **Open project** — enter a path to open a new project
 
@@ -39,13 +89,6 @@ When you switch projects, datasight:
     key, the project's `.env` must provide one.
     
     **Database settings** always come from the project's `.env`.
-
-### Starting without a project
-
-You can run `datasight run` from any directory — no project is required at
-startup. The UI will show the project panel so you can select one. This is
-useful when you work with multiple projects and don't want to `cd` between
-them.
 
 ## Explore the sidebar
 

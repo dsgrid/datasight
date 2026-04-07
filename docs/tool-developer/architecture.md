@@ -14,10 +14,9 @@ abstraction (defined in `datasight.llm`). The backend is selected via the
   the cloud API. Requires an `ANTHROPIC_API_KEY`.
 - **`github`** — uses [GitHub Models](https://github.com/marketplace/models)
   via the OpenAI-compatible API. Included with GitHub Copilot subscriptions (no
-  per-token billing). Requires a `GITHUB_TOKEN`. Install with
-  `pip install "datasight[github] @ git+https://github.com/dsgrid/datasight.git"`.
+  per-token billing). Requires a `GITHUB_TOKEN`.
 - **`ollama`** — uses Ollama's OpenAI-compatible API to run models locally. No
-  API key required. Install with `pip install "datasight[ollama] @ git+https://github.com/dsgrid/datasight.git"`.
+  API key required.
 
 All backends support the same tool-calling interface (`run_sql` and
 `visualize_data`), so the rest of the application is provider-agnostic.

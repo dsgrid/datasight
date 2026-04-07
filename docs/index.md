@@ -6,15 +6,19 @@ hide:
 
 # datasight
 
-**AI-powered database exploration with natural language.** Connect an AI agent to
-your database (DuckDB, PostgreSQL, SQLite, or Flight SQL) and explore data
-through a web UI or CLI — ask questions in plain English, get SQL queries,
-interactive charts, and tabular results.
+**AI-powered database exploration with natural language.** Point datasight at
+your CSV, Parquet, or DuckDB files and start asking questions — no setup
+required. Or create a curated project with schema descriptions and example
+queries for your team.
 
 ```bash
 pip install git+https://github.com/dsgrid/datasight.git
 
-# Try with the built-in EIA energy demo dataset
+# Explore files instantly — no project setup needed
+datasight run
+# Open http://localhost:8084, enter a file path, and start asking questions
+
+# Or try the built-in EIA energy demo dataset
 datasight demo ./my-project
 cd my-project
 # Edit .env with your API key (see Getting Started)
@@ -38,14 +42,14 @@ overview.
 
     [:octicons-arrow-right-24: Getting started](end-user/getting-started.md)
 
--   :material-database-cog:{ .lg .middle } **Dataset developer**
+-   :material-database-cog:{ .lg .middle } **Project developer**
 
     ---
 
     Set up a datasight project for your team. Connect a database, write schema
     descriptions, curate example queries, and verify results across models.
 
-    [:octicons-arrow-right-24: Schema description](dataset-developer/schema-description.md)
+    [:octicons-arrow-right-24: Schema description](project-developer/schema-description.md)
 
 -   :material-code-braces:{ .lg .middle } **Tool developer**
 
