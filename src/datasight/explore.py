@@ -469,7 +469,7 @@ DB_PATH={db_path_str}
 # Uncomment and set your API key:
 # ANTHROPIC_API_KEY=your-key-here
 """
-    (dest / ".env").write_text(env_content)
+    (dest / ".env").write_text(env_content, encoding="utf-8")
 
     # Create schema_description.md
     table_list = "\n".join(
@@ -491,7 +491,7 @@ Add a description of your dataset here. Include:
 - Any important relationships between tables
 - Domain-specific terminology
 """
-    (dest / "schema_description.md").write_text(schema_content)
+    (dest / "schema_description.md").write_text(schema_content, encoding="utf-8")
 
     logger.info(f"Saved project to {dest}")
     return str(dest)

@@ -146,7 +146,7 @@ def project_dir(tmp_path, test_duckdb_path):
         f"DB_MODE=duckdb\n"
         f"DB_PATH={test_duckdb_path}\n"
     )
-    (tmp_path / ".env").write_text(env_content)
-    (tmp_path / "schema_description.md").write_text(SCHEMA_DESCRIPTION)
-    (tmp_path / "queries.yaml").write_text(EXAMPLE_QUERIES_YAML)
+    (tmp_path / ".env").write_text(env_content, encoding="utf-8")
+    (tmp_path / "schema_description.md").write_text(SCHEMA_DESCRIPTION, encoding="utf-8")
+    (tmp_path / "queries.yaml").write_text(EXAMPLE_QUERIES_YAML, encoding="utf-8")
     return str(tmp_path)

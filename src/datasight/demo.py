@@ -309,11 +309,11 @@ def download_demo_dataset(
 def write_demo_project_files(dest_dir: Path) -> None:
     """Write schema_description.md, queries.yaml, and .env for the demo."""
     schema_path = dest_dir / "schema_description.md"
-    schema_path.write_text(SCHEMA_DESCRIPTION)
+    schema_path.write_text(SCHEMA_DESCRIPTION, encoding="utf-8")
     logger.info(f"  Created {schema_path.name}")
 
     queries_path = dest_dir / "queries.yaml"
-    queries_path.write_text(EXAMPLE_QUERIES)
+    queries_path.write_text(EXAMPLE_QUERIES, encoding="utf-8")
     logger.info(f"  Created {queries_path.name}")
 
     env_path = dest_dir / ".env"
@@ -322,14 +322,15 @@ def write_demo_project_files(dest_dir: Path) -> None:
         env_path.write_text(
             "# datasight demo project\n"
             "ANTHROPIC_API_KEY=your-api-key-here\n"
-            "DB_MODE=duckdb\n" + db_path_line
+            "DB_MODE=duckdb\n" + db_path_line,
+            encoding="utf-8",
         )
         logger.info(f"  Created {env_path.name}")
     else:
         # Existing .env — ensure DB_PATH is set for the demo database
-        content = env_path.read_text()
+        content = env_path.read_text(encoding="utf-8")
         if "DB_PATH" not in content:
-            with open(env_path, "a") as f:
+            with open(env_path, "a", encoding="utf-8") as f:
                 f.write(f"\n# Added by datasight demo\nDB_MODE=duckdb\n{db_path_line}")
             logger.info(f"  Updated {env_path.name} — added DB_PATH")
         else:

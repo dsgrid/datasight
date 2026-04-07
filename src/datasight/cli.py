@@ -286,11 +286,11 @@ def generate(project_dir, model, overwrite, table, verbose):
     # Write files
     written = []
     if schema_content:
-        schema_path.write_text(schema_content + "\n")
+        schema_path.write_text(schema_content + "\n", encoding="utf-8")
         written.append("schema_description.md")
 
     if queries_content:
-        queries_path.write_text(queries_content + "\n")
+        queries_path.write_text(queries_content + "\n", encoding="utf-8")
         written.append("queries.yaml")
 
     click.echo()
@@ -756,14 +756,14 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
             if output_format == "csv":
                 csv_output = tr.df.to_csv(index=False)
                 if output_path and not chart_format:
-                    Path(output_path).write_text(csv_output)
+                    Path(output_path).write_text(csv_output, encoding="utf-8")
                     click.echo(f"Data saved to {output_path}")
                 else:
                     click.echo(csv_output)
             elif output_format == "json":
                 json_output = tr.df.to_json(orient="records", indent=2)
                 if output_path and not chart_format:
-                    Path(output_path).write_text(json_output)
+                    Path(output_path).write_text(json_output, encoding="utf-8")
                     click.echo(f"Data saved to {output_path}")
                 else:
                     click.echo(json_output)
@@ -783,13 +783,15 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
         # Handle chart export
         if tr.plotly_spec and chart_format and output_path:
             if chart_format == "json":
-                Path(output_path).write_text(json_mod.dumps(tr.plotly_spec, indent=2))
+                Path(output_path).write_text(
+                    json_mod.dumps(tr.plotly_spec, indent=2), encoding="utf-8"
+                )
                 click.echo(f"Plotly spec saved to {output_path}")
             elif chart_format == "html":
                 from datasight.chart import _build_artifact_html
 
                 html = _build_artifact_html(tr.plotly_spec, tr.meta.get("title", "Chart"))
-                Path(output_path).write_text(html)
+                Path(output_path).write_text(html, encoding="utf-8")
                 click.echo(f"Chart HTML saved to {output_path}")
             elif chart_format == "png":
                 try:
@@ -853,7 +855,7 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
         sessions = []
         for f in sorted(conv_dir.glob("*.json")):
             try:
-                data = json_mod.loads(f.read_text())
+                data = json_mod.loads(f.read_text(encoding="utf-8"))
                 events = data.get("events", [])
                 msg_count = sum(1 for e in events if e.get("event") == "user_message")
                 if msg_count == 0:
@@ -891,7 +893,7 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
         click.echo("Use 'datasight export --list-sessions' to see available sessions.", err=True)
         sys.exit(1)
 
-    data = json_mod.loads(session_path.read_text())
+    data = json_mod.loads(session_path.read_text(encoding="utf-8"))
     events = data.get("events", [])
     title = data.get("title", "datasight session")
 
@@ -915,7 +917,7 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
         safe_id = session_id[:20]
         output_path = f"{safe_id}.html"
 
-    Path(output_path).write_text(html)
+    Path(output_path).write_text(html, encoding="utf-8")
     click.echo(f"Session exported to {output_path}")
 
 

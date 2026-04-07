@@ -102,7 +102,7 @@ def test_remove_recent_project(mock_recent_projects_file, tmp_path):
 
 def test_validate_project_dir_valid(tmp_path):
     """Test validation of a valid project directory."""
-    (tmp_path / "schema_description.md").write_text("# Schema")
+    (tmp_path / "schema_description.md").write_text("# Schema", encoding="utf-8")
 
     is_valid, error = validate_project_dir(str(tmp_path))
 
@@ -129,7 +129,7 @@ def test_validate_project_dir_not_exists():
 def test_validate_project_dir_is_file(tmp_path):
     """Test validation fails when path is a file, not a directory."""
     file_path = tmp_path / "some_file.txt"
-    file_path.write_text("content")
+    file_path.write_text("content", encoding="utf-8")
 
     is_valid, error = validate_project_dir(str(file_path))
 
@@ -147,7 +147,7 @@ def test_get_project_name():
 def test_load_recent_projects_handles_corrupt_json(mock_recent_projects_file):
     """Test that corrupt JSON files are handled gracefully."""
     mock_recent_projects_file.parent.mkdir(parents=True, exist_ok=True)
-    mock_recent_projects_file.write_text("not valid json {{{")
+    mock_recent_projects_file.write_text("not valid json {{{", encoding="utf-8")
 
     assert load_recent_projects() == []
 
@@ -155,6 +155,6 @@ def test_load_recent_projects_handles_corrupt_json(mock_recent_projects_file):
 def test_load_recent_projects_handles_wrong_type(mock_recent_projects_file):
     """Test that wrong data type is handled gracefully."""
     mock_recent_projects_file.parent.mkdir(parents=True, exist_ok=True)
-    mock_recent_projects_file.write_text(json.dumps({"not": "a list"}))
+    mock_recent_projects_file.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
 
     assert load_recent_projects() == []

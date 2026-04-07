@@ -18,7 +18,7 @@ class TestDetectFileType:
     def test_csv_file(self, tmp_path):
         """Detect CSV file."""
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text("a,b,c\n1,2,3\n")
+        csv_file.write_text("a,b,c\n1,2,3\n", encoding="utf-8")
         assert detect_file_type(str(csv_file)) == "csv"
 
     def test_parquet_file(self, tmp_path):
@@ -53,8 +53,8 @@ class TestDetectFileType:
         """Detect directory with CSV files."""
         csv_dir = tmp_path / "csvs"
         csv_dir.mkdir()
-        (csv_dir / "file1.csv").write_text("a,b\n1,2\n")
-        (csv_dir / "file2.csv").write_text("a,b\n3,4\n")
+        (csv_dir / "file1.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        (csv_dir / "file2.csv").write_text("a,b\n3,4\n", encoding="utf-8")
 
         assert detect_file_type(str(csv_dir)) == "csv_dir"
 
@@ -87,7 +87,7 @@ class TestDetectFileType:
     def test_unknown_extension(self, tmp_path):
         """Return None for unknown file types."""
         txt_file = tmp_path / "data.txt"
-        txt_file.write_text("hello")
+        txt_file.write_text("hello", encoding="utf-8")
         assert detect_file_type(str(txt_file)) is None
 
     def test_empty_directory(self, tmp_path):
@@ -171,7 +171,7 @@ class TestCreateEphemeralSession:
     def test_single_csv(self, tmp_path):
         """Create session from single CSV file."""
         csv_file = tmp_path / "sales.csv"
-        csv_file.write_text("product,quantity\nwidget,10\ngadget,5\n")
+        csv_file.write_text("product,quantity\nwidget,10\ngadget,5\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(csv_file)])
 
@@ -191,9 +191,9 @@ class TestCreateEphemeralSession:
     def test_multiple_files(self, tmp_path):
         """Create session from multiple files."""
         csv1 = tmp_path / "orders.csv"
-        csv1.write_text("id,amount\n1,100\n2,200\n")
+        csv1.write_text("id,amount\n1,100\n2,200\n", encoding="utf-8")
         csv2 = tmp_path / "customers.csv"
-        csv2.write_text("id,name\n1,Alice\n2,Bob\n")
+        csv2.write_text("id,name\n1,Alice\n2,Bob\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(csv1), str(csv2)])
 
@@ -210,8 +210,8 @@ class TestCreateEphemeralSession:
         dir2 = tmp_path / "dir2"
         dir2.mkdir()
 
-        (dir1 / "data.csv").write_text("a\n1\n")
-        (dir2 / "data.csv").write_text("b\n2\n")
+        (dir1 / "data.csv").write_text("a\n1\n", encoding="utf-8")
+        (dir2 / "data.csv").write_text("b\n2\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(dir1 / "data.csv"), str(dir2 / "data.csv")])
 
@@ -283,7 +283,7 @@ class TestCreateEphemeralSession:
         conn.close()
 
         csv_file = tmp_path / "sales.csv"
-        csv_file.write_text("product_id,amount\n1,100\n")
+        csv_file.write_text("product_id,amount\n1,100\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(db_file), str(csv_file)])
 
@@ -316,7 +316,7 @@ class TestCreateEphemeralSession:
     def test_skips_invalid_files(self, tmp_path):
         """Skip invalid files but continue with valid ones."""
         csv_file = tmp_path / "valid.csv"
-        csv_file.write_text("x\n1\n")
+        csv_file.write_text("x\n1\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session(["/nonexistent/file.csv", str(csv_file)])
 
@@ -334,7 +334,7 @@ class TestSaveEphemeralAsProject:
         # Create ephemeral session
         csv_file = tmp_path / "source" / "data.csv"
         csv_file.parent.mkdir()
-        csv_file.write_text("value\n42\n")
+        csv_file.write_text("value\n42\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(csv_file)])
 
@@ -399,7 +399,7 @@ class TestSaveEphemeralAsProject:
     def test_save_with_default_name(self, tmp_path):
         """Use directory name as project name when not specified."""
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text("x\n1\n")
+        csv_file.write_text("x\n1\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(csv_file)])
 
@@ -414,7 +414,7 @@ class TestSaveEphemeralAsProject:
     def test_creates_parent_directories(self, tmp_path):
         """Create parent directories if they don't exist."""
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text("x\n1\n")
+        csv_file.write_text("x\n1\n", encoding="utf-8")
 
         runner, tables = create_ephemeral_session([str(csv_file)])
 

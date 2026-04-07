@@ -45,7 +45,7 @@ class QueryLogger:
             "error": error,
         }
         try:
-            with open(self.path, "a") as f:
+            with open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
         except OSError as e:
             logger.error(f"Failed to write query log: {e}")
@@ -54,7 +54,7 @@ class QueryLogger:
         """Return the last *n* log entries."""
         if not self.path.exists():
             return []
-        lines = self.path.read_text().splitlines()
+        lines = self.path.read_text(encoding="utf-8").splitlines()
         recent = lines[-n:] if len(lines) > n else lines
         entries = []
         for line in recent:

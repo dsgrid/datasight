@@ -124,7 +124,7 @@ class ConversationStore:
     def _load_all(self) -> None:
         for f in self._dir.glob("*.json"):
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 self._cache[f.stem] = data
             except (json.JSONDecodeError, OSError):
                 continue
@@ -142,7 +142,7 @@ class ConversationStore:
         data = self._cache.get(session_id)
         if not data:
             return
-        self._path(session_id).write_text(json.dumps(data))
+        self._path(session_id).write_text(json.dumps(data), encoding="utf-8")
 
     def delete(self, session_id: str) -> None:
         self._cache.pop(session_id, None)
@@ -181,7 +181,7 @@ class BookmarkStore:
         self._next_id = 1
         if self._path.exists():
             try:
-                self._bookmarks = json.loads(self._path.read_text())
+                self._bookmarks = json.loads(self._path.read_text(encoding="utf-8"))
                 if self._bookmarks:
                     self._next_id = max(b["id"] for b in self._bookmarks) + 1
             except (json.JSONDecodeError, OSError):
@@ -189,7 +189,7 @@ class BookmarkStore:
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._bookmarks, indent=2))
+        self._path.write_text(json.dumps(self._bookmarks, indent=2), encoding="utf-8")
 
     def list_all(self) -> list[dict[str, Any]]:
         return list(self._bookmarks)
@@ -224,7 +224,7 @@ class DashboardStore:
         self._next_id = 1
         if self._path.exists():
             try:
-                data = json.loads(self._path.read_text())
+                data = json.loads(self._path.read_text(encoding="utf-8"))
                 self._items = data.get("items", [])
                 self._columns = data.get("columns", 0)
                 if self._items:
@@ -235,7 +235,8 @@ class DashboardStore:
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
-            json.dumps({"items": self._items, "columns": self._columns}, indent=2)
+            json.dumps({"items": self._items, "columns": self._columns}, indent=2),
+            encoding="utf-8",
         )
 
     def get_all(self) -> dict[str, Any]:
@@ -1409,10 +1410,14 @@ async def generate_project(request: Request, state: AppState = Depends(get_state
             project_dir_path = Path(saved_path)
             files_written = []
             if schema_content:
-                (project_dir_path / "schema_description.md").write_text(schema_content + "\n")
+                (project_dir_path / "schema_description.md").write_text(
+                    schema_content + "\n", encoding="utf-8"
+                )
                 files_written.append("schema_description.md")
             if queries_content:
-                (project_dir_path / "queries.yaml").write_text(queries_content + "\n")
+                (project_dir_path / "queries.yaml").write_text(
+                    queries_content + "\n", encoding="utf-8"
+                )
                 files_written.append("queries.yaml")
 
             # Step 5: Load the project

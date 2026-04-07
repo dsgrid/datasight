@@ -104,7 +104,8 @@ class TestSettingsFromEnv:
         # Create a .env file with specific values
         env_file = tmp_path / ".env"
         env_file.write_text(
-            "ANTHROPIC_MODEL=model-from-dotenv\nLLM_PROVIDER=anthropic\nDB_MODE=sqlite\n"
+            "ANTHROPIC_MODEL=model-from-dotenv\nLLM_PROVIDER=anthropic\nDB_MODE=sqlite\n",
+            encoding="utf-8",
         )
 
         # Simulate shell-exported env var (set BEFORE loading .env)
@@ -127,7 +128,8 @@ class TestSettingsFromEnv:
         # Create a .env file with specific values
         env_file = tmp_path / ".env"
         env_file.write_text(
-            "ANTHROPIC_MODEL=model-from-dotenv\nLLM_PROVIDER=anthropic\nDB_MODE=sqlite\n"
+            "ANTHROPIC_MODEL=model-from-dotenv\nLLM_PROVIDER=anthropic\nDB_MODE=sqlite\n",
+            encoding="utf-8",
         )
 
         # Simulate shell-exported env var (set BEFORE loading .env)

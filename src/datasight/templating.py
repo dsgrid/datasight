@@ -38,7 +38,7 @@ def _load_template(name: str) -> str:
     path = _TEMPLATES_DIR / f"{name}.mustache"
     if not path.exists():
         raise FileNotFoundError(f"Template not found: {path}")
-    return path.read_text()
+    return path.read_text(encoding="utf-8")
 
 
 def render_template(name: str, data: dict[str, Any]) -> str:

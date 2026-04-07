@@ -23,7 +23,7 @@ def load_recent_projects() -> list[dict[str, str]]:
     if not RECENT_PROJECTS_FILE.exists():
         return []
     try:
-        data = json.loads(RECENT_PROJECTS_FILE.read_text())
+        data = json.loads(RECENT_PROJECTS_FILE.read_text(encoding="utf-8"))
         if not isinstance(data, list):
             return []
         # Sort by last_used descending
@@ -38,7 +38,7 @@ def save_recent_projects(projects: list[dict[str, str]]) -> None:
     _ensure_dir()
     # Keep only most recent entries
     projects = projects[:MAX_RECENT_PROJECTS]
-    RECENT_PROJECTS_FILE.write_text(json.dumps(projects, indent=2))
+    RECENT_PROJECTS_FILE.write_text(json.dumps(projects, indent=2), encoding="utf-8")
 
 
 def add_recent_project(project_path: str) -> list[dict[str, str]]:
