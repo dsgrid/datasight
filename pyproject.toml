@@ -30,18 +30,10 @@ dependencies = [
     "truststore>=0.10.4",
     "sqlglot>=26,<27",
     "chevron>=0.14,<1",
+    "openai>=2,<3",
 ]
 
 [project.optional-dependencies]
-openai-compat = [
-    "openai>=2,<3",
-]
-ollama = [
-    "datasight[openai-compat]",
-]
-github = [
-    "datasight[openai-compat]",
-]
 postgres = [
     "psycopg[binary]>=3.1,<4",
 ]
