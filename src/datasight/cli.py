@@ -170,8 +170,14 @@ def demo(project_dir: str, min_year: int):
 )
 @click.option("--model", default=None, help="Model name (overrides .env).")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
+@click.option(
+    "--table",
+    "-t",
+    multiple=True,
+    help="Table or view to include (can be specified multiple times). If omitted, all tables are included.",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def generate(project_dir, model, overwrite, verbose):
+def generate(project_dir, model, overwrite, table, verbose):
     """Generate schema_description.md and queries.yaml from your database.
 
     Connects to the database, inspects tables and columns, samples
@@ -233,6 +239,15 @@ def generate(project_dir, model, overwrite, verbose):
         # Introspect schema
         click.echo("Introspecting database schema...")
         tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+
+        # Filter to specified tables if --table was provided
+        if table:
+            table_set = {t.lower() for t in table}
+            tables = [t for t in tables if t.name.lower() in table_set]
+            if not tables:
+                click.echo(f"Error: No matching tables found for: {', '.join(table)}", err=True)
+                sys.exit(1)
+
         schema_text = format_schema_context(tables)
         click.echo(f"  Found {len(tables)} tables")
 
