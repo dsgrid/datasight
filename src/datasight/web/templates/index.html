@@ -229,6 +229,7 @@
       <div class="sidebar-header">
         <span>Query History</span>
       </div>
+      <div class="cost-display" id="cost-display" style="display:none"></div>
       <div class="query-history" id="query-history">
         <span class="no-sql">No queries yet.</span>
       </div>
@@ -349,12 +350,12 @@
         </label>
       </div>
       <div class="settings-section">
-        <div class="settings-section-title">Logging</div>
+        <div class="settings-section-title">Display</div>
         <label class="settings-toggle">
-          <input type="checkbox" id="setting-query-log" onchange="toggleQueryLog()">
+          <input type="checkbox" id="setting-show-cost" onchange="toggleShowCost()">
           <span class="settings-toggle-label">
-            <strong>Query logging</strong>
-            <small>Log all SQL queries to query_log.jsonl</small>
+            <strong>Show query cost</strong>
+            <small>Display token usage and estimated LLM cost</small>
           </span>
         </label>
       </div>
@@ -362,6 +363,6 @@
   </aside>
   <div class="settings-overlay" id="settings-overlay" onclick="toggleSettingsPanel()"></div>
 
-<script src="/static/app.js?v=32"></script>
+<script src="/static/app.js?v=33"></script>
 </body>
 </html>

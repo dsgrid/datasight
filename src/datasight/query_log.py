@@ -15,9 +15,9 @@ from loguru import logger
 class QueryLogger:
     """Append-only JSONL query logger."""
 
-    def __init__(self, path: str | Path, enabled: bool = False):
+    def __init__(self, path: str | Path):
         self.path = Path(path)
-        self.enabled = enabled
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def log(
         self,
@@ -31,8 +31,6 @@ class QueryLogger:
         column_count: int | None = None,
         error: str | None = None,
     ) -> None:
-        if not self.enabled:
-            return
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": session_id,
@@ -43,6 +41,33 @@ class QueryLogger:
             "row_count": row_count,
             "column_count": column_count,
             "error": error,
+        }
+        try:
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except OSError as e:
+            logger.error(f"Failed to write query log: {e}")
+
+    def log_cost(
+        self,
+        *,
+        session_id: str,
+        user_question: str,
+        api_calls: int,
+        input_tokens: int,
+        output_tokens: int,
+        estimated_cost: float | None = None,
+    ) -> None:
+        """Log a turn-level cost summary entry."""
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+            "user_question": user_question,
+            "type": "cost",
+            "api_calls": api_calls,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost": estimated_cost,
         }
         try:
             with open(self.path, "a", encoding="utf-8") as f:

@@ -10,10 +10,11 @@ let selectedTable = null;
 let allQueries = [];
 let schemaData = [];
 let lastSql = '';
-let queryLogEnabled = false;
 let confirmSqlEnabled = false;
 let explainSqlEnabled = false;
 let clarifySqlEnabled = false;
+let showCostEnabled = true;
+let sessionTotalCost = 0;
 let pendingConfirmResolve = null;
 let sessionQueries = [];
 let pinnedItems = [];
@@ -207,6 +208,7 @@ async function clearChatForProjectSwitch() {
   currentAssistantBubble = null;
   currentAssistantText = '';
   sessionQueries = [];
+  sessionTotalCost = 0;
 
   // Clear messages display
   const messagesEl = document.getElementById('messages');
@@ -747,25 +749,6 @@ async function exportDashboard() {
   }
 }
 
-async function toggleQueryLog() {
-  try {
-    const data = await fetchJson('/api/query-log/toggle', { method: 'POST' });
-    queryLogEnabled = data.enabled;
-    updateSettingsButtons();
-  } catch (e) {
-    console.error('Failed to toggle query log:', e);
-  }
-}
-
-async function loadQueryLogState() {
-  try {
-    const data = await fetchJson('/api/query-log?n=0');
-    queryLogEnabled = data.enabled;
-    updateSettingsButtons();
-  } catch (e) {
-    // Ignore — button defaults to off
-  }
-}
 
 let llmConnected = false;
 
@@ -775,6 +758,7 @@ async function loadSettings() {
     confirmSqlEnabled = data.confirm_sql;
     explainSqlEnabled = data.explain_sql;
     clarifySqlEnabled = data.clarify_sql;
+    showCostEnabled = data.show_cost || false;
     updateSettingsButtons();
   } catch (e) { /* ignore */ }
   // Also load LLM settings
@@ -940,22 +924,29 @@ function toggleClarifySql() {
   toggleSetting('clarify_sql', () => clarifySqlEnabled, v => { clarifySqlEnabled = v; });
 }
 
+function toggleShowCost() {
+  toggleSetting('show_cost', () => showCostEnabled, v => {
+    showCostEnabled = v;
+    updateCostDisplay();
+  });
+}
+
 function updateSettingsButtons() {
   // Update settings panel checkboxes
   const confirmCheck = document.getElementById('setting-confirm-sql');
   const explainCheck = document.getElementById('setting-explain-sql');
   const clarifyCheck = document.getElementById('setting-clarify-sql');
-  const queryLogCheck = document.getElementById('setting-query-log');
+  const showCostCheck = document.getElementById('setting-show-cost');
 
   if (confirmCheck) confirmCheck.checked = confirmSqlEnabled;
   if (explainCheck) explainCheck.checked = explainSqlEnabled;
   if (clarifyCheck) clarifyCheck.checked = clarifySqlEnabled;
-  if (queryLogCheck) queryLogCheck.checked = queryLogEnabled;
+  if (showCostCheck) showCostCheck.checked = showCostEnabled;
 
   // Update settings gear button to show if any non-default settings are active
   const settingsBtn = document.getElementById('settings-toggle');
   if (settingsBtn) {
-    const hasActiveSettings = confirmSqlEnabled || explainSqlEnabled || !clarifySqlEnabled || queryLogEnabled;
+    const hasActiveSettings = confirmSqlEnabled || explainSqlEnabled || !clarifySqlEnabled || !showCostEnabled;
     settingsBtn.classList.toggle('active', hasActiveSettings);
   }
 }
@@ -1013,6 +1004,7 @@ function renderQueryHistory() {
     if (q.execution_time_ms != null) parts.push(Math.round(q.execution_time_ms) + ' ms');
     if (q.row_count != null) parts.push(q.row_count + ' rows');
     if (q.error) parts.push('error');
+    if (showCostEnabled && q.turn_cost != null) parts.push(formatCost(q.turn_cost));
     meta.textContent = '· ' + parts.join(' · ');
     header.appendChild(meta);
 
@@ -1022,7 +1014,7 @@ function renderQueryHistory() {
     sqlPre.className = 'query-card-sql';
     const sqlCode = document.createElement('code');
     sqlCode.className = 'language-sql';
-    sqlCode.textContent = q.sql || '';
+    sqlCode.textContent = q.formatted_sql || q.sql || '';
     hljs.highlightElement(sqlCode);
     sqlPre.appendChild(sqlCode);
     sqlPre.onclick = () => sqlPre.classList.toggle('expanded');
@@ -1478,7 +1470,7 @@ function handleSSEEvent(eventType, data) {
     case 'tool_result':      handleToolResult(data); break;
     case 'tool_done':        handleToolDone(data); break;
     case 'token':            handleToken(data); break;
-    case 'done':             finalize(); break;
+    case 'done':             finalize(data); break;
     case 'suggestions':      handleSuggestions(data); break;
     case 'sql_confirm':      handleSqlConfirm(data); break;
     case 'sql_rejected':     handleSqlRejected(); break;
@@ -1676,7 +1668,7 @@ function addCopyButtons(container) {
   });
 }
 
-function finalize() {
+function finalize(costData) {
   if (currentAssistantBubble && currentAssistantText) {
     renderMarkdownInto(currentAssistantBubble, currentAssistantText);
     // If this looks like a clarifying question, add clickable option buttons
@@ -1700,6 +1692,31 @@ function finalize() {
       }
     }
   }
+  if (costData && costData.estimated_cost != null) {
+    sessionTotalCost += costData.estimated_cost;
+    // Stamp turn cost on the most recent query card
+    if (sessionQueries.length > 0) {
+      sessionQueries[0].turn_cost = costData.estimated_cost;
+      renderQueryHistory();
+    }
+    updateCostDisplay();
+  }
+}
+
+function updateCostDisplay() {
+  const el = document.getElementById('cost-display');
+  if (!el) return;
+  if (!showCostEnabled || sessionTotalCost === 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.textContent = 'session ' + formatCost(sessionTotalCost);
+  el.style.display = '';
+}
+
+function formatCost(cost) {
+  if (cost < 0.01) return '$' + cost.toFixed(4);
+  return '$' + cost.toFixed(2);
 }
 
 function extractClarifyOptions(text) {
@@ -1869,8 +1886,10 @@ async function clearChat() {
   currentAssistantBubble = null;
   currentAssistantText = '';
   sessionQueries = [];
+  sessionTotalCost = 0;
   lastSql = '';
   renderQueryHistory();
+  updateCostDisplay();
   loadConversations();
 
   // Clear dashboard
@@ -2140,6 +2159,7 @@ async function loadConversation(sid) {
     currentAssistantBubble = null;
     currentAssistantText = '';
     sessionQueries = [];
+    sessionTotalCost = 0;
     lastSql = '';
 
     // Replay events
@@ -2954,7 +2974,6 @@ async function initApp() {
       }
       loadSchema();
       loadQueries();
-      loadQueryLogState();
       loadSettings();
       loadConversations();
       loadBookmarks();

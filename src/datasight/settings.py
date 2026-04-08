@@ -196,7 +196,6 @@ class AppSettings:
     """Application-level settings."""
 
     port: int = 8084
-    log_queries: bool = False
     confirm_sql: bool = False
     explain_sql: bool = False
     clarify_sql: bool = True
@@ -293,10 +292,6 @@ class Settings:
             ),
             app=AppSettings(
                 port=_safe_int(os.environ.get("PORT", ""), 8084),
-                log_queries=os.environ.get(
-                    "LOG_QUERIES", os.environ.get("QUERY_LOG_ENABLED", "")
-                ).lower()
-                in ("1", "true", "yes"),
                 confirm_sql=os.environ.get("CONFIRM_SQL", "").lower() in ("1", "true", "yes"),
                 explain_sql=os.environ.get("EXPLAIN_SQL", "").lower() in ("1", "true", "yes"),
                 clarify_sql=os.environ.get("CLARIFY_SQL", "1").lower() not in ("0", "false", "no"),

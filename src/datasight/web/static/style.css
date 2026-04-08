@@ -1744,6 +1744,16 @@ a.btn-icon {
   align-items: center;
 }
 
+.cost-display {
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .query-history {
   flex: 1;
   overflow-y: auto;

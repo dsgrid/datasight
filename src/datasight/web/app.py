@@ -284,6 +284,7 @@ class AppState:
         self.confirm_sql: bool = False
         self.explain_sql: bool = False
         self.clarify_sql: bool = True
+        self.show_cost: bool = True
         self.schema_text: str = ""
         self.schema_map: dict[str, set[str]] = {}
         self.sql_dialect: str = "duckdb"
@@ -494,8 +495,11 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state._max_history_pairs = settings.app.max_history_pairs
     state._response_cache_max = settings.app.response_cache_max
 
-    log_path = os.environ.get("QUERY_LOG_PATH", os.path.join(project_dir, "query_log.jsonl"))
-    state.query_logger = QueryLogger(path=log_path, enabled=settings.app.log_queries)
+    log_path = os.environ.get(
+        "QUERY_LOG_PATH",
+        os.path.join(project_dir, ".datasight", "query_log.jsonl"),
+    )
+    state.query_logger = QueryLogger(path=log_path)
 
     # Load schema and introspect database
     user_desc = load_schema_description(os.environ.get("SCHEMA_DESCRIPTION_PATH"), project_dir)
@@ -615,18 +619,29 @@ _MODEL_PRICING: dict[str, tuple[float, float]] = {
 }
 
 
-def log_query_cost(model: str, api_calls: int, input_tokens: int, output_tokens: int) -> None:
-    """Log token usage and estimated cost."""
+def _build_cost_data(
+    model: str, api_calls: int, input_tokens: int, output_tokens: int
+) -> dict[str, Any]:
+    """Build cost/token summary dict."""
+    data: dict[str, Any] = {
+        "api_calls": api_calls,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost": None,
+    }
     pricing = _MODEL_PRICING.get(model)
     if pricing:
         input_cost = input_tokens * pricing[0] / 1_000_000
         output_cost = output_tokens * pricing[1] / 1_000_000
-        total_cost = input_cost + output_cost
-        cost_str = (
-            f" est_cost=${total_cost:.4f} (input=${input_cost:.4f} output=${output_cost:.4f})"
-        )
-    else:
-        cost_str = ""
+        data["estimated_cost"] = round(input_cost + output_cost, 6)
+    return data
+
+
+def log_query_cost(model: str, api_calls: int, input_tokens: int, output_tokens: int) -> None:
+    """Log token usage and estimated cost."""
+    data = _build_cost_data(model, api_calls, input_tokens, output_tokens)
+    cost = data["estimated_cost"]
+    cost_str = f" est_cost=${cost:.4f}" if cost is not None else ""
     logger.info(
         f"[tokens] QUERY TOTAL: api_calls={api_calls} "
         f"input={input_tokens} output={output_tokens}{cost_str}"
@@ -672,7 +687,8 @@ async def generate_chat_response(
             for msg in cached["messages"]:
                 messages.append(msg)
             state.save_session(session_id)
-            yield "event: done\ndata: {}\n\n"
+            cached_cost = cached.get("cost", {})
+            yield f"event: done\ndata: {json.dumps(cached_cost)}\n\n"
             if cached.get("suggestions"):
                 evt_log.append(
                     {
@@ -839,6 +855,18 @@ async def generate_chat_response(
             await asyncio.sleep(0.015)
 
         log_query_cost(state.model, api_calls, total_input_tokens, total_output_tokens)
+        cost_data = _build_cost_data(
+            state.model, api_calls, total_input_tokens, total_output_tokens
+        )
+        if state.query_logger:
+            state.query_logger.log_cost(
+                session_id=session_id,
+                user_question=message,
+                api_calls=api_calls,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                estimated_cost=cost_data.get("estimated_cost"),
+            )
 
         # Cache first-turn responses
         if is_first_turn:
@@ -850,11 +878,12 @@ async def generate_chat_response(
                     "events": list(new_events),
                     "messages": list(new_messages),
                     "suggestions": suggestions,
+                    "cost": cost_data,
                 },
             )
             logger.info(f"[cache] STORED for question: {message[:60]}")
 
-        yield "event: done\ndata: {}\n\n"
+        yield f"event: done\ndata: {json.dumps(cost_data)}\n\n"
 
         if suggestions:
             evt_log.append(
@@ -868,11 +897,21 @@ async def generate_chat_response(
         return
 
     log_query_cost(state.model, api_calls, total_input_tokens, total_output_tokens)
+    cost_data = _build_cost_data(state.model, api_calls, total_input_tokens, total_output_tokens)
+    if state.query_logger:
+        state.query_logger.log_cost(
+            session_id=session_id,
+            user_question=message,
+            api_calls=api_calls,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            estimated_cost=cost_data.get("estimated_cost"),
+        )
     max_iter_text = "Reached maximum number of tool calls. Please try a simpler question."
     evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": max_iter_text}})
     state.save_session(session_id)
     yield f"event: token\ndata: {json.dumps({'text': max_iter_text})}\n\n"
-    yield "event: done\ndata: {}\n\n"
+    yield f"event: done\ndata: {json.dumps(cost_data)}\n\n"
 
 
 async def _handle_sql_confirmation(
@@ -1146,7 +1185,7 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state.conversations = None
         state.bookmarks = None
         state.dashboard = None
-        state.query_logger = QueryLogger(path="", enabled=False)
+        state.query_logger = None
         state.example_queries_list = []
 
         logger.info(f"Created ephemeral session with {len(tables_info)} tables")
@@ -1533,22 +1572,12 @@ async def column_stats(table_name: str, column_name: str, state: AppState = Depe
         return {"stats": None, "error": str(e)}
 
 
-@app.post("/api/query-log/toggle")
-async def toggle_query_log(state: AppState = Depends(get_state)):
-    """Enable or disable query logging at runtime."""
-    if state.query_logger is None:
-        return {"enabled": False}
-    state.query_logger.enabled = not state.query_logger.enabled
-    logger.info(f"Query logging {'enabled' if state.query_logger.enabled else 'disabled'}")
-    return {"enabled": state.query_logger.enabled}
-
-
 @app.get("/api/query-log")
 async def get_query_log(n: int = 50, state: AppState = Depends(get_state)):
     """Return recent query log entries."""
     if state.query_logger is None:
-        return {"entries": [], "enabled": False}
-    return {"entries": state.query_logger.read_recent(n), "enabled": state.query_logger.enabled}
+        return {"entries": []}
+    return {"entries": state.query_logger.read_recent(n)}
 
 
 @app.get("/api/bookmarks")
@@ -1628,6 +1657,7 @@ async def get_settings(state: AppState = Depends(get_state)):
         "confirm_sql": state.confirm_sql,
         "explain_sql": state.explain_sql,
         "clarify_sql": state.clarify_sql,
+        "show_cost": state.show_cost,
     }
 
 
@@ -1648,16 +1678,20 @@ async def update_settings(request: Request, state: AppState = Depends(get_state)
         state.clarify_sql = bool(body["clarify_sql"])
         if old != state.clarify_sql:
             need_rebuild = True
+    if "show_cost" in body:
+        state.show_cost = bool(body["show_cost"])
     if need_rebuild:
         state.rebuild_system_prompt()
     logger.info(
         f"Settings updated: confirm_sql={state.confirm_sql}, "
-        f"explain_sql={state.explain_sql}, clarify_sql={state.clarify_sql}"
+        f"explain_sql={state.explain_sql}, clarify_sql={state.clarify_sql}, "
+        f"show_cost={state.show_cost}"
     )
     return {
         "confirm_sql": state.confirm_sql,
         "explain_sql": state.explain_sql,
         "clarify_sql": state.clarify_sql,
+        "show_cost": state.show_cost,
     }
 
 

@@ -940,14 +940,13 @@ def log_cmd(project_dir, tail_n, errors, full):
     from datasight.query_log import QueryLogger
 
     project_dir = str(Path(project_dir).resolve())
-    log_path = os.path.join(project_dir, "query_log.jsonl")
+    log_path = os.path.join(project_dir, ".datasight", "query_log.jsonl")
 
     if not os.path.exists(log_path):
         click.echo(f"No query log found at {log_path}")
-        click.echo("Run 'datasight run --query-log' to enable logging.")
         return
 
-    ql = QueryLogger(path=log_path, enabled=False)
+    ql = QueryLogger(path=log_path)
     entries = ql.read_recent(tail_n)
 
     if errors:
@@ -956,6 +955,10 @@ def log_cmd(project_dir, tail_n, errors, full):
     if not entries:
         click.echo("No matching log entries.")
         return
+
+    # Separate query entries from cost entries
+    query_entries = [e for e in entries if e.get("type") != "cost"]
+    cost_entries = [e for e in entries if e.get("type") == "cost"]
 
     console = Console()
     table = Table(show_lines=True)
@@ -969,9 +972,9 @@ def log_cmd(project_dir, tail_n, errors, full):
     if full:
         table.add_column("Question", overflow="fold")
 
-    total = len(entries)
+    total = len(query_entries)
     failed = 0
-    for entry in entries:
+    for entry in query_entries:
         ts = entry.get("timestamp", "")
         # Trim to seconds, drop timezone
         if "T" in ts:
@@ -1005,3 +1008,46 @@ def log_cmd(project_dir, tail_n, errors, full):
     succeeded = total - failed
     summary = f"{total} queries ({succeeded} succeeded, {failed} failed)"
     console.print(f"\n[dim]{summary}[/dim]")
+
+    # Show cost summary when --full is used
+    if full and cost_entries:
+        cost_table = Table(title="LLM Cost Summary", show_lines=True)
+        cost_table.add_column("Timestamp", style="dim", no_wrap=True)
+        cost_table.add_column("Question", overflow="fold")
+        cost_table.add_column("API Calls", justify="right", no_wrap=True)
+        cost_table.add_column("Input Tokens", justify="right", no_wrap=True)
+        cost_table.add_column("Output Tokens", justify="right", no_wrap=True)
+        cost_table.add_column("Est. Cost", justify="right", no_wrap=True)
+
+        total_cost = 0.0
+        total_input = 0
+        total_output = 0
+        for entry in cost_entries:
+            ts = entry.get("timestamp", "")
+            if "T" in ts:
+                ts = ts.replace("T", " ")[:19]
+            question = entry.get("user_question", "")
+            api_calls_n = entry.get("api_calls", 0)
+            inp = entry.get("input_tokens", 0)
+            out = entry.get("output_tokens", 0)
+            cost = entry.get("estimated_cost")
+            cost_str = f"${cost:.4f}" if cost is not None else ""
+            if cost:
+                total_cost += cost
+            total_input += inp
+            total_output += out
+            cost_table.add_row(
+                ts,
+                question,
+                str(api_calls_n),
+                f"{inp:,}",
+                f"{out:,}",
+                cost_str,
+            )
+
+        console.print()
+        console.print(cost_table)
+        cost_summary = f"Totals: {total_input:,} input tokens, {total_output:,} output tokens"
+        if total_cost > 0:
+            cost_summary += f", ${total_cost:.4f} estimated cost"
+        console.print(f"\n[dim]{cost_summary}[/dim]")

@@ -279,10 +279,22 @@ class ToolResult:
     plotly_spec: dict[str, Any] | None = None  # Resolved Plotly spec for export
 
 
+def _format_sql(sql: str, dialect: str = "duckdb") -> str | None:
+    """Pretty-print SQL using sqlglot. Returns None if formatting fails."""
+    try:
+        import sqlglot
+
+        formatted = sqlglot.transpile(sql, read=dialect, write=dialect, pretty=True)
+        return formatted[0] if formatted else None
+    except Exception:
+        return None
+
+
 def _build_tool_meta(
     tool: str,
     sql: str,
     execution_result: SqlExecutionResult,
+    dialect: str = "duckdb",
 ) -> dict[str, Any]:
     """Build metadata dict for tool result."""
     from datetime import datetime, timezone
@@ -290,6 +302,7 @@ def _build_tool_meta(
     meta: dict[str, Any] = {
         "tool": tool,
         "sql": sql,
+        "formatted_sql": _format_sql(sql, dialect) or sql,
         "execution_time_ms": round(execution_result.elapsed_ms, 1),
         "row_count": None,
         "column_count": None,
@@ -339,7 +352,7 @@ async def _execute_run_sql(
 
     result = await execute_sql_with_validation(sql, run_sql, schema_map, dialect)
     _log_query(query_logger, session_id, user_question, "run_sql", sql, result)
-    meta = _build_tool_meta("run_sql", sql, result)
+    meta = _build_tool_meta("run_sql", sql, result, dialect=dialect)
 
     # Handle validation error
     if result.validation_error:
@@ -397,7 +410,7 @@ async def _execute_visualize_data(
 
     result = await execute_sql_with_validation(sql, run_sql, schema_map, dialect)
     _log_query(query_logger, session_id, user_question, "visualize_data", sql, result)
-    meta = _build_tool_meta("visualize_data", sql, result)
+    meta = _build_tool_meta("visualize_data", sql, result, dialect=dialect)
 
     # Handle validation error
     if result.validation_error:
