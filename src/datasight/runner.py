@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import traceback
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -370,7 +369,7 @@ class FlightSqlRunner:
             self._conn = flightsql.connect(uri=self.uri, db_kwargs=db_kwargs)
             logger.info(f"Connected to Flight SQL server: {self.uri}")
         except Exception as e:
-            logger.error(f"Flight SQL connection error:\n{traceback.format_exc()}")
+            logger.exception("Flight SQL connection error")
             raise ConnectionError(f"Failed to connect to Flight SQL server: {e}") from e
 
     def close(self) -> None:

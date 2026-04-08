@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 import re
-import traceback
 import uuid
 from collections import OrderedDict
 from pathlib import Path
@@ -436,10 +435,10 @@ class AppState:
             self._ephemeral_messages: dict[str, list[dict[str, Any]]] = {}
         return self._ephemeral_messages.setdefault(session_id, [])
 
-    def save_session(self, session_id: str) -> None:
+    async def save_session(self, session_id: str) -> None:
         """Save session data if conversations store is available (no-op for ephemeral)."""
         if self.conversations is not None:
-            self.conversations.save(session_id)
+            await asyncio.to_thread(self.conversations.save, session_id)
 
     def trim_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep only recent messages to bound input token growth."""
@@ -547,7 +546,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     try:
         state.sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
     except Exception as e:
-        logger.error(f"Failed to create SQL runner:\n{traceback.format_exc()}")
+        logger.exception("Failed to create SQL runner")
         raise ProjectError(f"Failed to connect to database: {e}") from e
 
     state.project_dir = project_dir
@@ -744,7 +743,7 @@ async def generate_chat_response(
 
     if conv and conv["title"] == "Untitled":
         conv["title"] = message[:80] + ("..." if len(message) > 80 else "")
-    state.save_session(session_id)
+    await state.save_session(session_id)
 
     is_first_turn = len(messages) == 1
     max_iterations = 15
@@ -759,7 +758,7 @@ async def generate_chat_response(
                 yield f"event: {evt['event']}\ndata: {json.dumps(evt['data'])}\n\n"
             for msg in cached["messages"]:
                 messages.append(msg)
-            state.save_session(session_id)
+            await state.save_session(session_id)
             cached_cost = cached.get("cost", {})
             yield f"event: done\ndata: {json.dumps(cached_cost)}\n\n"
             if cached.get("suggestions"):
@@ -769,7 +768,7 @@ async def generate_chat_response(
                         "data": {"suggestions": cached["suggestions"]},
                     }
                 )
-                state.save_session(session_id)
+                await state.save_session(session_id)
                 yield f"event: {EventType.SUGGESTIONS}\ndata: {json.dumps({'suggestions': cached['suggestions']})}\n\n"
             return
 
@@ -805,19 +804,19 @@ async def generate_chat_response(
                     "data": {"text": f"Error: {e}"},
                 }
             )
-            state.save_session(session_id)
+            await state.save_session(session_id)
             yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
             yield "event: done\ndata: {}\n\n"
             return
         except Exception as e:
-            logger.error(f"Unexpected LLM error:\n{traceback.format_exc()}")
+            logger.exception("Unexpected LLM error")
             evt_log.append(
                 {
                     "event": EventType.ASSISTANT_MESSAGE,
                     "data": {"text": f"Error: {e}"},
                 }
             )
-            state.save_session(session_id)
+            await state.save_session(session_id)
             yield f"event: token\ndata: {json.dumps({'text': f'Error: {e}'})}\n\n"
             yield "event: done\ndata: {}\n\n"
             return
@@ -911,7 +910,7 @@ async def generate_chat_response(
                 if meta:
                     evt_log.append({"event": EventType.TOOL_DONE, "data": meta})
                     yield f"event: {EventType.TOOL_DONE}\ndata: {json.dumps(meta)}\n\n"
-                    state.save_session(session_id)
+                    await state.save_session(session_id)
 
                 tool_results.append(
                     {
@@ -932,7 +931,7 @@ async def generate_chat_response(
 
         messages.append({"role": "assistant", "content": text})
         evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": text}})
-        state.save_session(session_id)
+        await state.save_session(session_id)
 
         for i, word in enumerate(text.split(" ")):
             chunk = word if i == 0 else " " + word
@@ -977,7 +976,7 @@ async def generate_chat_response(
                     "data": {"suggestions": suggestions},
                 }
             )
-            state.save_session(session_id)
+            await state.save_session(session_id)
             yield f"event: {EventType.SUGGESTIONS}\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
         return
 
@@ -994,7 +993,7 @@ async def generate_chat_response(
         )
     max_iter_text = "Reached maximum number of tool calls. Please try a simpler question."
     evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": max_iter_text}})
-    state.save_session(session_id)
+    await state.save_session(session_id)
     yield f"event: token\ndata: {json.dumps({'text': max_iter_text})}\n\n"
     yield f"event: done\ndata: {json.dumps(cost_data)}\n\n"
 
@@ -1113,7 +1112,7 @@ Be concise and helpful. Use markdown formatting.
                         yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception as e:
-            logger.error(f"Summarize error:\n{traceback.format_exc()}")
+            logger.exception("Summarize error")
             yield f"event: {EventType.ERROR}\ndata: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -1180,7 +1179,7 @@ async def load_project_endpoint(request: Request, state: AppState = Depends(get_
             logger.error(f"Failed to load project {project_path}: {e}")
             return {"success": False, "error": str(e)}
         except Exception as e:
-            logger.error(f"Unexpected error loading project:\n{traceback.format_exc()}")
+            logger.exception("Unexpected error loading project")
             return {"success": False, "error": str(e)}
 
 
@@ -1287,7 +1286,7 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         logger.error(f"Failed to create ephemeral session: {e}")
         return {"success": False, "error": str(e)}
     except Exception as e:
-        logger.error(f"Unexpected error creating ephemeral session:\n{traceback.format_exc()}")
+        logger.exception("Unexpected error creating ephemeral session")
         return {"success": False, "error": str(e)}
 
 
@@ -1349,7 +1348,7 @@ async def save_explore_as_project(request: Request, state: AppState = Depends(ge
         return {"success": True, "path": saved_path, **result}
 
     except Exception as e:
-        logger.error(f"Failed to save project:\n{traceback.format_exc()}")
+        logger.exception("Failed to save project")
         return {"success": False, "error": str(e)}
 
 
@@ -1438,7 +1437,7 @@ async def add_files_endpoint(request: Request, state: AppState = Depends(get_sta
     except ConfigurationError as e:
         return {"success": False, "error": str(e)}
     except Exception as e:
-        logger.error(f"Failed to add files:\n{traceback.format_exc()}")
+        logger.exception("Failed to add files")
         return {"success": False, "error": str(e)}
 
 
@@ -1559,7 +1558,7 @@ async def generate_project(request: Request, state: AppState = Depends(get_state
             )
 
         except Exception as e:
-            logger.error(f"Generate project error:\n{traceback.format_exc()}")
+            logger.exception("Generate project error")
             yield _sse("error", {"error": str(e)})
 
     return StreamingResponse(generate(), media_type="text/event-stream")

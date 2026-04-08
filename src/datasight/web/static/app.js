@@ -77,6 +77,30 @@ function toggleSidebar() {
   btn.classList.toggle('active', !sidebar.classList.contains('collapsed'));
 }
 
+function toggleSidebarSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  section.classList.toggle('collapsed');
+  // Persist collapsed state
+  const key = 'datasight-collapsed-sections';
+  let collapsed = {};
+  try { collapsed = JSON.parse(localStorage.getItem(key) || '{}'); } catch (_) { /* ignore */ }
+  collapsed[sectionId] = section.classList.contains('collapsed');
+  localStorage.setItem(key, JSON.stringify(collapsed));
+}
+
+function restoreCollapsedSections() {
+  try {
+    const collapsed = JSON.parse(localStorage.getItem('datasight-collapsed-sections') || '{}');
+    for (const [id, isCollapsed] of Object.entries(collapsed)) {
+      if (isCollapsed) {
+        const section = document.getElementById(id);
+        if (section) section.classList.add('collapsed');
+      }
+    }
+  } catch (_) { /* ignore */ }
+}
+
 function toggleRightPanel() {
   const panel = document.getElementById('right-panel');
   panel.classList.toggle('collapsed');
@@ -130,6 +154,7 @@ async function loadRecentProjects() {
     `).join('');
   } catch (e) {
     console.error('Failed to load recent projects:', e);
+    showToast('Failed to load recent projects.', 'error');
     container.innerHTML = '<div class="no-queries">Failed to load projects.</div>';
   }
 }
@@ -378,6 +403,7 @@ async function startExplore() {
     console.error('Failed to start explore:', e);
     errorEl.textContent = 'Failed to connect to server';
     errorEl.classList.add('visible');
+    showToast('Failed to start explore session.', 'error');
   } finally {
     exploreBtn.disabled = false;
     exploreBtn.textContent = 'Explore';
@@ -634,6 +660,7 @@ async function loadDashboard() {
     renderDashboard();
   } catch (e) {
     console.error('Failed to load dashboard:', e);
+    showToast('Failed to load dashboard.', 'error');
   }
 }
 
@@ -646,6 +673,7 @@ async function saveDashboard() {
     });
   } catch (e) {
     console.error('Failed to save dashboard:', e);
+    showToast('Failed to save dashboard.', 'error');
   }
 }
 
@@ -748,6 +776,7 @@ async function exportDashboard() {
     window.URL.revokeObjectURL(url);
   } catch (e) {
     console.error('Failed to export dashboard:', e);
+    showToast('Failed to export dashboard.', 'error');
     window.alert('Failed to export dashboard. Please try again.');
   }
 }
@@ -1364,6 +1393,7 @@ async function summarizeDataset() {
       console.error('Summarize error:', err);
       if (document.contains(typingEl)) typingEl.remove();
       addMessage('assistant', 'Failed to generate summary. Please try again.');
+      showToast('Summary failed — try again or check your API key.', 'error');
     }
   }
 
@@ -1446,6 +1476,7 @@ async function sendMessage(text) {
       console.error('Stream error:', err);
       if (document.contains(typingEl)) typingEl.remove();
       addMessage('assistant', 'Connection error. Please try again.');
+      showToast('Connection lost — check your network or server.', 'error');
     }
   }
 
@@ -1478,6 +1509,12 @@ function handleSSEEvent(eventType, data) {
     case 'sql_confirm':      handleSqlConfirm(data); break;
     case 'sql_rejected':     handleSqlRejected(); break;
     case 'explanation_done': handleExplanationDone(); break;
+    case 'error':
+      if (data.error) {
+        addMessage('assistant', 'Error: ' + data.error);
+        showToast(data.error, 'error');
+      }
+      break;
   }
 }
 
@@ -1535,6 +1572,7 @@ async function respondSqlConfirm(btn, requestId, action) {
     });
   } catch (e) {
     console.error('Failed to confirm SQL:', e);
+    showToast('Failed to send SQL confirmation.', 'error');
   }
 }
 
@@ -2214,6 +2252,7 @@ async function loadConversation(sid) {
     if (currentView !== 'chat') switchView('chat');
   } catch (e) {
     console.error('Failed to load conversation:', e);
+    showToast('Failed to load conversation.', 'error');
   }
 }
 
@@ -2564,7 +2603,7 @@ async function doExport() {
     toggleExportMode();
   } catch (e) {
     console.error('Export failed:', e);
-    window.alert('Export failed. Please try again.');
+    showToast('Export failed. Please try again.', 'error');
   }
 }
 
@@ -3093,6 +3132,7 @@ function showToast(message, type) {
 // ---------------------------------------------------------------------------
 async function initApp() {
   applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  restoreCollapsedSections();
 
   // Check if a project/session is already loaded (e.g., server restart with state)
   try {
@@ -3120,6 +3160,7 @@ async function initApp() {
     }
   } catch (e) {
     console.error('Failed to check project status:', e);
+    showToast('Failed to connect to server.', 'error');
   }
 
   // No project loaded — show landing page

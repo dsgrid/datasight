@@ -144,36 +144,36 @@
         </div>
       </div>
       <div class="queries-section" id="queries-section">
-        <div class="sidebar-header">
-          <span>Example Queries</span>
+        <div class="sidebar-header" onclick="toggleSidebarSection('queries-section')">
+          <span><span class="sidebar-collapse-icon">▼</span>Example Queries</span>
           <span class="query-count" id="query-count"></span>
         </div>
         <div class="queries-list" id="queries-list">
           <div class="no-queries">Loading...</div>
         </div>
       </div>
-      <div class="conversations-section" id="bookmarks-section">
-        <div class="sidebar-header">
-          <span>Bookmarks</span>
-          <button class="sidebar-clear-btn" onclick="clearAllBookmarks()" title="Clear all bookmarks">Clear</button>
+      <div class="conversations-section collapsed" id="bookmarks-section">
+        <div class="sidebar-header" onclick="toggleSidebarSection('bookmarks-section')">
+          <span><span class="sidebar-collapse-icon">▼</span>Bookmarks</span>
+          <button class="sidebar-clear-btn" onclick="event.stopPropagation(); clearAllBookmarks()" title="Clear all bookmarks">Clear</button>
         </div>
         <div id="bookmarks-list">
           <div class="no-queries">No bookmarks yet.</div>
         </div>
       </div>
-      <div class="conversations-section" id="reports-section">
-        <div class="sidebar-header">
-          <span>Reports</span>
-          <button class="sidebar-clear-btn" onclick="clearAllReports()" title="Clear all reports">Clear</button>
+      <div class="conversations-section collapsed" id="reports-section">
+        <div class="sidebar-header" onclick="toggleSidebarSection('reports-section')">
+          <span><span class="sidebar-collapse-icon">▼</span>Reports</span>
+          <button class="sidebar-clear-btn" onclick="event.stopPropagation(); clearAllReports()" title="Clear all reports">Clear</button>
         </div>
         <div id="reports-list">
           <div class="no-queries">No saved reports yet.</div>
         </div>
       </div>
-      <div class="conversations-section" id="conversations-section">
-        <div class="sidebar-header">
-          <span>History</span>
-          <button class="sidebar-clear-btn" onclick="clearAllConversations()" title="Clear all history">Clear</button>
+      <div class="conversations-section collapsed" id="conversations-section">
+        <div class="sidebar-header" onclick="toggleSidebarSection('conversations-section')">
+          <span><span class="sidebar-collapse-icon">▼</span>History</span>
+          <button class="sidebar-clear-btn" onclick="event.stopPropagation(); clearAllConversations()" title="Clear all history">Clear</button>
         </div>
         <div id="conversations-list">
           <div class="no-queries">No conversations yet.</div>

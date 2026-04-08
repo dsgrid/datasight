@@ -7,8 +7,8 @@ Provides a common async interface for interacting with different LLM providers
 
 from __future__ import annotations
 
+import asyncio
 import json
-import traceback
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -19,6 +19,10 @@ from datasight.exceptions import LLMConnectionError, LLMResponseError
 
 # Default timeout for LLM API calls (seconds).
 DEFAULT_LLM_TIMEOUT: float = 120.0
+
+# Retry configuration for transient LLM failures.
+DEFAULT_MAX_RETRIES: int = 3
+DEFAULT_RETRY_BASE_DELAY: float = 1.0  # seconds, doubled each retry
 
 
 # ---------------------------------------------------------------------------
@@ -171,28 +175,57 @@ class AnthropicLLMClient:
         tools: list[dict[str, Any]],
         max_tokens: int,
     ) -> LLMResponse:
-        """Create a message using the Anthropic API."""
-        try:
-            response = await self._client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=0,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                tools=tools,
-                messages=messages,
-            )
-        except anthropic.APIConnectionError as e:
-            logger.error(f"Anthropic connection error:\n{traceback.format_exc()}")
-            raise LLMConnectionError(f"Failed to connect to Anthropic API: {e}") from e
-        except anthropic.APIStatusError as e:
-            logger.error(f"Anthropic API error:\n{traceback.format_exc()}")
-            raise LLMResponseError(f"Anthropic API error: {e}") from e
+        """Create a message using the Anthropic API with retries."""
+        last_exception: Exception | None = None
+        for attempt in range(DEFAULT_MAX_RETRIES):
+            try:
+                response = await self._client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    tools=tools,
+                    messages=messages,
+                )
+                break
+            except anthropic.APIConnectionError as e:
+                last_exception = e
+                if attempt < DEFAULT_MAX_RETRIES - 1:
+                    delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning(
+                        f"Anthropic connection error (attempt {attempt + 1}/{DEFAULT_MAX_RETRIES}), "
+                        f"retrying in {delay:.1f}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.exception("Anthropic connection error (final attempt)")
+                raise LLMConnectionError(f"Failed to connect to Anthropic API: {e}") from e
+            except anthropic.RateLimitError as e:
+                last_exception = e
+                if attempt < DEFAULT_MAX_RETRIES - 1:
+                    delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning(
+                        f"Anthropic rate limit (attempt {attempt + 1}/{DEFAULT_MAX_RETRIES}), "
+                        f"retrying in {delay:.1f}s"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.exception("Anthropic rate limit error (final attempt)")
+                raise LLMResponseError(f"Anthropic rate limit exceeded: {e}") from e
+            except anthropic.APIStatusError as e:
+                logger.exception("Anthropic API error")
+                raise LLMResponseError(f"Anthropic API error: {e}") from e
+        else:
+            # All retries exhausted without break
+            raise LLMConnectionError(
+                f"All {DEFAULT_MAX_RETRIES} attempts failed"
+            ) from last_exception
 
         content: list[ContentBlock] = []
         for block in response.content:
@@ -338,21 +371,43 @@ class _OpenAICompatibleClient:
         tools: list[dict[str, Any]],
         max_tokens: int,
     ) -> LLMResponse:
-        """Create a message using the OpenAI-compatible API."""
+        """Create a message using the OpenAI-compatible API with retries."""
         openai_messages = _convert_messages_to_openai(system, messages)
         openai_tools = _convert_tools_to_openai(tools)
 
-        try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=openai_messages,
-                tools=openai_tools if openai_tools else None,
-                max_tokens=max_tokens,
-                temperature=0,
-            )
-        except Exception as e:
-            logger.error(f"OpenAI-compatible API error:\n{traceback.format_exc()}")
-            raise LLMConnectionError(f"API request failed: {e}") from e
+        last_exception: Exception | None = None
+        for attempt in range(DEFAULT_MAX_RETRIES):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=openai_messages,
+                    tools=openai_tools if openai_tools else None,
+                    max_tokens=max_tokens,
+                    temperature=0,
+                )
+                break
+            except Exception as e:
+                last_exception = e
+                # Retry on connection/transient errors, not on auth or validation
+                err_str = str(e).lower()
+                is_transient = any(
+                    s in err_str
+                    for s in ("connection", "timeout", "rate", "429", "502", "503", "504")
+                )
+                if is_transient and attempt < DEFAULT_MAX_RETRIES - 1:
+                    delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning(
+                        f"OpenAI-compatible API error (attempt {attempt + 1}/{DEFAULT_MAX_RETRIES}), "
+                        f"retrying in {delay:.1f}s: {e}"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.exception("OpenAI-compatible API error")
+                raise LLMConnectionError(f"API request failed: {e}") from e
+        else:
+            raise LLMConnectionError(
+                f"All {DEFAULT_MAX_RETRIES} attempts failed"
+            ) from last_exception
 
         choice = response.choices[0]
         content: list[ContentBlock] = []

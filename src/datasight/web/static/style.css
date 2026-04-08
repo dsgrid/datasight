@@ -726,6 +726,27 @@ a.btn-icon {
   overflow: hidden;
 }
 
+/* Collapsible sidebar sections */
+.queries-section > .sidebar-header,
+.conversations-section > .sidebar-header {
+  cursor: pointer;
+  user-select: none;
+}
+.sidebar-collapse-icon {
+  font-size: 0.6rem;
+  transition: transform 0.2s ease;
+  margin-right: 4px;
+  display: inline-block;
+}
+.queries-section.collapsed > .sidebar-header .sidebar-collapse-icon,
+.conversations-section.collapsed > .sidebar-header .sidebar-collapse-icon {
+  transform: rotate(-90deg);
+}
+.queries-section.collapsed > :not(.sidebar-header),
+.conversations-section.collapsed > :not(.sidebar-header) {
+  display: none !important;
+}
+
 .queries-section .sidebar-header {
   display: flex;
   justify-content: space-between;

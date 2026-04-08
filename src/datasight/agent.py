@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import re
 import time
-import traceback
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -263,7 +262,7 @@ async def execute_sql_with_validation(
         return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
     except Exception as e:
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.error(f"Unexpected SQL error:\n{traceback.format_exc()}")
+        logger.exception("Unexpected SQL error")
         return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
 
 
@@ -460,7 +459,7 @@ async def _execute_visualize_data(
             plotly_spec=resolved,
         )
     except Exception as e:
-        logger.error(f"Chart building error:\n{traceback.format_exc()}")
+        logger.exception("Chart building error")
         return ToolResult(
             result_text=f"Chart building error: {e}",
             result_html=f"<p class='sql-error'>Chart error: {escape_html(str(e))}</p>",
