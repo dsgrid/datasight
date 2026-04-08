@@ -261,6 +261,16 @@ class ReportStore:
         self._save()
         return report
 
+    def update(self, report_id: int, fields: dict[str, Any]) -> dict[str, Any] | None:
+        for r in self._reports:
+            if r["id"] == report_id:
+                for key in ("sql", "name", "plotly_spec"):
+                    if key in fields:
+                        r[key] = fields[key]
+                self._save()
+                return dict(r)
+        return None
+
     def delete(self, report_id: int) -> None:
         self._reports = [r for r in self._reports if r["id"] != report_id]
         self._save()
@@ -854,14 +864,23 @@ async def generate_chat_response(
                     yield "event: explanation_done\ndata: {}\n\n"
 
             tool_results = []
-            for block in response.content:
-                if not isinstance(block, ToolUseBlock):
-                    continue
-
+            tool_blocks = [b for b in response.content if isinstance(b, ToolUseBlock)]
+            disconnected = False
+            for block in tool_blocks:
                 # Check for client disconnect before running each tool
-                if request is not None and await request.is_disconnected():
+                if not disconnected and request is not None and await request.is_disconnected():
                     logger.info("[chat] Client disconnected before tool execution, stopping")
-                    return
+                    disconnected = True
+
+                if disconnected:
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": "Request cancelled by user.",
+                        }
+                    )
+                    continue
 
                 tool_input = dict(block.input)
 
@@ -1757,6 +1776,30 @@ async def add_report(request: Request, state: AppState = Depends(get_state)):
         return {"error": "sql is required"}
     report = state.reports.add(sql, tool, name, plotly_spec)
     return {"report": report}
+
+
+@app.patch("/api/reports/{report_id}")
+async def update_report(report_id: int, request: Request, state: AppState = Depends(get_state)):
+    """Update a saved report's SQL, name, or plotly_spec."""
+    if state.reports is None:
+        return {"ok": False, "error": "No project loaded"}
+    body = await request.json()
+    fields: dict[str, Any] = {}
+    if "sql" in body:
+        sql = body["sql"].strip()
+        if not sql:
+            return {"ok": False, "error": "sql cannot be empty"}
+        fields["sql"] = sql
+    if "name" in body:
+        fields["name"] = body["name"].strip()
+    if "plotly_spec" in body:
+        fields["plotly_spec"] = body["plotly_spec"]
+    if not fields:
+        return {"ok": False, "error": "No fields to update"}
+    updated = state.reports.update(report_id, fields)
+    if updated is None:
+        return {"ok": False, "error": "Report not found"}
+    return {"ok": True, "report": updated}
 
 
 @app.delete("/api/reports/{report_id}")

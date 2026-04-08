@@ -858,6 +858,7 @@ a.btn-icon {
 }
 .bookmark-item:hover { background: rgba(21,168,168,0.04); }
 .bookmark-name {
+  display: block;
   font-size: 0.82rem;
   line-height: 1.4;
   color: var(--text);
@@ -882,6 +883,35 @@ a.btn-icon {
 .bookmark-item:hover .bookmark-delete { opacity: 0.6; }
 .bookmark-delete:hover { opacity: 1; color: var(--error-text, #e55); }
 
+.bookmark-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+  z-index: 1;
+}
+#reports-list .bookmark-item { padding-right: 48px; }
+.bookmark-edit {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.bookmark-item:hover .bookmark-edit { opacity: 0.6; }
+.bookmark-edit:hover { opacity: 1; color: var(--accent); }
+.bookmark-delete-grouped {
+  position: static;
+  opacity: 0;
+}
+.bookmark-item:hover .bookmark-delete-grouped { opacity: 0.6; }
+
+/* Modal */
 /* Chat area */
 .chat-area {
   flex: 1;
@@ -1680,9 +1710,9 @@ a.btn-icon {
   outline: none;
   font-family: inherit;
   font-size: 0.925rem;
-  resize: none;
+  resize: vertical;
   line-height: 1.5;
-  max-height: 150px;
+  max-height: 50vh;
   min-height: 24px;
   overflow-y: auto;
   background: transparent;
@@ -2498,6 +2528,38 @@ a.btn-icon {
   outline: none;
   border-color: var(--teal);
 }
+.modal-details {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.modal-details summary {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg);
+}
+.modal-details summary:hover { color: var(--text); }
+.modal-details textarea {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.modal-details textarea:focus { outline: none; }
 .wizard-status {
   font-size: 0.85rem;
   font-weight: 500;

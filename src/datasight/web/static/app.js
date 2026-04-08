@@ -1072,7 +1072,8 @@ function renderQueryHistory() {
     rerunBtn.textContent = 'Rerun';
     rerunBtn.onclick = (e) => {
       e.stopPropagation();
-      inputEl.value = 'Run this SQL query:\n' + q.sql;
+      inputEl.value = 'Run this SQL query and display the results as a table:\n' + q.sql;
+      inputEl.dispatchEvent(new window.Event('input'));
       inputEl.focus();
     };
     actions.appendChild(rerunBtn);
@@ -1281,7 +1282,7 @@ function useQuery(el) {
 // ---------------------------------------------------------------------------
 inputEl.addEventListener('input', function() {
   this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+  this.style.height = Math.min(this.scrollHeight, window.innerHeight * 0.5) + 'px';
 });
 
 inputEl.addEventListener('keydown', function(e) {
@@ -2320,7 +2321,8 @@ function renderBookmarks(bookmarks) {
     item.className = 'bookmark-item';
     item.title = b.sql;
     item.onclick = () => {
-      inputEl.value = 'Run this SQL query:\n' + b.sql;
+      inputEl.value = 'Run this SQL query and display the results as a table:\n' + b.sql;
+      inputEl.dispatchEvent(new window.Event('input'));
       inputEl.focus();
     };
 
@@ -2354,6 +2356,121 @@ async function saveReport(sql, tool, name, plotlySpec) {
     });
     loadReports();
   } catch (e) { /* ignore */ }
+}
+
+async function updateReport(id, fields) {
+  try {
+    await fetch('/api/reports/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+    });
+    loadReports();
+  } catch (e) { /* ignore */ }
+}
+
+function editReport(report) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog';
+
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  const title = document.createElement('h3');
+  title.textContent = 'Edit Report';
+  title.style.margin = '0';
+  header.appendChild(title);
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'modal-close-btn';
+  closeBtn.textContent = '×';
+  closeBtn.onclick = () => { overlay.classList.remove('open'); modal.classList.remove('open'); setTimeout(() => overlay.remove(), 200); };
+  header.appendChild(closeBtn);
+  modal.appendChild(header);
+
+  const content = document.createElement('div');
+  content.className = 'modal-content';
+
+  const nameLabel = document.createElement('label');
+  nameLabel.className = 'modal-label';
+  nameLabel.textContent = 'Name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.value = report.name || '';
+  nameLabel.appendChild(nameInput);
+  content.appendChild(nameLabel);
+
+  const sqlLabel = document.createElement('label');
+  sqlLabel.className = 'modal-label';
+  sqlLabel.textContent = 'SQL';
+  const sqlInput = document.createElement('textarea');
+  sqlInput.value = report.sql || '';
+  sqlInput.rows = 8;
+  sqlLabel.appendChild(sqlInput);
+  content.appendChild(sqlLabel);
+
+  let vizInput = null;
+  const origVizJson = report.plotly_spec ? JSON.stringify(report.plotly_spec, null, 2) : '';
+  if (report.tool === 'visualize_data') {
+    const details = document.createElement('details');
+    details.className = 'modal-details';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Visualization (JSON)';
+    details.appendChild(summary);
+    vizInput = document.createElement('textarea');
+    vizInput.value = origVizJson;
+    vizInput.rows = 10;
+    details.appendChild(vizInput);
+    content.appendChild(details);
+  }
+
+  modal.appendChild(content);
+
+  const errorEl = document.createElement('div');
+  errorEl.className = 'modal-error';
+  modal.appendChild(errorEl);
+
+  const actions = document.createElement('div');
+  actions.className = 'modal-actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'modal-btn secondary';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => { overlay.classList.remove('open'); modal.classList.remove('open'); setTimeout(() => overlay.remove(), 200); };
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'modal-btn primary';
+  saveBtn.textContent = 'Save';
+  saveBtn.onclick = () => {
+    const fields = {};
+    const newSql = sqlInput.value.trim();
+    const newName = nameInput.value.trim();
+    if (newSql && newSql !== report.sql) fields.sql = newSql;
+    if (newName !== (report.name || '')) fields.name = newName;
+    if (vizInput) {
+      const newViz = vizInput.value.trim();
+      if (newViz && newViz !== origVizJson) {
+        try {
+          fields.plotly_spec = JSON.parse(newViz);
+        } catch (e) {
+          errorEl.textContent = 'Invalid JSON in visualization spec';
+          errorEl.classList.add('visible');
+          return;
+        }
+      }
+    }
+    if (Object.keys(fields).length > 0) updateReport(report.id, fields);
+    overlay.classList.remove('open');
+    modal.classList.remove('open');
+    setTimeout(() => overlay.remove(), 200);
+  };
+  actions.appendChild(cancelBtn);
+  actions.appendChild(saveBtn);
+  modal.appendChild(actions);
+
+  overlay.onclick = (e) => { if (e.target === overlay) { overlay.classList.remove('open'); modal.classList.remove('open'); setTimeout(() => overlay.remove(), 200); } };
+  document.body.appendChild(overlay);
+  document.body.appendChild(modal);
+  requestAnimationFrame(() => { overlay.classList.add('open'); modal.classList.add('open'); });
+  sqlInput.focus();
 }
 
 async function deleteReport(id) {
@@ -2443,13 +2560,24 @@ function renderReports(reports) {
     nameEl.textContent = icon + (r.name || r.sql.substring(0, 50));
     item.appendChild(nameEl);
 
+    const btnGroup = document.createElement('span');
+    btnGroup.className = 'bookmark-actions';
+
+    const edit = document.createElement('button');
+    edit.className = 'bookmark-edit';
+    edit.textContent = '✎';
+    edit.title = 'Edit report';
+    edit.onclick = (e) => { e.stopPropagation(); editReport(r); };
+    btnGroup.appendChild(edit);
+
     const del = document.createElement('button');
-    del.className = 'bookmark-delete';
+    del.className = 'bookmark-delete bookmark-delete-grouped';
     del.textContent = '×';
     del.title = 'Remove report';
     del.onclick = (e) => { e.stopPropagation(); deleteReport(r.id); };
-    item.appendChild(del);
+    btnGroup.appendChild(del);
 
+    item.appendChild(btnGroup);
     container.appendChild(item);
   });
 }
