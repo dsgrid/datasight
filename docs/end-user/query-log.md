@@ -45,13 +45,13 @@ datasight log
 ```
 
 ```
- Timestamp            Tool     SQL                                  Time  Rows  Status
-─────────────────────────────────────────────────────────────────────────────────────────
- 2026-04-01 14:02:03  run_sql  SELECT plant_name, SUM(gen)           42ms    10  OK
-                               AS total FROM gen GROUP BY 1
-                               ORDER BY 2 DESC LIMIT 10
- 2026-04-01 14:04:01  run_sql  SELECT * FROM nonexistent_table        3ms        ERR
-─────────────────────────────────────────────────────────────────────────────────────────
+ #  Timestamp            Tool     SQL                                  Time  Rows  Status
+──────────────────────────────────────────────────────────────────────────────────────────────
+ 1  2026-04-01 14:02:03  run_sql  SELECT plant_name, SUM(gen)           42ms    10  OK
+                                  AS total FROM gen GROUP BY 1
+                                  ORDER BY 2 DESC LIMIT 10
+ 2  2026-04-01 14:04:01  run_sql  SELECT * FROM nonexistent_table        3ms        ERR
+──────────────────────────────────────────────────────────────────────────────────────────────
 2 queries (1 succeeded, 1 failed)
 ```
 
@@ -64,6 +64,8 @@ Long SQL queries wrap across multiple lines within each row.
 | `--tail N` | `20` | Show the last N entries |
 | `--errors` | off | Show only failed queries |
 | `--full` | off | Show complete SQL and add a Question column |
+| `--cost` | off | Show LLM cost summary (token counts and estimated cost) |
+| `--sql N` | — | Print raw SQL for query `#N` (shown in the `#` column), ready to copy-paste |
 | `--project-dir` | `.` | Project directory containing `query_log.jsonl` |
 
 ### Examples
@@ -77,6 +79,15 @@ datasight log --errors
 
 # Full detail including the user's natural-language question
 datasight log --full
+
+# Copy a specific query's SQL (use the # shown in the table)
+datasight log --sql 1
+
+# Pipe directly into DuckDB
+datasight log --sql 1 | duckdb database.duckdb
+
+# Show LLM cost summary
+datasight log --cost
 
 # Point to a different project
 datasight log --project-dir ./my-project

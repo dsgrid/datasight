@@ -931,7 +931,15 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
 @click.option("--tail", "tail_n", type=int, default=20, help="Show last N entries (default: 20).")
 @click.option("--errors", is_flag=True, help="Show only failed queries.")
 @click.option("--full", is_flag=True, help="Show full SQL and user question.")
-def log_cmd(project_dir, tail_n, errors, full):
+@click.option("--cost", is_flag=True, help="Show LLM cost summary.")
+@click.option(
+    "--sql",
+    "sql_index",
+    type=int,
+    default=None,
+    help="Print raw SQL for query # (shown in the # column). Ready to copy-paste.",
+)
+def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
     """Display the SQL query log in a formatted table."""
     from rich.console import Console
     from rich.table import Table
@@ -956,12 +964,29 @@ def log_cmd(project_dir, tail_n, errors, full):
         click.echo("No matching log entries.")
         return
 
+    # --sql N: print raw SQL for the Nth most recent query and exit
+    if sql_index is not None:
+        query_only = [e for e in entries if e.get("type") != "cost" and e.get("sql")]
+        if not query_only:
+            click.echo("No SQL queries in log.")
+            return
+        if sql_index < 1 or sql_index > len(query_only):
+            click.echo(f"Index out of range. Use 1–{len(query_only)}.")
+            return
+        entry = query_only[sql_index - 1]
+        sql = entry["sql"].strip()
+        if not sql.endswith(";"):
+            sql += ";"
+        click.echo(sql)
+        return
+
     # Separate query entries from cost entries
     query_entries = [e for e in entries if e.get("type") != "cost"]
     cost_entries = [e for e in entries if e.get("type") == "cost"]
 
     console = Console()
     table = Table(show_lines=True)
+    table.add_column("#", justify="right", style="dim", no_wrap=True)
     table.add_column("Timestamp", style="dim", no_wrap=True)
     table.add_column("Tool", no_wrap=True)
     table.add_column("SQL", min_width=40, overflow="fold")
@@ -974,7 +999,7 @@ def log_cmd(project_dir, tail_n, errors, full):
 
     total = len(query_entries)
     failed = 0
-    for entry in query_entries:
+    for i, entry in enumerate(query_entries):
         ts = entry.get("timestamp", "")
         # Trim to seconds, drop timezone
         if "T" in ts:
@@ -998,7 +1023,8 @@ def log_cmd(project_dir, tail_n, errors, full):
         else:
             status = Text("OK", style="green")
 
-        row = [ts, tool, sql, time_str, rows_str, status]
+        sql_id = str(i + 1)
+        row = [sql_id, ts, tool, sql, time_str, rows_str, status]
         if full:
             row.append(entry.get("user_question", ""))
         table.add_row(*row)
@@ -1009,8 +1035,8 @@ def log_cmd(project_dir, tail_n, errors, full):
     summary = f"{total} queries ({succeeded} succeeded, {failed} failed)"
     console.print(f"\n[dim]{summary}[/dim]")
 
-    # Show cost summary when --full is used
-    if full and cost_entries:
+    # Show cost summary when --cost is used
+    if cost and cost_entries:
         cost_table = Table(title="LLM Cost Summary", show_lines=True)
         cost_table.add_column("Timestamp", style="dim", no_wrap=True)
         cost_table.add_column("Question", overflow="fold")
