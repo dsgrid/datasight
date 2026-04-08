@@ -10,6 +10,8 @@ let selectedTable = null;
 let allQueries = [];
 let schemaData = [];
 let lastSql = '';
+let lastPlotlySpec = null;
+let lastToolName = '';
 let confirmSqlEnabled = false;
 let explainSqlEnabled = false;
 let clarifySqlEnabled = false;
@@ -188,6 +190,7 @@ async function doLoadProject(path) {
     await loadQueries();
     await loadConversations();
     await loadBookmarks();
+    await loadReports();
     await loadDashboard();
 
     // Show welcome message for the new project
@@ -1549,6 +1552,8 @@ function handleToolStart(data) {
   el.className = 'tool-indicator';
   const toolLabel = data.tool === 'run_sql' ? 'Running SQL' : 'Creating visualization';
   let html = '<span class="dot"></span><span>' + toolLabel + '...</span>';
+  lastToolName = data.tool || '';
+  lastPlotlySpec = (data.input && data.input.plotly_spec) ? data.input.plotly_spec : null;
   if (data.input && data.input.sql) {
     const sqlPreview = data.input.sql.length > 80
       ? data.input.sql.substring(0, 80) + '...'
@@ -1620,6 +1625,20 @@ function handleToolResult(data) {
       setTimeout(() => { bmBtn.innerHTML = '★ Bookmark'; }, 1200);
     };
     resultEl.appendChild(bmBtn);
+
+    const reportSql = sql;
+    const reportTool = lastToolName || (data.type === 'chart' ? 'visualize_data' : 'run_sql');
+    const reportSpec = lastPlotlySpec;
+    const reportName = name;
+    const rptBtn = document.createElement('button');
+    rptBtn.className = 'bookmark-btn';
+    rptBtn.innerHTML = '⟳ Save Report';
+    rptBtn.onclick = () => {
+      saveReport(reportSql, reportTool, reportName, reportSpec);
+      rptBtn.innerHTML = '⟳ Saved!';
+      setTimeout(() => { rptBtn.innerHTML = '⟳ Save Report'; }, 1200);
+    };
+    resultEl.appendChild(rptBtn);
   }
 
   const delResult = _makeDeleteBtn('Delete result');
@@ -1888,6 +1907,8 @@ async function clearChat() {
   sessionQueries = [];
   sessionTotalCost = 0;
   lastSql = '';
+  lastPlotlySpec = null;
+  lastToolName = '';
   renderQueryHistory();
   updateCostDisplay();
   loadConversations();
@@ -2274,6 +2295,120 @@ function renderBookmarks(bookmarks) {
     del.textContent = '×';
     del.title = 'Remove bookmark';
     del.onclick = (e) => { e.stopPropagation(); deleteBookmark(b.id); };
+    item.appendChild(del);
+
+    container.appendChild(item);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+async function saveReport(sql, tool, name, plotlySpec) {
+  try {
+    const body = { sql, tool: tool || 'run_sql', name: name || '' };
+    if (plotlySpec) body.plotly_spec = plotlySpec;
+    await fetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    loadReports();
+  } catch (e) { /* ignore */ }
+}
+
+async function deleteReport(id) {
+  try {
+    await fetch('/api/reports/' + id, { method: 'DELETE' });
+    loadReports();
+  } catch (e) { /* ignore */ }
+}
+
+async function clearAllReports() {
+  try {
+    await fetch('/api/reports', { method: 'DELETE' });
+    loadReports();
+  } catch (e) { /* ignore */ }
+}
+
+async function loadReports() {
+  try {
+    const data = await fetchJson('/api/reports');
+    renderReports(data.reports || []);
+  } catch (e) { /* ignore */ }
+}
+
+async function runReport(id) {
+  try {
+    const resp = await fetch('/api/reports/' + id + '/run', { method: 'POST' });
+    const data = await resp.json();
+    if (!data.ok || !data.html) return;
+    const resultEl = document.createElement('div');
+    resultEl.className = 'tool-result';
+    if (data.title) resultEl.dataset.title = data.title;
+
+    if (data.type === 'chart') {
+      const iframe = document.createElement('iframe');
+      iframe.sandbox = 'allow-scripts allow-same-origin allow-downloads';
+      iframe.srcdoc = data.html;
+      iframe.style.width = '100%';
+      iframe.style.height = '480px';
+      iframe.style.border = '1px solid var(--border)';
+      iframe.style.borderRadius = 'var(--radius)';
+      iframe.style.background = 'var(--surface)';
+      iframe.addEventListener('load', () => {
+        const theme = document.documentElement.getAttribute('data-theme') || 'light';
+        try { iframe.contentWindow.postMessage({ type: 'theme-change', theme }, '*'); } catch(e) {}
+      });
+      resultEl.appendChild(iframe);
+    } else {
+      const tableContainer = document.createElement('div');
+      tableContainer.innerHTML = window.DOMPurify ? window.DOMPurify.sanitize(data.html) : data.html;
+      while (tableContainer.firstChild) resultEl.appendChild(tableContainer.firstChild);
+      const tableWrap = resultEl.querySelector('.result-table-wrap');
+      if (tableWrap) paginateTable(tableWrap);
+    }
+
+    const pinBtn = document.createElement('button');
+    pinBtn.className = 'pin-btn';
+    pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
+    pinBtn.onclick = () => pinResult(pinBtn);
+    resultEl.appendChild(pinBtn);
+
+    const delResult = _makeDeleteBtn('Delete result');
+    delResult.onclick = (e) => { e.stopPropagation(); deleteElement(resultEl); };
+    resultEl.appendChild(delResult);
+
+    messagesEl.appendChild(resultEl);
+    scrollToBottom();
+  } catch (e) { /* ignore */ }
+}
+
+function renderReports(reports) {
+  const container = document.getElementById('reports-list');
+  if (!container) return;
+  if (reports.length === 0) {
+    container.innerHTML = '<div class="no-queries">No saved reports yet.</div>';
+    return;
+  }
+  container.innerHTML = '';
+  reports.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'bookmark-item';
+    item.title = r.sql;
+    item.onclick = () => runReport(r.id);
+
+    const icon = r.tool === 'visualize_data' ? '📊 ' : '📋 ';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'bookmark-name';
+    nameEl.textContent = icon + (r.name || r.sql.substring(0, 50));
+    item.appendChild(nameEl);
+
+    const del = document.createElement('button');
+    del.className = 'bookmark-delete';
+    del.textContent = '×';
+    del.title = 'Remove report';
+    del.onclick = (e) => { e.stopPropagation(); deleteReport(r.id); };
     item.appendChild(del);
 
     container.appendChild(item);
@@ -2760,6 +2895,7 @@ async function landingOpenProject(path) {
     loadSettings();
     loadConversations();
     loadBookmarks();
+    loadReports();
     loadDashboard();
     restoreSession();
     showWelcome();
@@ -2977,6 +3113,7 @@ async function initApp() {
       loadSettings();
       loadConversations();
       loadBookmarks();
+      loadReports();
       loadDashboard();
       restoreSession();
       return;
