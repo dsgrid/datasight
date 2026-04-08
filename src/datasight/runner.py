@@ -17,7 +17,10 @@ import duckdb
 import pandas as pd
 from loguru import logger
 
-from datasight.exceptions import ConnectionError, QueryError
+from datasight.exceptions import ConnectionError, QueryError, QueryTimeoutError
+
+# Default timeout for SQL queries (seconds). Can be overridden per-runner.
+DEFAULT_QUERY_TIMEOUT: float = 120.0
 
 # Type alias for async SQL execution function
 RunSql = Callable[[str], Awaitable[pd.DataFrame]]
@@ -46,9 +49,10 @@ class SqlRunner(Protocol):
 class DuckDBRunner:
     """Execute SQL against a local DuckDB file."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, query_timeout: float = DEFAULT_QUERY_TIMEOUT):
         self._database_path = database_path
         self._conn: duckdb.DuckDBPyConnection | None = None
+        self._query_timeout = query_timeout
         self._connect()
 
     def _connect(self) -> None:
@@ -91,8 +95,17 @@ class DuckDBRunner:
             raise QueryError(str(e)) from e
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
-        """Execute SQL asynchronously."""
-        return await asyncio.to_thread(self._execute, sql)
+        """Execute SQL asynchronously with timeout."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute, sql),
+                timeout=self._query_timeout,
+            )
+        except TimeoutError:
+            raise QueryTimeoutError(
+                f"Query timed out after {self._query_timeout:.0f}s. "
+                "Try a simpler query or add filters to reduce the result set."
+            )
 
 
 class EphemeralDuckDBRunner:
@@ -102,15 +115,20 @@ class EphemeralDuckDBRunner:
     analyze CSV/Parquet files without setting up a project.
     """
 
-    def __init__(self, conn: duckdb.DuckDBPyConnection):
+    def __init__(
+        self, conn: duckdb.DuckDBPyConnection, query_timeout: float = DEFAULT_QUERY_TIMEOUT
+    ):
         """Initialize with an existing DuckDB connection.
 
         Parameters
         ----------
         conn:
             An existing DuckDB connection (typically in-memory).
+        query_timeout:
+            Maximum seconds to wait for a query to complete.
         """
         self._conn = conn
+        self._query_timeout = query_timeout
 
     def close(self) -> None:
         """Close the database connection."""
@@ -144,16 +162,26 @@ class EphemeralDuckDBRunner:
             raise QueryError(str(e)) from e
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
-        """Execute SQL asynchronously."""
-        return await asyncio.to_thread(self._execute, sql)
+        """Execute SQL asynchronously with timeout."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute, sql),
+                timeout=self._query_timeout,
+            )
+        except TimeoutError:
+            raise QueryTimeoutError(
+                f"Query timed out after {self._query_timeout:.0f}s. "
+                "Try a simpler query or add filters to reduce the result set."
+            )
 
 
 class SQLiteRunner:
     """Execute SQL against a local SQLite file."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, query_timeout: float = DEFAULT_QUERY_TIMEOUT):
         self._database_path = database_path
         self._conn: sqlite3.Connection | None = None
+        self._query_timeout = query_timeout
         self._connect()
 
     def _connect(self) -> None:
@@ -203,8 +231,17 @@ class SQLiteRunner:
             raise QueryError(str(e)) from e
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
-        """Execute SQL asynchronously."""
-        return await asyncio.to_thread(self._execute, sql)
+        """Execute SQL asynchronously with timeout."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute, sql),
+                timeout=self._query_timeout,
+            )
+        except TimeoutError:
+            raise QueryTimeoutError(
+                f"Query timed out after {self._query_timeout:.0f}s. "
+                "Try a simpler query or add filters to reduce the result set."
+            )
 
 
 class PostgresRunner:
@@ -220,11 +257,13 @@ class PostgresRunner:
         password: str = "",
         url: str = "",
         sslmode: str = "prefer",
+        query_timeout: float = DEFAULT_QUERY_TIMEOUT,
     ):
         import psycopg
 
         self._conn = None
         self._psycopg = psycopg
+        self._query_timeout = query_timeout
         self._connection_info = f"{host}:{port}/{dbname}" if not url else "via URL"
 
         try:
@@ -283,8 +322,17 @@ class PostgresRunner:
             raise QueryError(str(e)) from e
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
-        """Execute SQL asynchronously."""
-        return await asyncio.to_thread(self._execute, sql)
+        """Execute SQL asynchronously with timeout."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute, sql),
+                timeout=self._query_timeout,
+            )
+        except TimeoutError:
+            raise QueryTimeoutError(
+                f"Query timed out after {self._query_timeout:.0f}s. "
+                "Try a simpler query or add filters to reduce the result set."
+            )
 
 
 class FlightSqlRunner:
@@ -385,5 +433,14 @@ class FlightSqlRunner:
             raise QueryError(str(e)) from e
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
-        """Execute SQL asynchronously."""
-        return await asyncio.to_thread(self._execute, sql)
+        """Execute SQL asynchronously with timeout."""
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._execute, sql),
+                timeout=self.timeout,
+            )
+        except TimeoutError:
+            raise QueryTimeoutError(
+                f"Query timed out after {self.timeout:.0f}s. "
+                "Try a simpler query or add filters to reduce the result set."
+            )

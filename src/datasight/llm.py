@@ -17,6 +17,9 @@ from loguru import logger
 
 from datasight.exceptions import LLMConnectionError, LLMResponseError
 
+# Default timeout for LLM API calls (seconds).
+DEFAULT_LLM_TIMEOUT: float = 120.0
+
 
 # ---------------------------------------------------------------------------
 # Common types
@@ -131,7 +134,12 @@ class LLMClient(Protocol):
 class AnthropicLLMClient:
     """LLM client backed by the Anthropic API."""
 
-    def __init__(self, api_key: str, base_url: str | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        timeout: float = DEFAULT_LLM_TIMEOUT,
+    ):
         """Initialize the Anthropic client.
 
         Parameters
@@ -140,8 +148,13 @@ class AnthropicLLMClient:
             Anthropic API key.
         base_url:
             Optional custom base URL for the API.
+        timeout:
+            Request timeout in seconds.
         """
-        kwargs: dict[str, Any] = {"api_key": api_key}
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": timeout,
+        }
         if base_url:
             kwargs["base_url"] = base_url
         try:
@@ -290,7 +303,9 @@ def _convert_messages_to_openai(
 class _OpenAICompatibleClient:
     """Base class for LLM clients using OpenAI-compatible APIs."""
 
-    def __init__(self, base_url: str, api_key: str = "ollama"):
+    def __init__(
+        self, base_url: str, api_key: str = "ollama", timeout: float = DEFAULT_LLM_TIMEOUT
+    ):
         """Initialize the OpenAI-compatible client.
 
         Parameters
@@ -299,6 +314,8 @@ class _OpenAICompatibleClient:
             Base URL for the API.
         api_key:
             API key (defaults to "ollama" for local Ollama).
+        timeout:
+            Request timeout in seconds.
         """
         try:
             from openai import AsyncOpenAI
@@ -308,7 +325,7 @@ class _OpenAICompatibleClient:
                 "Install it with: pip install openai"
             ) from e
         try:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
         except Exception as e:
             raise LLMConnectionError(f"Failed to initialize OpenAI client: {e}") from e
 

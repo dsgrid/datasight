@@ -35,6 +35,12 @@ class QueryError(DatabaseError):
     pass
 
 
+class QueryTimeoutError(QueryError):
+    """Raised when a SQL query exceeds its time limit."""
+
+    pass
+
+
 class ValidationError(DatasightError):
     """Raised when input validation fails."""
 

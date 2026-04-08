@@ -19,7 +19,7 @@ import pandas as pd
 from loguru import logger
 
 from datasight.chart import build_chart_html
-from datasight.exceptions import QueryError
+from datasight.exceptions import QueryError, QueryTimeoutError
 from datasight.llm import LLMClient, TextBlock, ToolUseBlock, serialize_content
 from datasight.prompts import WEB_TOOLS
 from datasight.query_log import QueryLogger
@@ -254,6 +254,10 @@ async def execute_sql_with_validation(
         df = await run_sql(sql)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return SqlExecutionResult(df=df, elapsed_ms=elapsed_ms)
+    except QueryTimeoutError as e:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.warning(f"Query timed out after {elapsed_ms:.0f}ms: {sql[:200]}")
+        return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
     except QueryError as e:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))

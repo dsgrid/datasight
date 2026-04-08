@@ -214,6 +214,64 @@ class BookmarkStore:
         self._save()
 
 
+class ReportStore:
+    """Persist saved reports (rerunnable query + visualization) as a JSON file."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._reports: list[dict[str, Any]] = []
+        self._next_id = 1
+        if self._path.exists():
+            try:
+                self._reports = json.loads(self._path.read_text(encoding="utf-8"))
+                if self._reports:
+                    self._next_id = max(r["id"] for r in self._reports) + 1
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._reports, indent=2), encoding="utf-8")
+
+    def list_all(self) -> list[dict[str, Any]]:
+        return list(self._reports)
+
+    def get(self, report_id: int) -> dict[str, Any] | None:
+        for r in self._reports:
+            if r["id"] == report_id:
+                return dict(r)
+        return None
+
+    def add(
+        self,
+        sql: str,
+        tool: str = "run_sql",
+        name: str = "",
+        plotly_spec: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "id": self._next_id,
+            "sql": sql,
+            "tool": tool,
+            "name": name,
+        }
+        if plotly_spec is not None:
+            report["plotly_spec"] = plotly_spec
+        self._next_id += 1
+        self._reports.append(report)
+        self._save()
+        return report
+
+    def delete(self, report_id: int) -> None:
+        self._reports = [r for r in self._reports if r["id"] != report_id]
+        self._save()
+
+    def clear(self) -> None:
+        self._reports = []
+        self._next_id = 1
+        self._save()
+
+
 class DashboardStore:
     """Persist dashboard items as a JSON file."""
 
@@ -278,6 +336,7 @@ class AppState:
         self.conversations: ConversationStore | None = None
         self.bookmarks: BookmarkStore | None = None
         self.dashboard: DashboardStore | None = None
+        self.reports: ReportStore | None = None
         self.schema_info: list[dict[str, Any]] = []
         self.example_queries_list: list[dict[str, str]] = []
         self.query_logger: QueryLogger | None = None
@@ -294,6 +353,10 @@ class AppState:
         self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._response_cache_max = 100
         self._max_history_pairs = 10
+        # Per-session locks to prevent concurrent chat on the same session
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        # Lock for state-level mutations (project load, settings changes)
+        self.state_lock = asyncio.Lock()
         # Ephemeral explore session state
         self.is_ephemeral: bool = False
         self.ephemeral_tables_info: list[dict[str, Any]] = []
@@ -319,12 +382,14 @@ class AppState:
         self.conversations = None
         self.bookmarks = None
         self.dashboard = None
+        self.reports = None
         self.query_logger = None
         self._response_cache.clear()
         # Reset ephemeral state
         self.is_ephemeral = False
         self.ephemeral_tables_info = []
         self._ephemeral_messages = {}
+        self._session_locks.clear()
 
     def rebuild_system_prompt(self) -> None:
         """Rebuild the system prompt after settings change."""
@@ -355,6 +420,12 @@ class AppState:
         self._response_cache.move_to_end(key)
         while len(self._response_cache) > self._response_cache_max:
             self._response_cache.popitem(last=False)
+
+    def get_session_lock(self, session_id: str) -> asyncio.Lock:
+        """Get or create a lock for the given session."""
+        if session_id not in self._session_locks:
+            self._session_locks[session_id] = asyncio.Lock()
+        return self._session_locks[session_id]
 
     def get_session_messages(self, session_id: str) -> list[dict[str, Any]]:
         """Get messages for a session."""
@@ -487,6 +558,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state.conversations = ConversationStore(datasight_dir / "conversations")
     state.bookmarks = BookmarkStore(datasight_dir / "bookmarks.json")
     state.dashboard = DashboardStore(datasight_dir / "dashboard.json")
+    state.reports = ReportStore(datasight_dir / "reports.json")
 
     # Load settings
     state.confirm_sql = settings.app.confirm_sql
@@ -657,6 +729,7 @@ async def generate_chat_response(
     message: str,
     session_id: str,
     state: AppState,
+    request: Request | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a chat message."""
     if state.llm_client is None:
@@ -708,6 +781,13 @@ async def generate_chat_response(
     api_calls = 0
 
     for _ in range(max_iterations):
+        # Stop early if the client disconnected (e.g. user clicked Stop)
+        if request is not None and await request.is_disconnected():
+            logger.info(
+                f"[chat] Client disconnected, stopping generation for session {session_id}"
+            )
+            return
+
         trimmed = state.trim_messages(messages)
         try:
             response = await state.llm_client.create_message(
@@ -778,6 +858,11 @@ async def generate_chat_response(
             for block in response.content:
                 if not isinstance(block, ToolUseBlock):
                     continue
+
+                # Check for client disconnect before running each tool
+                if request is not None and await request.is_disconnected():
+                    logger.info("[chat] Client disconnected before tool execution, stopping")
+                    return
 
                 tool_input = dict(block.input)
 
@@ -1087,15 +1172,16 @@ async def load_project_endpoint(request: Request, state: AppState = Depends(get_
     body = await request.json()
     project_path = body.get("path", "")
 
-    try:
-        result = await load_project(project_path, state)
-        return {"success": True, **result}
-    except ProjectError as e:
-        logger.error(f"Failed to load project {project_path}: {e}")
-        return {"success": False, "error": str(e)}
-    except Exception as e:
-        logger.error(f"Unexpected error loading project:\n{traceback.format_exc()}")
-        return {"success": False, "error": str(e)}
+    async with state.state_lock:
+        try:
+            result = await load_project(project_path, state)
+            return {"success": True, **result}
+        except ProjectError as e:
+            logger.error(f"Failed to load project {project_path}: {e}")
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Unexpected error loading project:\n{traceback.format_exc()}")
+            return {"success": False, "error": str(e)}
 
 
 @app.delete("/api/projects/recent/{project_path:path}")
@@ -1650,6 +1736,88 @@ async def clear_dashboard(state: AppState = Depends(get_state)):
     return {"ok": True}
 
 
+@app.get("/api/reports")
+async def list_reports(state: AppState = Depends(get_state)):
+    """Return all saved reports."""
+    if state.reports is None:
+        return {"reports": []}
+    return {"reports": state.reports.list_all()}
+
+
+@app.post("/api/reports")
+async def add_report(request: Request, state: AppState = Depends(get_state)):
+    """Save a new report."""
+    if state.reports is None:
+        return {"ok": False, "error": "No project loaded"}
+    body = await request.json()
+    sql = body.get("sql", "").strip()
+    tool = body.get("tool", "run_sql")
+    name = body.get("name", "").strip()
+    plotly_spec = body.get("plotly_spec")
+    if not sql:
+        return {"error": "sql is required"}
+    report = state.reports.add(sql, tool, name, plotly_spec)
+    return {"report": report}
+
+
+@app.delete("/api/reports/{report_id}")
+async def remove_report(report_id: int, state: AppState = Depends(get_state)):
+    """Remove a saved report."""
+    if state.reports is None:
+        return {"ok": True}
+    state.reports.delete(report_id)
+    return {"ok": True}
+
+
+@app.delete("/api/reports")
+async def clear_reports(state: AppState = Depends(get_state)):
+    """Remove all saved reports."""
+    if state.reports is None:
+        return {"ok": True}
+    state.reports.clear()
+    return {"ok": True}
+
+
+@app.post("/api/reports/{report_id}/run")
+async def run_report(report_id: int, state: AppState = Depends(get_state)):
+    """Re-execute a saved report against fresh data."""
+    if state.reports is None:
+        return {"ok": False, "error": "No project loaded"}
+    report = state.reports.get(report_id)
+    if report is None:
+        return {"ok": False, "error": "Report not found"}
+    if state.sql_runner is None:
+        return {"ok": False, "error": "SQL runner not initialized"}
+
+    result = await execute_tool(
+        report["tool"],
+        {
+            "sql": report["sql"],
+            "title": report.get("name", "Report"),
+            **({"plotly_spec": report["plotly_spec"]} if "plotly_spec" in report else {}),
+        },
+        run_sql=state.sql_runner.run_sql,
+        schema_map=state.schema_map or None,
+        dialect=state.sql_dialect,
+        query_logger=state.query_logger,
+        session_id="",
+        user_question=f"[Report] {report.get('name', '')}",
+    )
+
+    is_chart = (
+        report["tool"] == "visualize_data"
+        and result.result_html
+        and "<script" in result.result_html
+    )
+    return {
+        "ok": True,
+        "html": result.result_html,
+        "type": "chart" if is_chart else "table",
+        "title": report.get("name", ""),
+        "meta": result.meta,
+    }
+
+
 @app.get("/api/settings")
 async def get_settings(state: AppState = Depends(get_state)):
     """Return current feature toggles."""
@@ -1665,23 +1833,24 @@ async def get_settings(state: AppState = Depends(get_state)):
 async def update_settings(request: Request, state: AppState = Depends(get_state)):
     """Update feature toggles."""
     body = await request.json()
-    need_rebuild = False
-    if "confirm_sql" in body:
-        state.confirm_sql = bool(body["confirm_sql"])
-    if "explain_sql" in body:
-        old = state.explain_sql
-        state.explain_sql = bool(body["explain_sql"])
-        if old != state.explain_sql:
-            need_rebuild = True
-    if "clarify_sql" in body:
-        old = state.clarify_sql
-        state.clarify_sql = bool(body["clarify_sql"])
-        if old != state.clarify_sql:
-            need_rebuild = True
-    if "show_cost" in body:
-        state.show_cost = bool(body["show_cost"])
-    if need_rebuild:
-        state.rebuild_system_prompt()
+    async with state.state_lock:
+        need_rebuild = False
+        if "confirm_sql" in body:
+            state.confirm_sql = bool(body["confirm_sql"])
+        if "explain_sql" in body:
+            old = state.explain_sql
+            state.explain_sql = bool(body["explain_sql"])
+            if old != state.explain_sql:
+                need_rebuild = True
+        if "clarify_sql" in body:
+            old = state.clarify_sql
+            state.clarify_sql = bool(body["clarify_sql"])
+            if old != state.clarify_sql:
+                need_rebuild = True
+        if "show_cost" in body:
+            state.show_cost = bool(body["show_cost"])
+        if need_rebuild:
+            state.rebuild_system_prompt()
     logger.info(
         f"Settings updated: confirm_sql={state.confirm_sql}, "
         f"explain_sql={state.explain_sql}, clarify_sql={state.clarify_sql}, "
@@ -1747,37 +1916,38 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
     model = body.get("model", "")
     base_url = body.get("base_url", "")
 
-    # Set environment variables for the chosen provider
-    os.environ["LLM_PROVIDER"] = provider
+    async with state.state_lock:
+        # Set environment variables for the chosen provider
+        os.environ["LLM_PROVIDER"] = provider
 
-    if provider == "anthropic":
-        if api_key:
-            os.environ["ANTHROPIC_API_KEY"] = api_key
-        if model:
-            os.environ["ANTHROPIC_MODEL"] = model
-        if base_url:
-            os.environ["ANTHROPIC_BASE_URL"] = base_url
-    elif provider == "ollama":
-        if model:
-            os.environ["OLLAMA_MODEL"] = model
-        if base_url:
-            os.environ["OLLAMA_BASE_URL"] = base_url
-    elif provider == "github":
-        if api_key:
-            os.environ["GITHUB_TOKEN"] = api_key
-        if model:
-            os.environ["GITHUB_MODELS_MODEL"] = model
-        if base_url:
-            os.environ["GITHUB_MODELS_BASE_URL"] = base_url
+        if provider == "anthropic":
+            if api_key:
+                os.environ["ANTHROPIC_API_KEY"] = api_key
+            if model:
+                os.environ["ANTHROPIC_MODEL"] = model
+            if base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = base_url
+        elif provider == "ollama":
+            if model:
+                os.environ["OLLAMA_MODEL"] = model
+            if base_url:
+                os.environ["OLLAMA_BASE_URL"] = base_url
+        elif provider == "github":
+            if api_key:
+                os.environ["GITHUB_TOKEN"] = api_key
+            if model:
+                os.environ["GITHUB_MODELS_MODEL"] = model
+            if base_url:
+                os.environ["GITHUB_MODELS_BASE_URL"] = base_url
 
-    # Reinitialize LLM client
-    init_llm_client(state)
+        # Reinitialize LLM client
+        init_llm_client(state)
 
-    # Rebuild system prompt if schema is loaded
-    if state.schema_text:
-        state.rebuild_system_prompt()
+        # Rebuild system prompt if schema is loaded
+        if state.schema_text:
+            state.rebuild_system_prompt()
 
-    connected = state.llm_client is not None
+        connected = state.llm_client is not None
     if connected:
         logger.info(f"LLM configured: provider={provider}, model={state.model}")
     else:
@@ -1855,8 +2025,15 @@ async def chat(request: Request, state: AppState = Depends(get_state)):
             media_type="text/event-stream",
         )
 
+    session_lock = state.get_session_lock(session_id)
+
+    async def locked_generator() -> AsyncIterator[str]:
+        async with session_lock:
+            async for event in generate_chat_response(message, session_id, state, request=request):
+                yield event
+
     return StreamingResponse(
-        generate_chat_response(message, session_id, state),
+        locked_generator(),
         media_type="text/event-stream",
     )
 
