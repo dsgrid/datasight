@@ -199,3 +199,51 @@ datasight export e5f6g7h8 --exclude 0,3 -o wind-report.html
 The exported HTML page includes all messages, SQL queries with syntax
 highlighting, data tables, and interactive Plotly charts — ready to share
 with colleagues or embed in a report.
+
+## Run saved reports
+
+Reports saved in the web UI can be re-executed from the CLI. No AI is
+involved — the saved SQL runs directly against the database.
+
+### List reports
+
+```bash
+datasight report list
+```
+
+```
+ ID  Name                Tool            SQL
+─────────────────────────────────────────────────────────────────
+  1  Top states          run_sql         SELECT state, SUM(net_generation_mwh)...
+  2  Monthly wind trend  visualize_data  SELECT DATE_TRUNC('month', report_dat...
+```
+
+### Run a report
+
+```bash
+# Table output (default)
+datasight report run 1
+
+# CSV or JSON output
+datasight report run 1 --format csv
+datasight report run 1 --format json -o results.json
+
+# Export a chart report as HTML or Plotly JSON
+datasight report run 2 --chart-format html -o trend.html
+datasight report run 2 --chart-format json -o trend.json
+```
+
+### Delete a report
+
+```bash
+datasight report delete 1
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--format` | `table` | Output format: `table`, `csv`, or `json` |
+| `--chart-format` | — | Chart export format: `html` or `json` |
+| `-o` / `--output` | — | Save output to a file |
+| `--project-dir` | `.` | Project directory |

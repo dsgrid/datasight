@@ -171,6 +171,32 @@ bookmark to populate the input with its SQL. Bookmarks are stored in
 
 To clear all bookmarks, click "Clear" in the Bookmarks section header.
 
+## Save reports
+
+Reports let you save a query and re-run it against fresh data without
+involving the AI. Unlike bookmarks (which populate the chat input), reports
+execute immediately and display the result inline.
+
+### Save a report
+
+Hover over any result (table or chart) and click **Save Report**. The
+report captures the SQL, tool type, chart specification (if applicable), and
+the title.
+
+### Run a report
+
+Click a report in the **Reports** sidebar section. datasight re-executes
+the saved SQL and renders the result directly in the chat — no LLM call, no
+token cost.
+
+### Manage reports
+
+- **Delete** — click the **x** button on any report in the sidebar
+- **Clear all** — click "Clear" in the Reports section header
+
+Reports are stored in `.datasight/reports.json` and persist across server
+restarts.
+
 ## Conversation history
 
 Chat conversations are saved automatically and persist across page reloads

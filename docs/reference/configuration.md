@@ -100,6 +100,8 @@ project directory. This is created automatically and should be added to
 |------|-------------|
 | `.datasight/conversations/` | Saved chat conversations as JSON files. Each file contains the message history and UI event log for replay. |
 | `.datasight/bookmarks.json` | Bookmarked SQL queries with names. |
+| `.datasight/reports.json` | Saved reports — rerunnable queries with optional chart specs. |
+| `.datasight/dashboard.json` | Pinned dashboard items and layout. |
 
 ## Precedence
 

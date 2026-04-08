@@ -176,6 +176,51 @@ are loaded from disk and formatted into the prompt. Together, they give the AI
 enough context to write accurate SQL without needing to explore the database
 itself.
 
+## Timeouts and retries
+
+### Query timeouts
+
+All SQL runners enforce a configurable timeout on query execution
+(default: **120 seconds**). The timeout wraps the `asyncio.to_thread` call
+with `asyncio.wait_for`, so it applies at the async layer regardless of the
+database backend.
+
+When a query times out, the runner raises `QueryTimeoutError` (a subclass
+of `QueryError`). The agent loop catches this and returns a descriptive
+error message to the LLM so it can retry with a simpler query.
+
+The default is set by `DEFAULT_QUERY_TIMEOUT` in `datasight.runner`. Each
+runner accepts a `query_timeout` parameter in its constructor to override
+the default.
+
+### LLM timeouts
+
+Both the Anthropic and OpenAI-compatible LLM clients pass a timeout to their
+underlying SDK clients (default: **120 seconds**, set by
+`DEFAULT_LLM_TIMEOUT` in `datasight.llm`). This prevents indefinite hangs
+when an API endpoint is unresponsive.
+
+### LLM retries
+
+Transient LLM failures are retried automatically with exponential backoff:
+
+- **Max attempts:** 3 (set by `DEFAULT_MAX_RETRIES`)
+- **Base delay:** 1 second, doubled each retry (1s, 2s, 4s)
+- **Anthropic:** retries on `APIConnectionError` and `RateLimitError` (429).
+  Other `APIStatusError` responses (auth failures, validation errors) fail
+  immediately.
+- **OpenAI-compatible:** retries on errors whose message contains
+  `connection`, `timeout`, `rate`, `429`, `502`, `503`, or `504`. All other
+  errors fail immediately.
+
+### Client disconnect detection
+
+The SSE chat generator checks `request.is_disconnected()` before each LLM
+call and before each tool execution. When the user clicks **Stop** in the
+web UI, the frontend aborts the fetch request, and the backend detects the
+disconnect and stops processing — avoiding wasted LLM API calls and
+database queries.
+
 ## Web UI
 
 The frontend is a single HTML file with vanilla JavaScript — no build step,
