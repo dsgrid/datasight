@@ -2,3 +2,6 @@ site/
 .venv
 __pycache__
 .datasight/
+build/
+dist/
+old-env

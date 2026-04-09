@@ -57,7 +57,6 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - def_list
-  - mkdocs-click
   - toc:
       permalink: true
 
@@ -72,6 +71,7 @@ nav:
       - Project setup guide: end-user/quickstart.md
       - Use the web UI: end-user/web-ui.md
       - Use the CLI: end-user/cli-usage.md
+      - Inspection workflows: end-user/inspection-workflows.md
       - Create visualizations: end-user/visualizations.md
       - Query confidence features: end-user/query-confidence.md
       - Log and review SQL queries: end-user/query-log.md

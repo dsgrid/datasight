@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="{{plotly_cdn}}"></script>
+<script src="{{marked_cdn}}"></script>
+<script src="{{dompurify_cdn}}"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -63,6 +65,81 @@
   }
   .table-container tr:hover td { background: #f8f9fa; }
   .table-toolbar, .table-pagination { display: none; }
+  .source-details {
+    margin: 0 12px 12px;
+    border: 1px solid #dbe4ea;
+    border-radius: 10px;
+    background: #f9fbfc;
+  }
+  .source-details summary {
+    cursor: pointer;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #315164;
+  }
+  .source-meta {
+    display: grid;
+    gap: 6px;
+    padding: 0 12px 12px;
+    font-size: 0.8rem;
+  }
+  .source-row {
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    gap: 10px;
+  }
+  .source-row strong {
+    color: #6b7b88;
+  }
+  .source-sql {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #10212b;
+    color: #ecf5fa;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
+  .source-error {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fff1f1;
+    color: #9b1c1c;
+  }
+  .note-container {
+    padding: 16px 18px;
+  }
+  .section-container {
+    padding: 18px 18px 14px;
+    background: linear-gradient(180deg, #edf9f8, white);
+  }
+  .section-body h1, .section-body h2, .section-body h3 {
+    margin: 0 0 8px;
+    color: #023d60;
+    line-height: 1.2;
+  }
+  .section-body p { margin: 0 0 10px; color: #3b4a56; }
+  .note-body {
+    color: #24323d;
+  }
+  .note-body h1, .note-body h2, .note-body h3 {
+    margin: 0 0 10px;
+    color: #023d60;
+    line-height: 1.25;
+  }
+  .note-body p { margin: 0 0 10px; }
+  .note-body ul, .note-body ol { margin: 0 0 10px 22px; }
+  .note-body code {
+    background: #f1f3f5;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9em;
+  }
   iframe {
     width: 100%; height: 400px; border: none;
   }
@@ -81,6 +158,20 @@
 {{#is_chart}}<div class="chart-container" id="chart-{{idx}}"></div>{{/is_chart}}
 {{#is_iframe}}<iframe sandbox="allow-scripts allow-same-origin" srcdoc="{{{html}}}"></iframe>{{/is_iframe}}
 {{#is_table}}<div class="table-container">{{{html}}}</div>{{/is_table}}
+{{#is_note}}<div class="note-container"><div class="note-body" data-markdown="{{{markdown}}}"></div></div>{{/is_note}}
+{{#is_section}}<div class="section-container"><div class="section-body" data-markdown="{{{markdown}}}"></div></div>{{/is_section}}
+{{#has_source_meta}}
+<details class="source-details">
+  <summary>Source</summary>
+  <div class="source-meta">
+    {{#source_rows}}
+    <div class="source-row"><strong>{{label}}</strong><span>{{value}}</span></div>
+    {{/source_rows}}
+    {{#source_sql}}<pre class="source-sql">{{source_sql}}</pre>{{/source_sql}}
+    {{#source_error}}<div class="source-error">{{source_error}}</div>{{/source_error}}
+  </div>
+</details>
+{{/has_source_meta}}
 </div>
 {{/cards}}
 </div>
@@ -109,6 +200,15 @@
       modeBarButtonsToRemove: ['lasso2d', 'select2d'],
       displaylogo: false
     });
+  });
+
+  document.querySelectorAll('.note-body[data-markdown]').forEach(function(el) {
+    var markdown = el.getAttribute('data-markdown') || '';
+    el.innerHTML = DOMPurify.sanitize(marked.parse(markdown));
+  });
+  document.querySelectorAll('.section-body[data-markdown]').forEach(function(el) {
+    var markdown = el.getAttribute('data-markdown') || '';
+    el.innerHTML = DOMPurify.sanitize(marked.parse(markdown));
   });
 </script>
 </body>

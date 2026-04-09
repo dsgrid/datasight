@@ -7,7 +7,36 @@ queries, and navigating your database schema.
 ## Landing page
 
 When you open datasight with no project loaded, you see a landing page with
-up to three sections:
+guided starters, quick-open paths, and recent projects.
+
+### Guided starters
+
+The landing page leads with four starter workflows:
+
+- **Profile this dataset** — deterministic overview of table sizes, date
+  coverage, measure candidates, and likely dimensions
+- **Find key dimensions** — likely grouping columns, suggested breakdowns,
+  and join hints
+- **Build a trend chart** — candidate date/measure pairs plus starter chart
+  recommendations
+- **Audit nulls and outliers** — null-heavy columns, suspicious numeric
+  ranges, and quick QA notes
+
+Choose a starter first, then open files or a project. datasight runs the
+selected starter immediately after the data loads.
+
+The starter results include follow-up actions, so you can move from the
+overview into a real question without rewriting the prompt from scratch.
+
+Examples include:
+
+- **Inspect Top Dimension**
+- **Build a First Trend**
+- **Profile `<table>`**
+
+These buttons send a concrete follow-up prompt into the normal chat workflow.
+
+Beyond starters, the landing page has up to three sections:
 
 ### LLM configuration
 
@@ -99,6 +128,13 @@ conversation history. Toggle it with the hamburger button in the header.
 
 Click a table name to expand it and see all columns with their types.
 
+**Schema search:** the search box above the table list filters both table
+names and column names. Matching column hits auto-expand their parent
+tables, and matching text is highlighted inline.
+
+When the underlying dataset changes, the filter resets automatically so the
+sidebar does not stay stuck in a stale filtered state.
+
 **Preview rows:** click the "Preview rows" button at the top of the expanded
 column list to see the first 10 rows inline. Click again to hide.
 
@@ -106,11 +142,50 @@ column list to see the first 10 rows inline. Click again to hide.
 count, null count, min, max, and average (for numeric columns). Click again
 to collapse.
 
+Both table previews and column stats are cached in the browser and server, so
+reopening the same item is usually instant.
+
 ### Example queries
 
 If your project has a `queries.yaml` file, the example queries appear below
 the tables. Click one to populate the chat input. When a table is selected,
 only queries relevant to that table are shown.
+
+### Recipes
+
+The **Recipes** section provides reusable prompt recipes generated from the
+loaded schema. These are deterministic project-specific prompts such as:
+
+- profile the biggest tables
+- break down by a likely dimension
+- start with a trend analysis
+- summarize a likely measure
+
+Click a recipe to load its prompt into the chat input, then edit or send it.
+
+### Inspect
+
+The **Inspect** section gives you explicit access to the same deterministic
+inspection flows that power the guided starters:
+
+- **Profile dataset**
+- **Find dimensions**
+- **Quality audit**
+- **Trend ideas**
+
+These are useful after a project is already loaded, because you can rerun the
+deterministic inspection tools without going back to the landing page.
+
+If you select a table in the sidebar first, the same section also offers
+table-scoped actions:
+
+- **Profile selected table**
+- **Dimensions on table**
+- **Quality on table**
+- **Trends on table**
+
+The scope label at the top of the section shows whether the action will run on
+the full dataset or the selected table.
 
 ## Work with results
 
@@ -136,6 +211,20 @@ chart provides:
 
 See [Create visualizations](visualizations.md) for more on chart types.
 
+### Result provenance
+
+Each live result card includes a **Source** disclosure with:
+
+- the originating question
+- tool type
+- row and column counts
+- execution time
+- chart type
+- generated SQL
+
+Pinned dashboard cards preserve this metadata and exported dashboards include
+it as well.
+
 ## Pin results to the dashboard
 
 Each result (table or chart) shows a **Pin** button on hover. Clicking it
@@ -149,6 +238,17 @@ it.
 Pinned items persist across chat clears — clicking "New chat" does not
 remove items from the dashboard.
 
+### Notes and sections
+
+The dashboard is not limited to pinned tables and charts. You can also add:
+
+- **Notes** — short markdown commentary between cards
+- **Sections** — headings and short intros that group the cards that follow
+
+Use the dashboard toolbar to add them, or use the insert controls between
+cards. This makes exports read like analysis documents instead of a loose grid
+of results.
+
 ### Dashboard layout
 
 The dashboard toolbar lets you choose a column layout:
@@ -158,6 +258,13 @@ The dashboard toolbar lets you choose a column layout:
 
 Drag cards by their handle (visible on hover) to reorder them. Charts
 automatically resize to fit their container when the layout changes.
+
+The dashboard toolbar also supports:
+
+- **Add note**
+- **Add section**
+- **Sync scales** for chart comparison
+- **Export dashboard** as a standalone HTML page
 
 ## Bookmark queries
 
@@ -229,6 +336,42 @@ the right. It shows every SQL query executed in the current session with:
 
 Failed queries are highlighted with an orange border.
 
+## Settings and project health
+
+Open the **Settings** panel from the header to configure:
+
+- LLM provider, model, API key, and base URL
+- query behavior toggles such as SQL confirmation and explanations
+- display options like cost visibility
+
+The same panel includes a **Project Health** section that checks:
+
+- `.env`
+- LLM settings validity
+- database configuration
+- `schema_description.md`
+- `queries.yaml`
+- `.datasight` writability
+- live database connectivity
+
+The health panel refreshes automatically after major project/explore
+transitions.
+
+## Command palette
+
+Press **Cmd/Ctrl+K** to open the command palette. It supports:
+
+- view switching and panel toggles
+- project switching
+- schema navigation
+- table preview and column stats actions
+- starters
+- recipes
+- bookmarks
+- saved reports
+- conversation history
+- dashboard composition actions
+
 ## Export a conversation
 
 Click the **export** button (download icon) in the header to enter export
@@ -256,9 +399,11 @@ Press **?** to see the shortcuts overlay. All shortcuts:
 
 | Shortcut | Action |
 |----------|--------|
-| `/` or `Cmd/Ctrl+K` | Focus question input |
+| `Cmd/Ctrl+K` | Open command palette |
+| `/` | Focus question input |
 | `Cmd/Ctrl+B` | Toggle sidebar |
 | `N` | New conversation |
+| `D` | Toggle chat/dashboard view |
 | `Escape` | Close modal / blur input |
 | `?` | Show shortcuts help |
 

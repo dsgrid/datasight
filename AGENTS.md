@@ -34,8 +34,8 @@ src/datasight/
     ├── static/     # app.js, style.css
     └── templates/  # index.html
 tests/              # pytest + pytest-asyncio
-docs/               # MkDocs Material documentation
-mkdocs.yml          # MkDocs config
+docs/               # zensical documentation source
+mkdocs.yml          # legacy docs config; zensical is the active docs workflow
 ```
 
 ## Development commands
@@ -44,12 +44,15 @@ mkdocs.yml          # MkDocs config
 # Install with dev dependencies
 pip install -e ".[dev]"
 
-# Run pre-commit hooks (ruff, eslint, ty)
+# Run pre-commit hooks (ruff, eslint, ty, docs CLI reference drift)
 pre-commit run --all-files
 
 # Build docs
-mkdocs serve        # dev server at localhost:8000
-mkdocs build --strict
+uv run zensical serve
+uv run zensical build
+
+# Regenerate the static CLI reference after CLI changes
+uv run python scripts/generate_cli_reference.py
 
 # Run tests
 pytest
@@ -63,6 +66,7 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 - **ruff-format** — Python formatting.
 - **eslint** — JavaScript lint for `src/datasight/web/static/*.js`. Uses flat config (`eslint.config.js`). Browser globals like `ResizeObserver` and `alert` must be accessed via `window.` prefix.
 - **ty** — Python type checking. Excludes `src/datasight/llm.py`. Optional imports (like `psycopg`) need `# ty: ignore[unresolved-import]`.
+- **docs CLI reference drift** — Ensures `docs/reference/cli.md` stays aligned with the current Click command tree.
 
 ## Code conventions
 
@@ -74,15 +78,16 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 
 ## Documentation
 
-Docs use **MkDocs Material**. Key details:
+Docs use **zensical**. Key details:
 
-- Config: `mkdocs.yml`
-- Content: `docs/` directory, standard Markdown
+- Source content lives in `docs/` as standard Markdown
+- Serve docs locally with `uv run zensical serve`
+- Build docs with `uv run zensical build`
 - Mermaid diagrams: use ` ```mermaid ` fences
 - Admonitions: use `!!! tip`, `!!! warning`
-- CLI reference: uses `mkdocs-click` markdown extension (`::: mkdocs-click` blocks)
-- Icons: use `:material-icon-name:` and `:octicons-icon-name:` (requires `pymdownx.emoji` extension)
-- CI: `.github/workflows/gh-pages.yml` deploys to GitHub Pages on push to main
+- `docs/reference/cli.md` is generated from the Click command tree with `uv run python scripts/generate_cli_reference.py`
+- Keep docs changes aligned with the current CLI and web UI behavior
+- CI: `.github/workflows/gh-pages.yml` builds the site with `zensical build` and deploys to GitHub Pages on push to main
 
 ## Testing
 

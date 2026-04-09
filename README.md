@@ -34,6 +34,9 @@ Or ask from the command line without starting a server:
 ```bash
 datasight ask "What are the top 10 records?"
 datasight ask "Show trends by year" --chart-format html -o chart.html
+datasight profile
+datasight quality --format markdown -o quality.md
+datasight ask --file questions.txt --output-dir batch-output
 ```
 
 ## Features
@@ -42,10 +45,12 @@ datasight ask "Show trends by year" --chart-format html -o chart.html
 - **Interactive charts** — Plotly visualizations with chart-type switching
 - **Multiple databases** — DuckDB, PostgreSQL, SQLite, and Flight SQL
 - **Headless CLI** — `datasight ask` runs queries without a web server
+- **Deterministic CLI workflows** — profile, quality, dimension, trend, and recipe commands that do not require an LLM
 - **Schema browser** — sidebar with tables, columns, and example queries
 - **Schema auto-discovery** — tables, columns, and types detected automatically
 - **Domain context** — describe your data in Markdown for better AI understanding
 - **Example queries** — seed the AI with question/SQL pairs
+- **Reusable prompt recipes** — project-specific analysis prompts derived from the schema
 - **Multi-chart dashboard** — pin results to a dashboard with configurable layouts
 - **Session export** — export conversations as shareable HTML pages
 - **Keyboard shortcuts** — `?` to see all shortcuts, `/` to focus input
@@ -59,7 +64,7 @@ lightweight HTML/JS frontend. Swap in GitHub Models or Ollama by setting
 Plotly.
 
 ```
-datasight run / datasight ask
+datasight run / datasight ask / datasight profile / datasight quality
   → LLM provider (Anthropic / GitHub Models / Ollama)
     → DuckDB / PostgreSQL / SQLite / Flight SQL
     → Plotly chart generator
@@ -70,5 +75,7 @@ datasight run / datasight ask
 
 ```bash
 pip install "datasight[dev] @ git+https://github.com/dsgrid/datasight.git"
-cd docs && make html
+uv run zensical serve
+uv run zensical build
+uv run python scripts/generate_cli_reference.py
 ```

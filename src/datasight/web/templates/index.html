@@ -13,6 +13,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="/static/search_helpers.js?v=1"></script>
 <script>
   // Apply saved theme immediately to prevent flash (respect OS preference on first visit)
   (function() {
@@ -42,22 +43,26 @@
       <button class="view-tab" onclick="switchView('dashboard')" id="tab-dashboard">Dashboard</button>
     </div>
     <div class="actions">
-      <button class="btn-icon" onclick="summarizeDataset()" title="Summarize dataset" id="summarize-btn">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 6h10M2 9h12M2 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      </button>
-      <button class="btn-icon" onclick="toggleTheme()" title="Toggle theme" id="theme-toggle">
-        <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-        <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64a6 6 0 107.42 7.42z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-      </button>
-      <button class="btn-icon" onclick="toggleRightPanel()" title="Toggle SQL panel" id="sql-panel-toggle">SQL</button>
-      <button class="btn-icon" onclick="toggleExportMode()" title="Export conversation" id="export-toggle">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      </button>
-      <button class="btn-icon" onclick="toggleSettingsPanel()" title="Settings" id="settings-toggle">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" stroke-width="1.3"/><path d="M13.5 8c0-.3 0-.5-.1-.8l1.4-1.1-1.5-2.6-1.7.7c-.4-.3-.8-.6-1.3-.8L10 1.6H7l-.3 1.8c-.5.2-.9.5-1.3.8l-1.7-.7-1.5 2.6 1.4 1.1c-.1.3-.1.5-.1.8s0 .5.1.8l-1.4 1.1 1.5 2.6 1.7-.7c.4.3.8.6 1.3.8l.3 1.8h3l.3-1.8c.5-.2.9-.5 1.3-.8l1.7.7 1.5-2.6-1.4-1.1c.1-.3.1-.5.1-.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-      </button>
-      <a class="btn-icon" href="https://dsgrid.github.io/datasight/" target="_blank" rel="noopener" title="Documentation">Docs</a>
-      <button class="btn-icon" onclick="clearChat()" title="New conversation">New chat</button>
+      <div class="action-group action-group-primary">
+        <button class="btn-icon btn-icon-primary" onclick="summarizeDataset()" title="Summarize dataset" id="summarize-btn">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 3h12M2 6h10M2 9h12M2 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <button class="btn-icon btn-icon-primary" onclick="toggleRightPanel()" title="Toggle SQL panel" id="sql-panel-toggle">SQL</button>
+        <button class="btn-icon btn-icon-primary" onclick="clearChat()" title="New conversation">New chat</button>
+      </div>
+      <div class="action-group action-group-secondary">
+        <button class="btn-icon" onclick="toggleTheme()" title="Toggle theme" id="theme-toggle">
+          <svg id="theme-icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          <svg id="theme-icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64a6 6 0 107.42 7.42z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="btn-icon" onclick="toggleExportMode()" title="Export conversation" id="export-toggle">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </button>
+        <button class="btn-icon" onclick="toggleSettingsPanel()" title="Settings" id="settings-toggle">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" stroke-width="1.3"/><path d="M13.5 8c0-.3 0-.5-.1-.8l1.4-1.1-1.5-2.6-1.7.7c-.4-.3-.8-.6-1.3-.8L10 1.6H7l-.3 1.8c-.5.2-.9.5-1.3.8l-1.7-.7-1.5 2.6 1.4 1.1c-.1.3-.1.5-.1.8s0 .5.1.8l-1.4 1.1 1.5 2.6 1.7-.7c.4.3.8.6 1.3.8l.3 1.8h3l.3-1.8c.5-.2.9-.5 1.3-.8l1.7.7 1.5-2.6-1.4-1.1c.1-.3.1-.5.1-.8z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        </button>
+        <a class="btn-icon" href="https://dsgrid.github.io/datasight/" target="_blank" rel="noopener" title="Documentation">Docs</a>
+      </div>
     </div>
   </header>
 
@@ -65,6 +70,7 @@
   <div class="landing-page" id="landing-page">
     <div class="landing-inner">
       <div class="landing-header">
+        <div class="landing-eyebrow">Structured starters, reusable SQL workflows, and narrative dashboards</div>
         <img src="/static/datasight-icon.svg" alt="datasight" class="landing-logo" />
         <h1>data<span>sight</span></h1>
         <p>AI-powered database exploration with natural language</p>
@@ -99,9 +105,41 @@
         </div>
       </div>
 
-      <!-- Two cards: Explore + Open Project -->
+      <div class="landing-starters">
+        <div class="landing-starters-head">
+          <div class="landing-section-label">Guided starters</div>
+          <p>Choose a concrete analysis path. After you open a file or project below, datasight will run it immediately.</p>
+        </div>
+        <div class="landing-starter-grid" id="landing-starter-grid">
+          <button class="landing-starter active" onclick="landingChooseStarter('profile')" data-starter-id="profile">
+            <span class="landing-starter-kicker">Orientation</span>
+            <strong>Profile this dataset</strong>
+            <span>Get a structured overview of tables, date coverage, measures, and likely dimensions.</span>
+          </button>
+          <button class="landing-starter" onclick="landingChooseStarter('dimensions')" data-starter-id="dimensions">
+            <span class="landing-starter-kicker">Discovery</span>
+            <strong>Find key dimensions</strong>
+            <span>Surface the categories, codes, and breakdowns worth exploring first.</span>
+          </button>
+          <button class="landing-starter" onclick="landingChooseStarter('trend')" data-starter-id="trend">
+            <span class="landing-starter-kicker">Visualization</span>
+            <strong>Build a trend chart</strong>
+            <span>Start with the most likely time-series view in the data.</span>
+          </button>
+          <button class="landing-starter" onclick="landingChooseStarter('quality')" data-starter-id="quality">
+            <span class="landing-starter-kicker">Quality</span>
+            <strong>Audit nulls and outliers</strong>
+            <span>Look for missingness, suspicious ranges, and columns that need scrutiny.</span>
+          </button>
+        </div>
+        <div class="landing-starter-status" id="landing-starter-status">
+          Selected: <strong>Profile this dataset</strong>. Open a file or project below to start with a structured overview.
+        </div>
+      </div>
+
       <div class="landing-cards" id="landing-cards">
-        <div class="landing-card" id="landing-explore-card">
+        <div class="landing-card landing-card-secondary" id="landing-explore-card">
+          <div class="landing-section-label">Quick open</div>
           <div class="landing-card-title">Explore Files</div>
           <p class="landing-card-desc">Open CSV, Parquet, or DuckDB files to start exploring immediately.</p>
           <div class="landing-input-row">
@@ -111,7 +149,8 @@
           <div class="landing-error" id="landing-explore-error"></div>
         </div>
 
-        <div class="landing-card" id="landing-project-card">
+        <div class="landing-card landing-card-secondary" id="landing-project-card">
+          <div class="landing-section-label">Saved setup</div>
           <div class="landing-card-title">Open Project</div>
           <p class="landing-card-desc" id="landing-project-desc">Open a datasight project with schema descriptions and example queries.</p>
           <div class="landing-recent" id="landing-recent"></div>
@@ -135,6 +174,14 @@
       <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
       <div class="sidebar-content" id="tables-list">
         <div class="sidebar-header">Tables</div>
+        <div class="sidebar-schema-search">
+          <input
+            type="text"
+            id="schema-search-input"
+            placeholder="Search tables and columns..."
+            oninput="handleSchemaSearchInput(this.value)"
+          />
+        </div>
         <div class="sidebar-add-files" id="sidebar-add-files">
           <input type="text" id="add-files-input" placeholder="Add file path..." onkeydown="if(event.key==='Enter')addFilesFromSidebar()" />
           <button onclick="addFilesFromSidebar()" title="Add">+</button>
@@ -150,6 +197,34 @@
         </div>
         <div class="queries-list" id="queries-list">
           <div class="no-queries">Loading...</div>
+        </div>
+      </div>
+      <div class="conversations-section collapsed" id="inspect-section">
+        <div class="sidebar-header" onclick="toggleSidebarSection('inspect-section')">
+          <span><span class="sidebar-collapse-icon">▼</span>Inspect</span>
+        </div>
+        <div class="inspect-panel">
+          <div class="inspect-scope" id="inspect-scope-label">Scope: dataset</div>
+          <div class="inspect-actions">
+            <button class="inspect-action-btn" onclick="runInspectAction('profile', 'dataset')">Profile dataset</button>
+            <button class="inspect-action-btn" onclick="runInspectAction('dimensions', 'dataset')">Find dimensions</button>
+            <button class="inspect-action-btn" onclick="runInspectAction('quality', 'dataset')">Quality audit</button>
+            <button class="inspect-action-btn" onclick="runInspectAction('trend', 'dataset')">Trend ideas</button>
+          </div>
+          <div class="inspect-actions inspect-actions-table">
+            <button class="inspect-action-btn" onclick="runInspectAction('profile', 'table')">Profile selected table</button>
+            <button class="inspect-action-btn" onclick="runInspectAction('dimensions', 'table')">Dimensions on table</button>
+            <button class="inspect-action-btn" onclick="runInspectAction('quality', 'table')">Quality on table</button>
+            <button class="inspect-action-btn" onclick="runInspectAction('trend', 'table')">Trends on table</button>
+          </div>
+        </div>
+      </div>
+      <div class="conversations-section collapsed" id="recipes-section">
+        <div class="sidebar-header" onclick="toggleSidebarSection('recipes-section')">
+          <span><span class="sidebar-collapse-icon">▼</span>Recipes</span>
+        </div>
+        <div id="recipes-list">
+          <div class="no-queries">No recipes yet.</div>
         </div>
       </div>
       <div class="conversations-section collapsed" id="bookmarks-section">
@@ -217,6 +292,14 @@
         <button class="layout-btn" onclick="setDashboardColumns(2)" title="2 columns" data-cols="2">2</button>
         <button class="layout-btn" onclick="setDashboardColumns(3)" title="3 columns" data-cols="3">3</button>
         <div class="dashboard-toolbar-sep"></div>
+        <button class="dashboard-note-btn" onclick="addDashboardNote()" title="Add a markdown note">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h10"/><path d="M4 10.5V3.5a1 1 0 0 1 1-1h5.8a1 1 0 0 1 .7.3l1.7 1.7a1 1 0 0 1 .3.7v5.3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/><path d="M6 6h4M6 8h4"/></svg>
+          Add Note
+        </button>
+        <button class="dashboard-note-btn" onclick="addDashboardSection()" title="Add a section heading">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><path d="M2.5 8h7"/><path d="M2.5 12h11"/></svg>
+          Add Section
+        </button>
         <button class="dashboard-sync-btn" onclick="syncChartScales()" title="Sync Y-axis scales across charts">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M2 12V4M14 12V4M5 8h6M5 5l-3 3 3 3M11 5l3 3-3 3"/></svg>
           Sync Scales
@@ -227,8 +310,8 @@
         </button>
       </div>
       <div class="dashboard-empty" id="dashboard-empty">
-        <p>No pinned items yet.</p>
-        <p style="font-size:0.85rem;">Pin charts and tables from the chat to build your dashboard.</p>
+        <p>No dashboard story yet.</p>
+        <p style="font-size:0.85rem;">Pin charts and tables from the chat, then add notes or sections to turn the results into a readable analysis.</p>
       </div>
       <div class="dashboard-grid" id="dashboard-grid"></div>
     </div>
@@ -275,6 +358,20 @@
     </div>
   </aside>
   <div class="projects-overlay" id="projects-overlay" onclick="toggleProjectsPanel()"></div>
+
+  <div class="palette-overlay" id="command-palette-overlay" onclick="closeCommandPalette()"></div>
+  <div class="command-palette" id="command-palette" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="command-palette-header">
+      <input
+        type="text"
+        id="command-palette-input"
+        placeholder="Search actions, tables, columns, and projects..."
+        oninput="updateCommandPaletteResults()"
+      />
+      <button class="command-palette-close" onclick="closeCommandPalette()" title="Close">&times;</button>
+    </div>
+    <div class="command-palette-results" id="command-palette-results"></div>
+  </div>
 
   <!-- Save popover (anchored to header, shown in explore mode) -->
   <div class="save-popover" id="save-popover">
@@ -368,10 +465,19 @@
           </span>
         </label>
       </div>
+      <div class="settings-section">
+        <div class="settings-section-title">
+          Project Health
+          <button class="settings-inline-btn" onclick="loadProjectHealth()" title="Refresh health checks">Refresh</button>
+        </div>
+        <div class="project-health" id="project-health">
+          <div class="project-health-empty">Open a project to inspect configuration and connectivity.</div>
+        </div>
+      </div>
     </div>
   </aside>
   <div class="settings-overlay" id="settings-overlay" onclick="toggleSettingsPanel()"></div>
 
-<script src="/static/app.js?v=33"></script>
+<script src="/static/app.js?v=35"></script>
 </body>
 </html>

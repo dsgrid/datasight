@@ -18,6 +18,7 @@ export default [
         URL: "readonly",
         Blob: "readonly",
         TextDecoder: "readonly",
+        module: "readonly",
         // Libraries loaded via CDN
         marked: "readonly",
         hljs: "readonly",

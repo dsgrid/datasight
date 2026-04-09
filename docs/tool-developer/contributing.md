@@ -12,9 +12,10 @@ pip install -e ".[dev]"
 
 ```
 src/datasight/
-├── cli.py              # Click CLI commands (run, ask, export, verify, log)
+├── cli.py              # Click CLI commands (run, ask, profile, quality, doctor, export, verify, log, ...)
 ├── agent.py            # Shared agent loop and tool execution
 ├── config.py           # Configuration helpers
+├── data_profile.py     # Deterministic dataset overviews and CLI/web recipes
 ├── schema.py           # Database introspection
 ├── llm.py              # LLM client abstraction
 ├── chart.py            # Plotly chart generator
@@ -54,8 +55,9 @@ pre-commit install
 ```
 
 Hooks run ruff (lint + format), ESLint (JavaScript), and ty (type checking).
-If a hook fails, it will either auto-fix the file (ruff format) or show you
-what to fix. Stage the fixes and commit again.
+There is also a lightweight drift check for the generated CLI reference. If a
+hook fails, it will either auto-fix the file (ruff format) or show you what to
+fix. Stage the fixes and commit again.
 
 To run all hooks manually against every file:
 
@@ -92,10 +94,16 @@ datasight verify -v
 
 ## Documentation
 
-Docs use Zensical (successor to MkDocs Material).
+Docs use zensical.
 
 ```bash
 pip install -e ".[dev]"
-zensical serve
-# Open http://localhost:8000
+uv run zensical serve
+uv run zensical build
+```
+
+When you change Click commands or help text, regenerate the static CLI docs:
+
+```bash
+uv run python scripts/generate_cli_reference.py
 ```

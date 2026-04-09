@@ -112,7 +112,9 @@ sequenceDiagram
 ## Modules
 
 `datasight.cli`
-: Click CLI with `init`, `demo`, `run`, `ask`, `verify`, `export`, and `log` commands.
+: Click CLI with `init`, `demo`, `run`, `ask`, `profile`, `quality`,
+  `dimensions`, `trends`, `recipes`, `doctor`, `verify`, `export`, `log`,
+  and report-management commands.
 
 `datasight.agent`
 : Shared agent loop and tool execution. Used by both the web UI and the

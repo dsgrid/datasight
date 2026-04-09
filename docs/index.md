@@ -9,7 +9,8 @@ hide:
 **AI-powered database exploration with natural language.** Point datasight at
 your CSV, Parquet, or DuckDB files and start asking questions — no setup
 required. Or create a curated project with schema descriptions and example
-queries for your team.
+queries for your team. Start with guided starter workflows in the web UI or
+use deterministic CLI inspection commands before involving the LLM.
 
 ```bash
 pip install git+https://github.com/dsgrid/datasight.git
@@ -17,6 +18,10 @@ pip install git+https://github.com/dsgrid/datasight.git
 # Explore files instantly — no project setup needed
 datasight run
 # Open http://localhost:8084, enter a file path, and start asking questions
+
+# Or inspect a configured project without the web UI
+datasight profile
+datasight quality
 
 # Or try the built-in EIA energy demo dataset
 datasight demo ./my-project
@@ -41,6 +46,7 @@ overview.
     and review SQL.
 
     [:octicons-arrow-right-24: Getting started](end-user/getting-started.md)
+    [:octicons-arrow-right-24: Inspection workflows](end-user/inspection-workflows.md)
 
 -   :material-database-cog:{ .lg .middle } **Project developer**
 

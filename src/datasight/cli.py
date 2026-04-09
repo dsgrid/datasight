@@ -1,15 +1,30 @@
 """Command-line interface for datasight."""
 
+import asyncio
+import json
 import os
-import sys
 import shutil
+import sys
 from pathlib import Path
+from typing import Any, Literal
 
 import rich_click as click
+import yaml
 from loguru import logger
 
 from datasight import __version__
 from datasight.config import create_sql_runner_from_settings
+from datasight.data_profile import (
+    build_column_profile,
+    build_dataset_overview,
+    build_dimension_overview,
+    build_prompt_recipes,
+    build_quality_overview,
+    build_table_profile,
+    build_trend_overview,
+    find_column_info,
+    find_table_info,
+)
 from datasight.llm import create_llm_client
 from datasight.settings import Settings
 
@@ -65,10 +80,698 @@ def _resolve_db_path(settings: Settings, project_dir: str) -> str:
     return str(Path(project_dir) / raw_path)
 
 
+async def _run_ask_pipeline(
+    *,
+    question: str,
+    settings: Settings,
+    resolved_model: str,
+    project_dir: str,
+    sql_dialect: str,
+):
+    from datasight.agent import run_agent_loop
+    from datasight.config import (
+        format_example_queries,
+        load_example_queries,
+        load_schema_description,
+    )
+    from datasight.prompts import build_system_prompt
+    from datasight.schema import format_schema_context, introspect_schema
+    from datasight.sql_validation import build_schema_map
+
+    llm_client = create_llm_client(
+        provider=settings.llm.provider,
+        api_key=settings.llm.api_key,
+        base_url=settings.llm.base_url,
+    )
+    sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+
+    tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+    user_desc = load_schema_description(None, project_dir)
+    example_queries = load_example_queries(None, project_dir)
+    schema_text = format_schema_context(tables, user_desc)
+    if example_queries:
+        schema_text += format_example_queries(example_queries)
+
+    schema_info = [
+        {
+            "name": t.name,
+            "columns": [{"name": c.name, "dtype": c.dtype} for c in t.columns],
+        }
+        for t in tables
+    ]
+    schema_map = build_schema_map(schema_info)
+
+    sys_prompt = build_system_prompt(
+        schema_text,
+        mode="web",
+        clarify_sql=False,
+        dialect=sql_dialect,
+    )
+
+    return await run_agent_loop(
+        question=question,
+        llm_client=llm_client,
+        model=resolved_model,
+        system_prompt=sys_prompt,
+        run_sql=sql_runner.run_sql,
+        schema_map=schema_map,
+        dialect=sql_dialect,
+    )
+
+
+def _write_or_print(text: str, output_path: str | None) -> None:
+    if output_path:
+        Path(output_path).write_text(text, encoding="utf-8")
+        click.echo(f"Data saved to {output_path}")
+    else:
+        click.echo(text)
+
+
+def _render_profile_markdown(scope: str, profile_data: dict[str, Any]) -> str:
+    if scope == "dataset":
+        lines = [
+            "# Dataset Profile",
+            "",
+            f"- Tables: {profile_data['table_count']}",
+            f"- Columns: {profile_data['total_columns']}",
+            f"- Rows: {profile_data['total_rows']}",
+            "",
+            "## Largest Tables",
+        ]
+        for item in profile_data["largest_tables"]:
+            lines.append(
+                f"- `{item['name']}`: {item.get('row_count') or 0} rows, {item['column_count']} columns"
+            )
+        if profile_data["date_columns"]:
+            lines.extend(["", "## Date Coverage"])
+            for item in profile_data["date_columns"]:
+                lines.append(
+                    f"- `{item['table']}.{item['column']}`: {item.get('min') or '?'} -> {item.get('max') or '?'}"
+                )
+        if profile_data["measure_columns"]:
+            lines.extend(["", "## Measure Candidates"])
+            for item in profile_data["measure_columns"]:
+                lines.append(
+                    f"- `{item['table']}.{item['column']}` ({item.get('dtype') or 'unknown'})"
+                )
+        if profile_data["dimension_columns"]:
+            lines.extend(["", "## Dimension Candidates"])
+            for item in profile_data["dimension_columns"]:
+                sample_values = item.get("sample_values") or []
+                sample_suffix = (
+                    f" — samples: {', '.join(sample_values[:3])}" if sample_values else ""
+                )
+                lines.append(
+                    f"- `{item['table']}.{item['column']}`: "
+                    f"{item.get('distinct_count') or '?'} distinct, "
+                    f"{item.get('null_rate') or 0}% null{sample_suffix}"
+                )
+        return "\n".join(lines)
+
+    if scope == "table":
+        lines = [
+            f"# Table Profile: {profile_data['table']}",
+            "",
+            f"- Rows: {profile_data.get('row_count') or 0}",
+            f"- Columns: {profile_data['column_count']}",
+        ]
+        if profile_data["null_columns"]:
+            lines.extend(["", "## Null-heavy Columns"])
+            for item in profile_data["null_columns"]:
+                lines.append(
+                    f"- `{item['column']}`: {item['null_count']} nulls ({item.get('null_rate') or 0}%)"
+                )
+        if profile_data["date_columns"]:
+            lines.extend(["", "## Date Columns"])
+            for item in profile_data["date_columns"]:
+                lines.append(
+                    f"- `{item['column']}`: {item.get('min') or '?'} -> {item.get('max') or '?'}"
+                )
+        if profile_data["numeric_columns"]:
+            lines.extend(["", "## Numeric Columns"])
+            for item in profile_data["numeric_columns"]:
+                lines.append(
+                    f"- `{item['column']}`: min {item.get('min')}, max {item.get('max')}, avg {item.get('avg')}"
+                )
+        if profile_data["text_columns"]:
+            lines.extend(["", "## Text Dimensions"])
+            for item in profile_data["text_columns"]:
+                sample_values = item.get("sample_values") or []
+                sample_suffix = (
+                    f" — samples: {', '.join(sample_values[:3])}" if sample_values else ""
+                )
+                lines.append(
+                    f"- `{item['column']}`: {item.get('distinct_count') or '?'} distinct, "
+                    f"{item.get('null_rate') or 0}% null{sample_suffix}"
+                )
+        return "\n".join(lines)
+
+    lines = [
+        f"# Column Profile: {profile_data['table']}.{profile_data['column']}",
+        "",
+        f"- Type: {profile_data.get('dtype') or 'unknown'}",
+        f"- Distinct: {profile_data.get('distinct_count')}",
+        f"- Nulls: {profile_data.get('null_count')}",
+        f"- Null rate: {profile_data.get('null_rate')}",
+    ]
+    if profile_data.get("numeric_stats"):
+        stats = profile_data["numeric_stats"]
+        lines.extend(
+            [
+                "",
+                "## Numeric Stats",
+                f"- Min: {stats.get('min')}",
+                f"- Max: {stats.get('max')}",
+                f"- Avg: {stats.get('avg')}",
+            ]
+        )
+    if profile_data.get("date_coverage"):
+        coverage = profile_data["date_coverage"]
+        lines.extend(
+            [
+                "",
+                "## Date Coverage",
+                f"- Min: {coverage.get('min')}",
+                f"- Max: {coverage.get('max')}",
+            ]
+        )
+    if profile_data.get("dimension_stats"):
+        stats = profile_data["dimension_stats"]
+        sample_values = stats.get("sample_values") or []
+        lines.extend(
+            [
+                "",
+                "## Dimension Stats",
+                f"- Distinct: {stats.get('distinct_count')}",
+                f"- Nulls: {stats.get('null_count')}",
+                (
+                    "- Samples: " + ", ".join(sample_values[:5])
+                    if sample_values
+                    else "- Samples: none"
+                ),
+            ]
+        )
+    if profile_data.get("sample_values"):
+        lines.extend(
+            [
+                "",
+                "## Sample Values",
+                "- " + ", ".join(profile_data["sample_values"][:5]),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _render_doctor_markdown(project_dir: str, checks: list[dict[str, Any]]) -> str:
+    lines = [
+        "# datasight doctor",
+        "",
+        f"- Project: `{project_dir}`",
+        "",
+        "## Checks",
+    ]
+    for check in checks:
+        status = "OK" if check["ok"] else "FAIL"
+        lines.append(f"- **{check['name']}**: {status} — {check['detail']}")
+    return "\n".join(lines)
+
+
+def _render_quality_markdown(quality_data: dict[str, Any]) -> str:
+    lines = [
+        "# Dataset Quality Audit",
+        "",
+        f"- Tables scanned: {quality_data['table_count']}",
+    ]
+    if quality_data["null_columns"]:
+        lines.extend(["", "## Null-heavy Columns"])
+        for item in quality_data["null_columns"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item['null_count']} nulls "
+                f"({item.get('null_rate') or 0}%)"
+            )
+    if quality_data["numeric_flags"]:
+        lines.extend(["", "## Numeric Range Flags"])
+        for item in quality_data["numeric_flags"]:
+            lines.append(f"- `{item['table']}.{item['column']}`: {item['issue']}")
+    if quality_data["date_columns"]:
+        lines.extend(["", "## Date Coverage"])
+        for item in quality_data["date_columns"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item.get('min') or '?'} -> {item.get('max') or '?'}"
+            )
+    if quality_data["notes"]:
+        lines.extend(["", "## Notes"])
+        for item in quality_data["notes"]:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _render_dimensions_markdown(dimension_data: dict[str, Any]) -> str:
+    lines = [
+        "# Dimension Overview",
+        "",
+        f"- Tables scanned: {dimension_data['table_count']}",
+    ]
+    if dimension_data["dimension_columns"]:
+        lines.extend(["", "## Dimension Candidates"])
+        for item in dimension_data["dimension_columns"]:
+            samples = ", ".join((item.get("sample_values") or [])[:3])
+            sample_suffix = f" — samples: {samples}" if samples else ""
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item.get('distinct_count') or '?'} distinct, "
+                f"{item.get('null_rate') or 0}% null{sample_suffix}"
+            )
+    if dimension_data["suggested_breakdowns"]:
+        lines.extend(["", "## Suggested Breakdowns"])
+        for item in dimension_data["suggested_breakdowns"]:
+            lines.append(f"- `{item['table']}.{item['column']}`: {item['reason']}")
+    if dimension_data["join_hints"]:
+        lines.extend(["", "## Join Hints"])
+        for item in dimension_data["join_hints"]:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _render_trends_markdown(trend_data: dict[str, Any]) -> str:
+    lines = [
+        "# Trend Overview",
+        "",
+        f"- Tables scanned: {trend_data['table_count']}",
+    ]
+    if trend_data["trend_candidates"]:
+        lines.extend(["", "## Trend Candidates"])
+        for item in trend_data["trend_candidates"]:
+            lines.append(
+                f"- `{item['table']}`: `{item['measure_column']}` over `{item['date_column']}` "
+                f"({item['date_range']})"
+            )
+    if trend_data["breakout_dimensions"]:
+        lines.extend(["", "## Breakout Dimensions"])
+        for item in trend_data["breakout_dimensions"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item.get('distinct_count') or '?'} distinct values"
+            )
+    if trend_data["chart_recommendations"]:
+        lines.extend(["", "## Chart Recommendations"])
+        for item in trend_data["chart_recommendations"]:
+            lines.append(f"- `{item['title']}` ({item['chart_type']}): {item['reason']}")
+    if trend_data["notes"]:
+        lines.extend(["", "## Notes"])
+        for item in trend_data["notes"]:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _render_recipes_markdown(recipes: list[dict[str, str]]) -> str:
+    lines = ["# Prompt Recipes", ""]
+    for recipe in recipes:
+        lines.extend(
+            [
+                f"## [{recipe['id']}] {recipe['title']}",
+                "",
+                f"- Category: {recipe.get('category') or 'Recipe'}",
+                *([f"- Why this recipe: {recipe['reason']}"] if recipe.get("reason") else []),
+                f"- Prompt: {recipe['prompt']}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
+def _format_profile_value(value: Any, default: str = "?") -> str:
+    if value is None or value == "":
+        return default
+    return str(value)
+
+
+def _load_recipe_entries(
+    project_dir: str,
+    settings: Settings,
+    table: str | None = None,
+) -> list[dict[str, Any]]:
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    async def _run_recipes() -> list[dict[str, Any]]:
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info = [table_info]
+        recipes = await build_prompt_recipes(schema_info, sql_runner.run_sql)
+        return [{"id": idx, **recipe} for idx, recipe in enumerate(recipes, start=1)]
+
+    return asyncio.run(_run_recipes())
+
+
+def _build_metric_table(title: str, rows: list[tuple[str, str]]) -> Any:
+    from rich.table import Table as RichTable
+
+    table = RichTable(title=title)
+    table.add_column("Metric")
+    table.add_column("Value")
+    for label, value in rows:
+        table.add_row(label, value)
+    return table
+
+
+def _build_profile_detail_table(
+    title: str,
+    columns: list[tuple[str, Literal["left", "center", "right", "full", "default"]]],
+    rows: list[list[str]],
+) -> Any:
+    from rich.table import Table as RichTable
+
+    table = RichTable(title=title)
+    for label, justify in columns:
+        table.add_column(label, justify=justify)
+    for row in rows:
+        table.add_row(*row)
+    return table
+
+
+async def _load_schema_info_for_project(
+    project_dir: str,
+    settings: Settings,
+) -> tuple[Any, list[dict[str, Any]]]:
+    from datasight.schema import introspect_schema
+
+    sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+    tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+    schema_info = [
+        {
+            "name": t.name,
+            "row_count": t.row_count,
+            "columns": [
+                {"name": c.name, "dtype": c.dtype, "nullable": c.nullable} for c in t.columns
+            ],
+        }
+        for t in tables
+    ]
+    return sql_runner, schema_info
+
+
+def _slugify_filename(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value)
+    parts = [part for part in cleaned.split("-") if part]
+    return "-".join(parts)[:64] or "question"
+
+
+def _default_data_extension(output_format: str) -> str:
+    if output_format == "csv":
+        return ".csv"
+    if output_format == "json":
+        return ".json"
+    return ".txt"
+
+
+def _default_chart_extension(chart_format: str) -> str:
+    return {
+        "html": ".html",
+        "json": ".json",
+        "png": ".png",
+    }[chart_format]
+
+
+def _validate_batch_entry(
+    item: dict[str, Any],
+    *,
+    label: str,
+) -> dict[str, str | None]:
+    question = str(item.get("question") or "").strip()
+    if not question:
+        raise click.ClickException(f"{label}: expected a mapping with 'question'.")
+
+    output_format = str(item.get("format") or "")
+    if output_format and output_format not in {"table", "csv", "json"}:
+        raise click.ClickException(
+            f"{label}: invalid format {output_format!r}. Use table, csv, or json."
+        )
+
+    chart_format = str(item.get("chart_format") or "")
+    if chart_format and chart_format not in {"html", "json", "png"}:
+        raise click.ClickException(
+            f"{label}: invalid chart_format {chart_format!r}. Use html, json, or png."
+        )
+
+    return {
+        "question": question,
+        "output_format": output_format,
+        "chart_format": chart_format,
+        "name": str(item.get("name") or ""),
+        "output": str(item.get("output") or ""),
+    }
+
+
+def _load_batch_entries(questions_file: str) -> list[dict[str, str | None]]:
+    path = Path(questions_file)
+    suffix = path.suffix.lower()
+
+    if suffix == ".jsonl":
+        entries: list[dict[str, str | None]] = []
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise click.ClickException(
+                    f"Invalid JSONL at line {line_number}: {exc.msg}"
+                ) from exc
+            if not isinstance(item, dict):
+                raise click.ClickException(
+                    f"Invalid JSONL entry at line {line_number}: expected an object with 'question'."
+                )
+            entries.append(_validate_batch_entry(item, label=f"JSONL line {line_number}"))
+        return entries
+
+    if suffix in {".yaml", ".yml"}:
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise click.ClickException(f"Invalid YAML: {exc}") from exc
+        if not isinstance(loaded, list):
+            raise click.ClickException("Structured YAML batch input must be a list of entries.")
+        entries = []
+        for idx, item in enumerate(loaded, 1):
+            if not isinstance(item, dict):
+                raise click.ClickException(
+                    f"Invalid YAML entry #{idx}: expected a mapping with 'question'."
+                )
+            normalized_item = {str(key): value for key, value in item.items()}
+            entries.append(_validate_batch_entry(normalized_item, label=f"YAML entry #{idx}"))
+        return entries
+
+    return [
+        {
+            "question": line.strip(),
+            "output_format": "",
+            "chart_format": "",
+            "name": "",
+            "output": "",
+        }
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _emit_ask_result(
+    result, output_format: str, chart_format: str | None, output_path: str | None
+) -> None:
+    from rich.console import Console
+    from rich.table import Table as RichTable
+
+    console = Console()
+
+    if result.text:
+        console.print(result.text)
+        console.print()
+
+    for tr in result.tool_results:
+        if tr.df is not None and not tr.df.empty:
+            if output_format == "csv":
+                _write_or_print(
+                    tr.df.to_csv(index=False), output_path if not chart_format else None
+                )
+            elif output_format == "json":
+                _write_or_print(
+                    tr.df.to_json(orient="records", indent=2),
+                    output_path if not chart_format else None,
+                )
+            else:
+                rich_table = RichTable(show_lines=True)
+                for col in tr.df.columns:
+                    rich_table.add_column(str(col))
+                for _, row in tr.df.head(50).iterrows():
+                    rich_table.add_row(*[str(v) for v in row])
+                console.print(rich_table)
+                if len(tr.df) > 50:
+                    console.print(f"[dim]Showing 50 of {len(tr.df)} rows[/dim]")
+
+        if tr.plotly_spec and chart_format and output_path:
+            if chart_format == "json":
+                Path(output_path).write_text(
+                    json.dumps(tr.plotly_spec, indent=2), encoding="utf-8"
+                )
+                click.echo(f"Plotly spec saved to {output_path}")
+            elif chart_format == "html":
+                from datasight.chart import _build_artifact_html
+
+                html = _build_artifact_html(tr.plotly_spec, tr.meta.get("title", "Chart"))
+                Path(output_path).write_text(html, encoding="utf-8")
+                click.echo(f"Chart HTML saved to {output_path}")
+            elif chart_format == "png":
+                try:
+                    import plotly.graph_objects as go
+                    import plotly.io as pio
+
+                    fig = go.Figure(tr.plotly_spec)
+                    pio.write_image(fig, output_path)
+                    click.echo(f"Chart PNG saved to {output_path}")
+                except ImportError:
+                    click.echo(
+                        "Error: PNG export requires kaleido. "
+                        "Install with: pip install 'datasight[export]'",
+                        err=True,
+                    )
+                    sys.exit(1)
+
+
+def _write_batch_result_files(
+    *,
+    output_dir: str | None,
+    index: int,
+    question: str,
+    result,
+    output_format: str,
+    chart_format: str | None,
+    name: str | None = None,
+    output: str | None = None,
+) -> list[str]:
+    if output:
+        output_base = Path(output)
+        if not output_base.is_absolute() and output_dir:
+            output_base = Path(output_dir) / output_base
+        if output_base.suffix:
+            output_base = output_base.with_suffix("")
+    else:
+        if name:
+            base_name = f"{index:02d}-{_slugify_filename(name)}"
+        else:
+            base_name = f"{index:02d}-{_slugify_filename(question)}"
+        output_root = Path(output_dir) if output_dir else Path(".")
+        output_base = output_root / base_name
+
+    output_base.parent.mkdir(parents=True, exist_ok=True)
+    written_paths: list[str] = []
+
+    answer_path = Path(str(output_base) + ".answer.txt")
+    answer_path.write_text((result.text or "").strip() + "\n", encoding="utf-8")
+    written_paths.append(str(answer_path))
+
+    for tool_idx, tr in enumerate(result.tool_results, 1):
+        if tr.df is not None and not tr.df.empty:
+            data_path = Path(
+                str(output_base) + f".result-{tool_idx}{_default_data_extension(output_format)}"
+            )
+            if output_format == "csv":
+                data_path.write_text(tr.df.to_csv(index=False), encoding="utf-8")
+            elif output_format == "json":
+                data_path.write_text(tr.df.to_json(orient="records", indent=2), encoding="utf-8")
+            else:
+                data_path.write_text(tr.df.to_string(index=False), encoding="utf-8")
+            written_paths.append(str(data_path))
+
+        if tr.plotly_spec and chart_format:
+            chart_path = Path(
+                str(output_base) + f".chart-{tool_idx}{_default_chart_extension(chart_format)}"
+            )
+            if chart_format == "json":
+                chart_path.write_text(json.dumps(tr.plotly_spec, indent=2), encoding="utf-8")
+            elif chart_format == "html":
+                from datasight.chart import _build_artifact_html
+
+                html = _build_artifact_html(tr.plotly_spec, tr.meta.get("title", "Chart"))
+                chart_path.write_text(html, encoding="utf-8")
+            elif chart_format == "png":
+                try:
+                    import plotly.graph_objects as go
+                    import plotly.io as pio
+
+                    fig = go.Figure(tr.plotly_spec)
+                    pio.write_image(fig, chart_path)
+                except ImportError:
+                    click.echo(
+                        "Error: PNG export requires kaleido. "
+                        "Install with: pip install 'datasight[export]'",
+                        err=True,
+                    )
+                    sys.exit(1)
+            written_paths.append(str(chart_path))
+
+    return written_paths
+
+
 @click.group()
 @click.version_option(__version__, prog_name="datasight")
 def cli():
     """datasight — AI-powered database exploration with natural language."""
+
+
+def _prepare_web_runtime(
+    *,
+    port: int | None,
+    model: str | None,
+    project_dir: str | None,
+    verbose: bool,
+    configure_logging: bool = True,
+) -> tuple[Settings, str, int]:
+    from dotenv import load_dotenv
+
+    from datasight.recent_projects import validate_project_dir
+
+    resolved_project_dir = project_dir
+    if resolved_project_dir is None:
+        cwd = str(Path.cwd().resolve())
+        is_valid, _ = validate_project_dir(cwd)
+        if is_valid:
+            resolved_project_dir = cwd
+
+    if resolved_project_dir:
+        resolved_project_dir = str(Path(resolved_project_dir).resolve())
+        env_path = os.path.join(resolved_project_dir, ".env")
+        if os.path.exists(env_path):
+            load_dotenv(env_path, override=False)
+    elif os.path.exists(".env"):
+        load_dotenv(".env", override=False)
+
+    if configure_logging:
+        level = "DEBUG" if verbose else "INFO"
+        logger.remove()
+        logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
+
+    settings = Settings.from_env()
+    resolved_model = model if model else settings.llm.model
+    resolved_port = port if port else settings.app.port
+
+    os.environ["PORT"] = str(resolved_port)
+    if model:
+        match settings.llm.provider:
+            case "ollama":
+                os.environ["OLLAMA_MODEL"] = resolved_model
+            case "github":
+                os.environ["GITHUB_MODELS_MODEL"] = resolved_model
+            case _:
+                os.environ["ANTHROPIC_MODEL"] = resolved_model
+
+    if resolved_project_dir:
+        os.environ["DATASIGHT_AUTO_LOAD_PROJECT"] = resolved_project_dir
+
+    return settings, resolved_model, resolved_port
 
 
 @cli.command()
@@ -329,53 +1032,15 @@ def run(
     auto-loaded as the project. Otherwise, use the UI to select a project,
     or pass --project-dir to specify one explicitly.
     """
-    from dotenv import load_dotenv
+    _, resolved_model, resolved_port = _prepare_web_runtime(
+        port=port,
+        model=model,
+        project_dir=project_dir,
+        verbose=verbose,
+    )
 
-    from datasight.recent_projects import validate_project_dir
-
-    # Auto-detect project in current directory if not specified
-    if project_dir is None:
-        cwd = str(Path.cwd().resolve())
-        is_valid, _ = validate_project_dir(cwd)
-        if is_valid:
-            project_dir = cwd
-
-    # Load .env from current directory or project directory if specified
     if project_dir:
         project_dir = str(Path(project_dir).resolve())
-        env_path = os.path.join(project_dir, ".env")
-        if os.path.exists(env_path):
-            load_dotenv(env_path, override=False)
-    else:
-        # Try loading from current directory
-        if os.path.exists(".env"):
-            load_dotenv(".env", override=False)
-
-    # Configure logging
-    level = "DEBUG" if verbose else "INFO"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
-
-    # Load settings (API key validation deferred to project load / chat)
-    settings = Settings.from_env()
-    resolved_model = model if model else settings.llm.model
-    resolved_port = port if port else settings.app.port
-
-    # Set env vars for the FastAPI app
-    os.environ["PORT"] = str(resolved_port)
-    if model:
-        # CLI override for model - set the appropriate env var
-        match settings.llm.provider:
-            case "ollama":
-                os.environ["OLLAMA_MODEL"] = resolved_model
-            case "github":
-                os.environ["GITHUB_MODELS_MODEL"] = resolved_model
-            case _:
-                os.environ["ANTHROPIC_MODEL"] = resolved_model
-
-    # If project-dir specified, set it for auto-load
-    if project_dir:
-        os.environ["DATASIGHT_AUTO_LOAD_PROJECT"] = project_dir
 
     click.echo(f"datasight v{__version__}")
     click.echo(f"  Model:    {resolved_model}")
@@ -622,7 +1287,7 @@ def verify(project_dir, model, queries_path, verbose):
 
 
 @cli.command()
-@click.argument("question")
+@click.argument("question", required=False)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -651,8 +1316,31 @@ def verify(project_dir, model, queries_path, verbose):
     default=None,
     help="Output file path for chart or data export.",
 )
+@click.option(
+    "--file",
+    "questions_file",
+    type=click.Path(exists=True),
+    default=None,
+    help="Read one question per line from a text file.",
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Directory for per-question batch outputs (only with --file).",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def ask(question, project_dir, model, output_format, chart_format, output_path, verbose):
+def ask(
+    question,
+    project_dir,
+    model,
+    output_format,
+    chart_format,
+    output_path,
+    questions_file,
+    output_dir,
+    verbose,
+):
     """Ask a question about your data from the command line.
 
     Runs the full LLM agent loop without starting a web server.
@@ -664,10 +1352,25 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
       datasight ask "Show generation by year" --chart-format html -o chart.html
       datasight ask "Top 5 states" --format csv -o results.csv
     """
-    import asyncio
-    import json as json_mod
-
     project_dir = str(Path(project_dir).resolve())
+
+    if not question and not questions_file:
+        click.echo("Error: provide a QUESTION or use --file.", err=True)
+        sys.exit(1)
+    if question and questions_file:
+        click.echo("Error: use either QUESTION or --file, not both.", err=True)
+        sys.exit(1)
+    if questions_file and output_path:
+        click.echo(
+            "Error: --file cannot be combined with --output. Use --output-dir instead.", err=True
+        )
+        sys.exit(1)
+    if chart_format and not output_path and not questions_file:
+        click.echo("Error: --chart-format requires --output.", err=True)
+        sys.exit(1)
+    if output_dir and not questions_file:
+        click.echo("Error: --output-dir can only be used with --file.", err=True)
+        sys.exit(1)
 
     # Logging
     level = "DEBUG" if verbose else "WARNING"
@@ -685,129 +1388,965 @@ def ask(question, project_dir, model, output_format, chart_format, output_path, 
 
     sql_dialect = settings.database.sql_dialect
 
-    async def _run():
-        from datasight.agent import run_agent_loop
-        from datasight.config import (
-            format_example_queries,
-            load_example_queries,
-            load_schema_description,
-        )
-        from datasight.prompts import build_system_prompt
-        from datasight.schema import format_schema_context, introspect_schema
+    if questions_file:
+        entries = _load_batch_entries(questions_file)
+        if not entries:
+            click.echo("Error: no questions found in file.", err=True)
+            sys.exit(1)
 
-        llm_client = create_llm_client(
-            provider=settings.llm.provider,
-            api_key=settings.llm.api_key,
-            base_url=settings.llm.base_url,
-        )
-        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+        failures = 0
+        for idx, entry in enumerate(entries, 1):
+            batch_question = str(entry["question"])
+            batch_output_format = str(entry.get("output_format") or output_format)
+            batch_chart_format = str(entry.get("chart_format") or chart_format or "") or None
+            click.echo(f"\n[{idx}/{len(entries)}] {batch_question}")
+            click.echo("-" * 72)
+            try:
+                result = asyncio.run(
+                    _run_ask_pipeline(
+                        question=batch_question,
+                        settings=settings,
+                        resolved_model=resolved_model,
+                        project_dir=project_dir,
+                        sql_dialect=sql_dialect,
+                    )
+                )
+                _emit_ask_result(result, batch_output_format, None, None)
+                if output_dir or entry.get("output"):
+                    written = _write_batch_result_files(
+                        output_dir=output_dir,
+                        index=idx,
+                        question=batch_question,
+                        result=result,
+                        output_format=batch_output_format,
+                        chart_format=batch_chart_format,
+                        name=str(entry.get("name") or ""),
+                        output=str(entry.get("output") or ""),
+                    )
+                    click.echo("Saved:")
+                    for path in written:
+                        click.echo(f"  {path}")
+            except Exception as exc:
+                failures += 1
+                click.echo(f"Error: {exc}", err=True)
 
-        # Build system prompt
-        tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
-        user_desc = load_schema_description(None, project_dir)
-        example_queries = load_example_queries(None, project_dir)
-        schema_text = format_schema_context(tables, user_desc)
-        if example_queries:
-            schema_text += format_example_queries(example_queries)
+        click.echo(f"\nBatch complete: {len(entries) - failures}/{len(entries)} succeeded.")
+        sys.exit(0 if failures == 0 else 1)
 
-        from datasight.sql_validation import build_schema_map
-
-        schema_info = [
-            {
-                "name": t.name,
-                "columns": [{"name": c.name, "dtype": c.dtype} for c in t.columns],
-            }
-            for t in tables
-        ]
-        schema_map = build_schema_map(schema_info)
-
-        sys_prompt = build_system_prompt(
-            schema_text,
-            mode="web",
-            clarify_sql=False,
-            dialect=sql_dialect,
-        )
-
-        result = await run_agent_loop(
+    result = asyncio.run(
+        _run_ask_pipeline(
             question=question,
-            llm_client=llm_client,
-            model=resolved_model,
-            system_prompt=sys_prompt,
-            run_sql=sql_runner.run_sql,
-            schema_map=schema_map,
-            dialect=sql_dialect,
+            settings=settings,
+            resolved_model=resolved_model,
+            project_dir=project_dir,
+            sql_dialect=sql_dialect,
         )
-        return result
+    )
+    _emit_ask_result(result, output_format, chart_format, output_path)
 
-    result = asyncio.run(_run())
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Profile a specific table.")
+@click.option(
+    "--column",
+    default=None,
+    help="Profile a specific column as table.column.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the profile output to a file instead of stdout.",
+)
+def profile(project_dir, table, column, output_format, output_path):
+    """Profile your dataset without using the LLM."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    if table and column:
+        click.echo("Error: use either --table or --column, not both.", err=True)
+        sys.exit(1)
+
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    async def _run_profile():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+
+        if column:
+            if "." not in column:
+                raise click.ClickException("--column must be in table.column form.")
+            table_name, column_name = column.split(".", 1)
+            table_info = find_table_info(schema_info, table_name)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table_name}")
+            column_info = find_column_info(table_info, column_name)
+            if column_info is None:
+                raise click.ClickException(f"Column not found: {column}")
+            return "column", await build_column_profile(
+                table_info, column_info, sql_runner.run_sql
+            )
+
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            return "table", await build_table_profile(table_info, sql_runner.run_sql)
+
+        return "dataset", await build_dataset_overview(schema_info, sql_runner.run_sql)
+
+    scope, profile_data = asyncio.run(_run_profile())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(profile_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_profile_markdown(scope, profile_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    if scope == "dataset":
+        summary = _build_metric_table(
+            "Dataset Profile",
+            [
+                ("Tables", str(profile_data["table_count"])),
+                ("Columns", str(profile_data["total_columns"])),
+                ("Rows", str(profile_data["total_rows"])),
+            ],
+        )
+        console.print(summary)
+
+        largest = _build_profile_detail_table(
+            "Largest Tables",
+            [("Table", "left"), ("Rows", "right"), ("Columns", "right")],
+            [
+                [
+                    item["name"],
+                    f"{item.get('row_count') or 0}",
+                    str(item["column_count"]),
+                ]
+                for item in profile_data["largest_tables"]
+            ],
+        )
+        console.print(largest)
+        if profile_data["date_columns"]:
+            date_coverage = _build_profile_detail_table(
+                "Date Coverage",
+                [("Column", "left"), ("Min", "left"), ("Max", "left")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        _format_profile_value(item.get("min")),
+                        _format_profile_value(item.get("max")),
+                    ]
+                    for item in profile_data["date_columns"]
+                ],
+            )
+            console.print(date_coverage)
+        if profile_data["measure_columns"]:
+            measures = _build_profile_detail_table(
+                "Measure Candidates",
+                [("Column", "left"), ("Type", "left")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        _format_profile_value(item.get("dtype"), "unknown"),
+                    ]
+                    for item in profile_data["measure_columns"]
+                ],
+            )
+            console.print(measures)
+        if profile_data["dimension_columns"]:
+            dimensions = _build_profile_detail_table(
+                "Dimension Candidates",
+                [
+                    ("Column", "left"),
+                    ("Distinct", "right"),
+                    ("Null %", "right"),
+                    ("Samples", "left"),
+                ],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        _format_profile_value(item.get("distinct_count")),
+                        _format_profile_value(item.get("null_rate"), "0"),
+                        ", ".join((item.get("sample_values") or [])[:3]) or "none",
+                    ]
+                    for item in profile_data["dimension_columns"]
+                ],
+            )
+            console.print(dimensions)
+        if output_path:
+            _write_or_print(console.export_text(), output_path)
+        return
+
+    if scope == "table":
+        table_summary = _build_metric_table(
+            f"Table Profile: {profile_data['table']}",
+            [
+                ("Rows", str(profile_data.get("row_count") or 0)),
+                ("Columns", str(profile_data["column_count"])),
+            ],
+        )
+        console.print(table_summary)
+
+        if profile_data["null_columns"]:
+            nulls = _build_profile_detail_table(
+                "Null-heavy Columns",
+                [("Column", "left"), ("Nulls", "right"), ("Null %", "right")],
+                [
+                    [
+                        item["column"],
+                        str(item["null_count"]),
+                        str(item.get("null_rate") or 0),
+                    ]
+                    for item in profile_data["null_columns"]
+                ],
+            )
+            console.print(nulls)
+        if profile_data["date_columns"]:
+            dates = _build_profile_detail_table(
+                "Date Columns",
+                [("Column", "left"), ("Min", "left"), ("Max", "left")],
+                [
+                    [
+                        item["column"],
+                        _format_profile_value(item.get("min")),
+                        _format_profile_value(item.get("max")),
+                    ]
+                    for item in profile_data["date_columns"]
+                ],
+            )
+            console.print(dates)
+        if profile_data["numeric_columns"]:
+            numeric = _build_profile_detail_table(
+                "Numeric Columns",
+                [("Column", "left"), ("Min", "left"), ("Max", "left"), ("Avg", "left")],
+                [
+                    [
+                        item["column"],
+                        _format_profile_value(item.get("min")),
+                        _format_profile_value(item.get("max")),
+                        _format_profile_value(item.get("avg")),
+                    ]
+                    for item in profile_data["numeric_columns"]
+                ],
+            )
+            console.print(numeric)
+        if profile_data["text_columns"]:
+            text_dimensions = _build_profile_detail_table(
+                "Text Dimensions",
+                [
+                    ("Column", "left"),
+                    ("Distinct", "right"),
+                    ("Null %", "right"),
+                    ("Samples", "left"),
+                ],
+                [
+                    [
+                        item["column"],
+                        _format_profile_value(item.get("distinct_count")),
+                        _format_profile_value(item.get("null_rate"), "0"),
+                        ", ".join((item.get("sample_values") or [])[:3]) or "none",
+                    ]
+                    for item in profile_data["text_columns"]
+                ],
+            )
+            console.print(text_dimensions)
+        if output_path:
+            _write_or_print(console.export_text(), output_path)
+        return
+
+    column_summary = _build_metric_table(
+        f"Column Profile: {profile_data['table']}.{profile_data['column']}",
+        [
+            ("Type", str(profile_data.get("dtype") or "unknown")),
+            ("Distinct", str(profile_data.get("distinct_count"))),
+            ("Nulls", str(profile_data.get("null_count"))),
+            ("Null %", str(profile_data.get("null_rate"))),
+        ],
+    )
+    console.print(column_summary)
+    if profile_data.get("numeric_stats"):
+        stats = profile_data["numeric_stats"]
+        console.print(
+            _build_profile_detail_table(
+                "Numeric Stats",
+                [("Min", "left"), ("Max", "left"), ("Avg", "left")],
+                [
+                    [
+                        _format_profile_value(stats.get("min")),
+                        _format_profile_value(stats.get("max")),
+                        _format_profile_value(stats.get("avg")),
+                    ]
+                ],
+            )
+        )
+    if profile_data.get("date_coverage"):
+        stats = profile_data["date_coverage"]
+        console.print(
+            _build_profile_detail_table(
+                "Date Coverage",
+                [("Min", "left"), ("Max", "left")],
+                [
+                    [
+                        _format_profile_value(stats.get("min")),
+                        _format_profile_value(stats.get("max")),
+                    ]
+                ],
+            )
+        )
+    if profile_data.get("dimension_stats"):
+        stats = profile_data["dimension_stats"]
+        console.print(
+            _build_profile_detail_table(
+                "Dimension Stats",
+                [("Distinct", "right"), ("Nulls", "right"), ("Samples", "left")],
+                [
+                    [
+                        _format_profile_value(stats.get("distinct_count")),
+                        _format_profile_value(stats.get("null_count")),
+                        ", ".join((stats.get("sample_values") or [])[:5]) or "none",
+                    ]
+                ],
+            )
+        )
+    elif profile_data.get("sample_values"):
+        console.print(
+            _build_profile_detail_table(
+                "Sample Values",
+                [("Values", "left")],
+                [[", ".join(profile_data["sample_values"][:5])]],
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Audit a specific table.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the quality audit to a file instead of stdout.",
+)
+def quality(project_dir, table, output_format, output_path):
+    """Run a deterministic quality audit without using the LLM."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    async def _run_quality():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info = [table_info]
+        return await build_quality_overview(schema_info, sql_runner.run_sql)
+
+    quality_data = asyncio.run(_run_quality())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(quality_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_quality_markdown(quality_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Dataset Quality Audit",
+            [("Tables scanned", str(quality_data["table_count"]))],
+        )
+    )
+    if quality_data["null_columns"]:
+        console.print(
+            _build_profile_detail_table(
+                "Null-heavy Columns",
+                [("Column", "left"), ("Nulls", "right"), ("Null %", "right")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        str(item["null_count"]),
+                        str(item.get("null_rate") or 0),
+                    ]
+                    for item in quality_data["null_columns"]
+                ],
+            )
+        )
+    if quality_data["numeric_flags"]:
+        console.print(
+            _build_profile_detail_table(
+                "Numeric Range Flags",
+                [("Column", "left"), ("Issue", "left")],
+                [
+                    [f"{item['table']}.{item['column']}", item["issue"]]
+                    for item in quality_data["numeric_flags"]
+                ],
+            )
+        )
+    if quality_data["date_columns"]:
+        console.print(
+            _build_profile_detail_table(
+                "Date Coverage",
+                [("Column", "left"), ("Min", "left"), ("Max", "left")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        _format_profile_value(item.get("min")),
+                        _format_profile_value(item.get("max")),
+                    ]
+                    for item in quality_data["date_columns"]
+                ],
+            )
+        )
+    if quality_data["notes"]:
+        console.print(
+            _build_profile_detail_table(
+                "Notes",
+                [("Observation", "left")],
+                [[item] for item in quality_data["notes"]],
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Inspect dimensions for a specific table.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the dimension overview to a file instead of stdout.",
+)
+def dimensions(project_dir, table, output_format, output_path):
+    """Surface likely grouping dimensions without using the LLM."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    async def _run_dimensions():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info = [table_info]
+        return await build_dimension_overview(schema_info, sql_runner.run_sql)
+
+    dimension_data = asyncio.run(_run_dimensions())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(dimension_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_dimensions_markdown(dimension_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Dimension Overview",
+            [("Tables scanned", str(dimension_data["table_count"]))],
+        )
+    )
+    if dimension_data["dimension_columns"]:
+        console.print(
+            _build_profile_detail_table(
+                "Dimension Candidates",
+                [
+                    ("Column", "left"),
+                    ("Distinct", "right"),
+                    ("Null %", "right"),
+                    ("Samples", "left"),
+                ],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        _format_profile_value(item.get("distinct_count")),
+                        _format_profile_value(item.get("null_rate"), "0"),
+                        ", ".join((item.get("sample_values") or [])[:3]) or "none",
+                    ]
+                    for item in dimension_data["dimension_columns"]
+                ],
+            )
+        )
+    if dimension_data["suggested_breakdowns"]:
+        console.print(
+            _build_profile_detail_table(
+                "Suggested Breakdowns",
+                [("Column", "left"), ("Reason", "left")],
+                [
+                    [f"{item['table']}.{item['column']}", item["reason"]]
+                    for item in dimension_data["suggested_breakdowns"]
+                ],
+            )
+        )
+    if dimension_data["join_hints"]:
+        console.print(
+            _build_profile_detail_table(
+                "Join Hints", [("Hint", "left")], [[item] for item in dimension_data["join_hints"]]
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Suggest trends for a specific table.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the trend overview to a file instead of stdout.",
+)
+def trends(project_dir, table, output_format, output_path):
+    """Surface likely trend analyses without using the LLM."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    async def _run_trends():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info = [table_info]
+        return await build_trend_overview(schema_info, sql_runner.run_sql)
+
+    trend_data = asyncio.run(_run_trends())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(trend_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_trends_markdown(trend_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Trend Overview",
+            [("Tables scanned", str(trend_data["table_count"]))],
+        )
+    )
+    if trend_data["trend_candidates"]:
+        console.print(
+            _build_profile_detail_table(
+                "Trend Candidates",
+                [("Table", "left"), ("Date", "left"), ("Measure", "left"), ("Range", "left")],
+                [
+                    [
+                        item["table"],
+                        item["date_column"],
+                        item["measure_column"],
+                        item["date_range"],
+                    ]
+                    for item in trend_data["trend_candidates"]
+                ],
+            )
+        )
+    if trend_data["breakout_dimensions"]:
+        console.print(
+            _build_profile_detail_table(
+                "Breakout Dimensions",
+                [("Column", "left"), ("Distinct", "right"), ("Null %", "right")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        _format_profile_value(item.get("distinct_count")),
+                        _format_profile_value(item.get("null_rate"), "0"),
+                    ]
+                    for item in trend_data["breakout_dimensions"]
+                ],
+            )
+        )
+    if trend_data["chart_recommendations"]:
+        console.print(
+            _build_profile_detail_table(
+                "Chart Recommendations",
+                [("Title", "left"), ("Type", "left"), ("Reason", "left")],
+                [
+                    [item["title"], item["chart_type"], item["reason"]]
+                    for item in trend_data["chart_recommendations"]
+                ],
+            )
+        )
+    if trend_data["notes"]:
+        console.print(
+            _build_profile_detail_table(
+                "Notes", [("Observation", "left")], [[item] for item in trend_data["notes"]]
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+@cli.group()
+def recipes():
+    """Generate and run reusable deterministic prompt recipes."""
+
+
+@recipes.command(name="list")
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Generate recipes for a specific table.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the recipes output to a file instead of stdout.",
+)
+def recipes_list(project_dir, table, output_format, output_path):
+    """List reusable deterministic prompt recipes for a project."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    recipe_data = _load_recipe_entries(project_dir, settings, table)
+
+    if output_format == "json":
+        _write_or_print(json.dumps(recipe_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_recipes_markdown(recipe_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_profile_detail_table(
+            "Prompt Recipes",
+            [
+                ("ID", "right"),
+                ("Title", "left"),
+                ("Category", "left"),
+                ("Why", "left"),
+                ("Prompt", "left"),
+            ],
+            [
+                [
+                    str(item["id"]),
+                    item["title"],
+                    item.get("category") or "Recipe",
+                    item.get("reason") or "",
+                    item["prompt"],
+                ]
+                for item in recipe_data
+            ],
+        )
+    )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+@recipes.command(name="run")
+@click.argument("recipe_id", type=int)
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Use recipes generated for a specific table.")
+@click.option("--model", default=None, help="Model name (overrides .env).")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "csv", "json"]),
+    default="table",
+    help="Output format for query results (default: table).",
+)
+@click.option(
+    "--chart-format",
+    type=click.Choice(["html", "json", "png"]),
+    default=None,
+    help="Save chart output in this format (requires --output).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Output file path for chart or data export.",
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
+def recipes_run(
+    recipe_id, project_dir, table, model, output_format, chart_format, output_path, verbose
+):
+    """Run a generated recipe by ID through the normal ask pipeline."""
+    import asyncio
 
     from rich.console import Console
 
+    project_dir = str(Path(project_dir).resolve())
+    settings, resolved_model = _resolve_settings(project_dir, model)
+    _validate_settings_for_llm(settings)
+
+    if verbose:
+        logger.remove()
+        logger.add(sys.stderr, level="DEBUG")
+
+    recipe_data = _load_recipe_entries(project_dir, settings, table)
+    recipe = next((item for item in recipe_data if item["id"] == recipe_id), None)
+    if recipe is None:
+        click.echo(f"Recipe {recipe_id} not found.", err=True)
+        raise SystemExit(1)
+
+    sql_dialect = settings.database.sql_dialect
     console = Console()
+    console.print(f"[dim]Running recipe [{recipe['id']}]: {recipe['title']}[/dim]")
 
-    # Print the assistant's text response
-    if result.text:
-        console.print(result.text)
-        console.print()
+    result = asyncio.run(
+        _run_ask_pipeline(
+            question=recipe["prompt"],
+            settings=settings,
+            resolved_model=resolved_model,
+            project_dir=project_dir,
+            sql_dialect=sql_dialect,
+        )
+    )
+    _emit_ask_result(result, output_format, chart_format, output_path)
 
-    # Output data results
-    for tr in result.tool_results:
-        if tr.df is not None and not tr.df.empty:
-            if output_format == "csv":
-                csv_output = tr.df.to_csv(index=False)
-                if output_path and not chart_format:
-                    Path(output_path).write_text(csv_output, encoding="utf-8")
-                    click.echo(f"Data saved to {output_path}")
-                else:
-                    click.echo(csv_output)
-            elif output_format == "json":
-                json_output = tr.df.to_json(orient="records", indent=2)
-                if output_path and not chart_format:
-                    Path(output_path).write_text(json_output, encoding="utf-8")
-                    click.echo(f"Data saved to {output_path}")
-                else:
-                    click.echo(json_output)
-            else:
-                # Rich table
-                from rich.table import Table as RichTable
 
-                rich_table = RichTable(show_lines=True)
-                for col in tr.df.columns:
-                    rich_table.add_column(str(col))
-                for _, row in tr.df.head(50).iterrows():
-                    rich_table.add_row(*[str(v) for v in row])
-                console.print(rich_table)
-                if len(tr.df) > 50:
-                    console.print(f"[dim]Showing 50 of {len(tr.df)} rows[/dim]")
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write doctor output to a file instead of stdout.",
+)
+def doctor(project_dir, output_format, output_path):
+    """Check project configuration, local files, and database connectivity."""
+    from rich.console import Console
+    from rich.table import Table as RichTable
 
-        # Handle chart export
-        if tr.plotly_spec and chart_format and output_path:
-            if chart_format == "json":
-                Path(output_path).write_text(
-                    json_mod.dumps(tr.plotly_spec, indent=2), encoding="utf-8"
-                )
-                click.echo(f"Plotly spec saved to {output_path}")
-            elif chart_format == "html":
-                from datasight.chart import _build_artifact_html
+    project_path = Path(project_dir).resolve()
+    console = Console(record=bool(output_path))
+    checks: list[tuple[str, str, str]] = []
 
-                html = _build_artifact_html(tr.plotly_spec, tr.meta.get("title", "Chart"))
-                Path(output_path).write_text(html, encoding="utf-8")
-                click.echo(f"Chart HTML saved to {output_path}")
-            elif chart_format == "png":
-                try:
-                    import plotly.io as pio
-                    import plotly.graph_objects as go
+    def add_check(name: str, ok: bool, detail: str) -> None:
+        checks.append((name, "OK" if ok else "FAIL", detail))
 
-                    fig = go.Figure(tr.plotly_spec)
-                    pio.write_image(fig, output_path)
-                    click.echo(f"Chart PNG saved to {output_path}")
-                except ImportError:
-                    click.echo(
-                        "Error: PNG export requires kaleido. "
-                        "Install with: pip install 'datasight[export]'",
-                        err=True,
-                    )
-                    sys.exit(1)
+    env_path = project_path / ".env"
+    add_check(".env", env_path.exists(), str(env_path))
+
+    settings = _resolve_settings(str(project_path))[0]
+    validation_errors = settings.validate()
+    add_check(
+        "LLM settings",
+        not validation_errors,
+        "; ".join(validation_errors) if validation_errors else settings.llm.provider,
+    )
+
+    db_detail = settings.database.mode
+    db_ok = True
+    resolved_db_path = _resolve_db_path(settings, str(project_path))
+    if settings.database.mode in ("duckdb", "sqlite"):
+        db_ok = bool(resolved_db_path) and os.path.exists(resolved_db_path)
+        db_detail = resolved_db_path
+    elif settings.database.mode == "postgres":
+        db_ok = bool(
+            settings.database.postgres_url
+            or (
+                settings.database.postgres_database
+                and settings.database.postgres_user
+                and settings.database.postgres_host
+            )
+        )
+        db_detail = settings.database.postgres_url or (
+            f"{settings.database.postgres_user}@{settings.database.postgres_host}:"
+            f"{settings.database.postgres_port}/{settings.database.postgres_database}"
+        )
+    elif settings.database.mode == "flightsql":
+        db_ok = bool(settings.database.flight_uri)
+        db_detail = settings.database.flight_uri
+    add_check("Database config", db_ok, db_detail or settings.database.mode)
+
+    for name in ("schema_description.md", "queries.yaml"):
+        path = project_path / name
+        add_check(name, path.exists(), str(path))
+
+    datasight_dir = project_path / ".datasight"
+    try:
+        datasight_dir.mkdir(parents=True, exist_ok=True)
+        probe = datasight_dir / ".doctor-write-test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        add_check(".datasight writable", True, str(datasight_dir))
+    except OSError as exc:
+        add_check(".datasight writable", False, f"{datasight_dir}: {exc}")
+
+    try:
+        sql_runner = create_sql_runner_from_settings(settings.database, str(project_path))
+        asyncio.run(sql_runner.run_sql("SELECT 1 AS ok"))
+        add_check("Database connectivity", True, "SELECT 1")
+    except Exception as exc:
+        add_check("Database connectivity", False, str(exc))
+
+    rendered_checks = [
+        {"name": name, "ok": status == "OK", "detail": detail} for name, status, detail in checks
+    ]
+    failures = sum(1 for check in rendered_checks if not check["ok"])
+
+    if output_format == "json":
+        _write_or_print(
+            json.dumps(
+                {
+                    "project_dir": str(project_path),
+                    "checks": rendered_checks,
+                    "failures": failures,
+                },
+                indent=2,
+            ),
+            output_path,
+        )
+        if failures:
+            sys.exit(1)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(
+            _render_doctor_markdown(str(project_path), rendered_checks),
+            output_path,
+        )
+        if failures:
+            sys.exit(1)
+        return
+
+    table = RichTable(title="datasight doctor")
+    table.add_column("Check")
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Detail", overflow="fold")
+
+    for name, status, detail in checks:
+        if status == "FAIL":
+            status_text = "[bold red]FAIL[/bold red]"
+        else:
+            status_text = "[green]OK[/green]"
+        table.add_row(name, status_text, detail)
+
+    console.print(table)
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+    if failures:
+        sys.exit(1)
 
 
 @cli.command()

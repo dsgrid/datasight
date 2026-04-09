@@ -12,6 +12,7 @@ let schemaData = [];
 let lastSql = '';
 let lastPlotlySpec = null;
 let lastToolName = '';
+let lastToolMeta = null;
 let confirmSqlEnabled = false;
 let explainSqlEnabled = false;
 let clarifySqlEnabled = false;
@@ -25,6 +26,44 @@ let currentView = 'chat';
 let fullscreenCardId = null;
 let selectedCardIdx = -1;
 let currentAbortController = null;
+let pendingStarterAction = 'profile';
+let schemaSearchQuery = '';
+let recentProjectsCache = [];
+let commandPaletteOpen = false;
+let commandPaletteResults = [];
+let commandPaletteSelectedIdx = 0;
+let tablePreviewCache = new Map();
+let columnStatsCache = new Map();
+let bookmarksCache = [];
+let reportsCache = [];
+let conversationsCache = [];
+let recipesCache = [];
+const searchHelpers = window.DatasightSearchHelpers || {};
+const scorePaletteResult = searchHelpers.scorePaletteResult;
+const highlightMatch = searchHelpers.highlightMatch;
+const getVisibleSchemaEntries = searchHelpers.getVisibleSchemaEntries;
+
+const STARTER_CONFIG = {
+  profile: {
+    title: 'Profile this dataset',
+    status: 'Open a file or project below to start with a structured overview.',
+  },
+  dimensions: {
+    title: 'Find key dimensions',
+    status: 'Open a file or project below to surface the categories and breakdowns worth exploring.',
+    prompt: 'Identify the most important dimensions, categories, and grouping columns in this dataset. Explain which tables and columns are the best starting points for analysis.'
+  },
+  trend: {
+    title: 'Build a trend chart',
+    status: 'Open a file or project below to start with the strongest time-series question in the data.',
+    prompt: 'Find the most natural time-based analysis in this dataset and create a useful trend chart. Briefly explain which date column and measure you chose and why.'
+  },
+  quality: {
+    title: 'Audit nulls and outliers',
+    status: 'Open a file or project below to start with a data quality pass.',
+    prompt: 'Audit this dataset for null-heavy columns, suspicious ranges, outliers, and other obvious data quality issues. Organize the results by severity and mention the tables and columns involved.'
+  }
+};
 
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
@@ -62,10 +101,82 @@ function renderMarkdownInto(el, text) {
   addCopyButtons(el);
 }
 
+function bindInteractiveBubbleActions(container) {
+  if (!container) return;
+  container.querySelectorAll('.starter-action-btn[data-prompt]').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      runStarterFollowup(btn.getAttribute('data-prompt') || '');
+    });
+  });
+}
+
+function bindSidebarListActions() {
+  const recipesList = document.getElementById('recipes-list');
+  if (recipesList && !recipesList.dataset.bound) {
+    recipesList.dataset.bound = 'true';
+    recipesList.addEventListener('click', event => {
+      const item = event.target.closest('.query-item[data-prompt]');
+      if (!item) return;
+      event.preventDefault();
+      useRecipeElement(item);
+    });
+  }
+
+  const queriesList = document.getElementById('queries-list');
+  if (queriesList && !queriesList.dataset.bound) {
+    queriesList.dataset.bound = 'true';
+    queriesList.addEventListener('click', event => {
+      const item = event.target.closest('.query-item[data-question]');
+      if (!item) return;
+      event.preventDefault();
+      useQuery(item);
+    });
+  }
+}
+
+function addAssistantHtml(html, extraClass) {
+  const row = document.createElement('div');
+  row.className = 'message-row assistant';
+  const del = _makeDeleteBtn('Delete response');
+  del.className = 'msg-delete-btn msg-delete-single';
+  del.onclick = (e) => { e.stopPropagation(); deleteElement(row); };
+  row.appendChild(del);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'message-bubble' + (extraClass ? ' ' + extraClass : '');
+  bubble.innerHTML = sanitizeHtml(html);
+  bindInteractiveBubbleActions(bubble);
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
+  scrollToBottom();
+  return bubble;
+}
+
 async function fetchJson(url, opts) {
   const resp = await fetch(url, opts);
   if (!resp.ok) throw new Error('API error: ' + resp.status);
   return resp.json();
+}
+
+function clearSchemaInsightCaches() {
+  tablePreviewCache = new Map();
+  columnStatsCache = new Map();
+}
+
+function clearSchemaSearchState() {
+  schemaSearchQuery = '';
+  selectedTable = null;
+  const searchInput = document.getElementById('schema-search-input');
+  if (searchInput) searchInput.value = '';
+}
+
+function clearSavedItemCaches() {
+  bookmarksCache = [];
+  reportsCache = [];
+  conversationsCache = [];
+  recipesCache = [];
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +250,7 @@ async function loadRecentProjects() {
   const container = document.getElementById('projects-list');
   try {
     const data = await fetchJson('/api/projects/recent');
+    recentProjectsCache = data.projects || [];
     if (!data.projects || data.projects.length === 0) {
       container.innerHTML = '<div class="no-queries">No recent projects.</div>';
       return;
@@ -157,6 +269,17 @@ async function loadRecentProjects() {
     showToast('Failed to load recent projects.', 'error');
     container.innerHTML = '<div class="no-queries">Failed to load projects.</div>';
   }
+}
+
+async function ensureRecentProjectsLoaded() {
+  if (recentProjectsCache.length > 0) return recentProjectsCache;
+  try {
+    const data = await fetchJson('/api/projects/recent');
+    recentProjectsCache = data.projects || [];
+  } catch (e) {
+    recentProjectsCache = [];
+  }
+  return recentProjectsCache;
 }
 
 async function loadProjectFromList(path) {
@@ -213,10 +336,12 @@ async function doLoadProject(path) {
     await clearChatForProjectSwitch();
     await loadSchema();
     await loadQueries();
+    await loadRecipes();
     await loadConversations();
     await loadBookmarks();
     await loadReports();
     await loadDashboard();
+    await loadProjectHealth();
 
     // Show welcome message for the new project
     showWelcome();
@@ -252,6 +377,9 @@ async function clearChatForProjectSwitch() {
   pinnedItems = [];
   pinnedIdCounter = 0;
   dashboardColumns = 0;
+  clearSchemaSearchState();
+  clearSchemaInsightCaches();
+  clearSavedItemCaches();
   updateDashboardBadge();
   renderDashboard();
 }
@@ -393,6 +521,8 @@ async function startExplore() {
     toggleProjectsPanel();
     await clearChatForProjectSwitch();
     await loadSchema();
+    await loadProjectHealth();
+    await loadRecipes();
     showWelcome();
 
     if (!llmConnected) {
@@ -440,14 +570,78 @@ function pinResult(btn) {
   const html = iframe ? iframe.srcdoc : resultEl.querySelector('.result-table-wrap').outerHTML;
   // Get title from result data attribute, or try to find from chart title
   let title = resultEl.dataset.title || '';
+  const sourceMeta = lastToolMeta ? {
+    question: resultEl.dataset.question || title || '',
+    sql: lastToolMeta.sql || lastSql || '',
+    tool: lastToolMeta.tool || lastToolName || '',
+    execution_time_ms: lastToolMeta.execution_time_ms,
+    row_count: lastToolMeta.row_count,
+    column_count: lastToolMeta.column_count,
+    error: lastToolMeta.error || '',
+    chart_type: type === 'chart' && lastPlotlySpec && Array.isArray(lastPlotlySpec.data) && lastPlotlySpec.data[0]
+      ? (lastPlotlySpec.data[0].type || '')
+      : '',
+  } : null;
   pinnedIdCounter++;
-  pinnedItems.push({ id: pinnedIdCounter, type, html, title });
+  pinnedItems.push({ id: pinnedIdCounter, type, html, title, source_meta: sourceMeta });
+  if (pinnedItems.length === 1 && !localStorage.getItem('datasight-dashboard-story-hint-seen')) {
+    showToast('Add a note or section in Dashboard to turn pinned results into a readable analysis.', 'info');
+    localStorage.setItem('datasight-dashboard-story-hint-seen', '1');
+  }
   updateDashboardBadge();
   renderDashboard();
   saveDashboard();
   const pinIcon = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg>';
   btn.innerHTML = pinIcon + ' Pinned!';
   setTimeout(() => { btn.innerHTML = pinIcon + ' Pin'; }, 1200);
+}
+
+function addDashboardNote() {
+  addDashboardItemAt('note', pinnedItems.length);
+}
+
+function addDashboardSection() {
+  addDashboardItemAt('section', pinnedItems.length);
+}
+
+function addDashboardItemAt(type, index) {
+  pinnedIdCounter++;
+  const item = type === 'section'
+    ? {
+      id: pinnedIdCounter,
+      type: 'section',
+      title: 'Section',
+      markdown: 'Short introduction for this section.',
+    }
+    : {
+      id: pinnedIdCounter,
+      type: 'note',
+      title: 'Note',
+      markdown: '## Observation\n\nAdd context for the pinned results here.',
+    };
+  const insertAt = Math.max(0, Math.min(index, pinnedItems.length));
+  pinnedItems.splice(insertAt, 0, item);
+  updateDashboardBadge();
+  renderDashboard();
+  saveDashboard();
+  switchView('dashboard');
+}
+
+function createDashboardInsertControl(index) {
+  const insert = document.createElement('div');
+  insert.className = 'dashboard-insert-control';
+  insert.innerHTML =
+    '<span class="dashboard-insert-line"></span>' +
+    '<div class="dashboard-insert-actions">' +
+      '<button type="button" class="dashboard-insert-btn">+ Note</button>' +
+      '<button type="button" class="dashboard-insert-btn secondary">+ Section</button>' +
+    '</div>' +
+    '<span class="dashboard-insert-line"></span>';
+
+  const buttons = insert.querySelectorAll('.dashboard-insert-btn');
+  buttons[0].onclick = () => addDashboardItemAt('note', index);
+  buttons[1].onclick = () => addDashboardItemAt('section', index);
+  return insert;
 }
 
 function unpinItem(id) {
@@ -527,14 +721,24 @@ function renderDashboard() {
   empty.style.display = 'none';
   toolbar.style.display = '';
 
+  let activeSectionId = null;
+
   pinnedItems.forEach((item, idx) => {
+    grid.appendChild(createDashboardInsertControl(idx));
+
     const card = document.createElement('div');
     let cardClass = 'dashboard-card';
+    if (item.type === 'section') cardClass += ' dashboard-section-card';
+    if (activeSectionId !== null && item.type !== 'section') cardClass += ' dashboard-card-grouped';
     if (fullscreenCardId === item.id) cardClass += ' fullscreen';
     if (selectedCardIdx === idx) cardClass += ' selected';
     card.className = cardClass;
     card.draggable = true;
     card.dataset.idx = idx;
+
+    if (item.type === 'section') {
+      activeSectionId = item.id;
+    }
 
     // Card header with drag handle and title
     const header = document.createElement('div');
@@ -559,15 +763,17 @@ function renderDashboard() {
     });
     header.appendChild(titleInput);
 
-    const fullscreenBtn = document.createElement('button');
-    fullscreenBtn.className = 'dashboard-fullscreen-btn';
-    fullscreenBtn.title = 'Toggle fullscreen';
-    fullscreenBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>';
-    fullscreenBtn.onclick = (e) => {
-      e.stopPropagation();
-      toggleCardFullscreen(item.id);
-    };
-    header.appendChild(fullscreenBtn);
+    if (item.type !== 'section') {
+      const fullscreenBtn = document.createElement('button');
+      fullscreenBtn.className = 'dashboard-fullscreen-btn';
+      fullscreenBtn.title = 'Toggle fullscreen';
+      fullscreenBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>';
+      fullscreenBtn.onclick = (e) => {
+        e.stopPropagation();
+        toggleCardFullscreen(item.id);
+      };
+      header.appendChild(fullscreenBtn);
+    }
 
     card.appendChild(header);
 
@@ -585,6 +791,32 @@ function renderDashboard() {
         try { iframe.contentWindow.Plotly.Plots.resize(iframe.contentDocument.getElementById('chart')); } catch(e) {}
       });
       ro.observe(card);
+    } else if (item.type === 'note' || item.type === 'section') {
+      const noteWrap = document.createElement('div');
+      noteWrap.className = item.type === 'section' ? 'dashboard-section-wrap' : 'dashboard-note-wrap';
+
+      const noteEditor = document.createElement('textarea');
+      noteEditor.className = item.type === 'section' ? 'dashboard-section-editor' : 'dashboard-note-editor';
+      noteEditor.value = item.markdown || '';
+      noteEditor.placeholder = item.type === 'section'
+        ? 'Add a short section introduction...'
+        : 'Write markdown notes for this dashboard...';
+      noteEditor.addEventListener('input', () => {
+        item.markdown = noteEditor.value;
+        renderMarkdownInto(notePreview, item.markdown || '');
+      });
+      noteEditor.addEventListener('change', () => {
+        item.markdown = noteEditor.value;
+        saveDashboard();
+      });
+
+      const notePreview = document.createElement('div');
+      notePreview.className = item.type === 'section' ? 'dashboard-section-preview' : 'dashboard-note-preview';
+      renderMarkdownInto(notePreview, item.markdown || '');
+
+      noteWrap.appendChild(noteEditor);
+      noteWrap.appendChild(notePreview);
+      card.appendChild(noteWrap);
     } else {
       const tableDiv = document.createElement('div');
       tableDiv.innerHTML = sanitizeHtml(item.html);
@@ -595,9 +827,54 @@ function renderDashboard() {
 
     const actions = document.createElement('div');
     actions.className = 'dashboard-card-actions';
+
+    if (item.source_meta && (item.type === 'chart' || item.type === 'table')) {
+      const details = document.createElement('details');
+      details.className = 'dashboard-source-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Source';
+      details.appendChild(summary);
+
+      const meta = item.source_meta;
+      const body = document.createElement('div');
+      body.className = 'dashboard-source-meta';
+      const rows = [
+        ['Question', meta.question || item.title || ''],
+        ['Tool', meta.tool || item.type],
+        ['Rows', meta.row_count != null ? String(meta.row_count) : ''],
+        ['Columns', meta.column_count != null ? String(meta.column_count) : ''],
+        ['Execution', meta.execution_time_ms != null ? Math.round(meta.execution_time_ms) + ' ms' : ''],
+        ['Chart', meta.chart_type || ''],
+      ].filter(([, value]) => value);
+
+      rows.forEach(([label, value]) => {
+        const row = document.createElement('div');
+        row.className = 'dashboard-source-row';
+        row.innerHTML = '<strong>' + escapeHtml(label) + '</strong><span>' + escapeHtml(value) + '</span>';
+        body.appendChild(row);
+      });
+
+      if (meta.sql) {
+        const sql = document.createElement('pre');
+        sql.className = 'dashboard-source-sql';
+        sql.textContent = meta.sql;
+        body.appendChild(sql);
+      }
+
+      if (meta.error) {
+        const error = document.createElement('div');
+        error.className = 'dashboard-source-error';
+        error.textContent = meta.error;
+        body.appendChild(error);
+      }
+
+      details.appendChild(body);
+      actions.appendChild(details);
+    }
+
     const unpinBtn = document.createElement('button');
     unpinBtn.className = 'unpin-btn';
-    unpinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg> Unpin';
+    unpinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/></svg> Remove';
     unpinBtn.onclick = () => unpinItem(item.id);
     actions.appendChild(unpinBtn);
     card.appendChild(actions);
@@ -633,6 +910,8 @@ function renderDashboard() {
 
     grid.appendChild(card);
   });
+
+  grid.appendChild(createDashboardInsertControl(pinnedItems.length));
 
   // Reapply column setting
   if (dashboardColumns > 0) {
@@ -749,7 +1028,9 @@ async function exportDashboard() {
   const items = pinnedItems.map(item => ({
     type: item.type,
     html: item.html,
-    title: item.title || ''
+    title: item.title || '',
+    markdown: item.markdown || '',
+    source_meta: item.source_meta || null,
   }));
 
   // Determine columns from current setting
@@ -834,6 +1115,62 @@ async function loadLlmSettings() {
     onLlmProviderChange();
     promptLlmConfigIfNeeded();
   } catch (e) { /* ignore */ }
+}
+
+async function loadProjectHealth() {
+  const container = document.getElementById('project-health');
+  if (!container) return;
+  container.innerHTML = '<div class="project-health-empty">Checking project health...</div>';
+
+  try {
+    const data = await fetchJson('/api/project-health');
+    const checks = data.checks || [];
+    if (!checks.length) {
+      container.innerHTML = '<div class="project-health-empty">No health data available.</div>';
+      return;
+    }
+
+    const summary = data.summary || {};
+    const remediation = checks
+      .filter(check => !check.ok && check.remediation)
+      .map(check =>
+        '<div class="project-health-hint"><strong>' + escapeHtml(check.name || '') + ':</strong> ' +
+        escapeHtml(check.remediation || '') + '</div>'
+      ).join('');
+
+    const rows = checks.map(check =>
+      '<div class="project-health-row' + (check.ok ? '' : ' fail') + '">' +
+        '<span class="project-health-name">' + escapeHtml(check.name || '') + '</span>' +
+        '<span class="project-health-status ' + (check.ok ? 'ok' : 'fail') + '">' +
+          (check.ok ? 'OK' : 'FAIL') +
+        '</span>' +
+        '<span class="project-health-category">' + escapeHtml(check.category || 'check') + '</span>' +
+        '<span class="project-health-detail">' + escapeHtml(check.detail || '') + '</span>' +
+      '</div>'
+    ).join('');
+
+    container.innerHTML =
+      '<div class="project-health-summary' + ((summary.fail_count || 0) > 0 ? ' has-failures' : ' healthy') + '">' +
+        '<strong>' + escapeHtml(data.project_loaded ? (data.project_dir || 'Project loaded') : 'No project loaded') + '</strong>' +
+        '<span>' + escapeHtml(
+          String(summary.ok_count || 0) + ' OK • ' +
+          String(summary.fail_count || 0) + ' failing'
+        ) + '</span>' +
+        (
+          (summary.config_failures || summary.connectivity_failures || summary.project_failures)
+            ? '<span>' + escapeHtml(
+              'Config: ' + String(summary.config_failures || 0) +
+              ' • Connectivity: ' + String(summary.connectivity_failures || 0) +
+              ' • Project: ' + String(summary.project_failures || 0)
+            ) + '</span>'
+            : ''
+        ) +
+      '</div>' +
+      (remediation ? '<div class="project-health-hints">' + remediation + '</div>' : '') +
+      rows;
+  } catch (e) {
+    container.innerHTML = '<div class="project-health-empty">Failed to load project health.</div>';
+  }
 }
 
 function onLlmProviderChange() {
@@ -995,6 +1332,7 @@ function toggleSettingsPanel() {
     overlay.classList.add('open');
     // Sync checkbox states when opening
     updateSettingsButtons();
+    loadProjectHealth();
   }
 }
 
@@ -1002,9 +1340,93 @@ function updateSqlDisplay(sql) {
   lastSql = sql;
 }
 
+function buildSourceMeta(question, fallbackType, meta) {
+  const merged = meta || {};
+  return {
+    question: question || '',
+    sql: merged.sql || lastSql || '',
+    tool: merged.tool || lastToolName || fallbackType || '',
+    execution_time_ms: merged.execution_time_ms,
+    row_count: merged.row_count,
+    column_count: merged.column_count,
+    error: merged.error || '',
+    chart_type: merged.chart_type || (
+      fallbackType === 'chart' && lastPlotlySpec && Array.isArray(lastPlotlySpec.data) && lastPlotlySpec.data[0]
+        ? (lastPlotlySpec.data[0].type || '')
+        : ''
+    ),
+  };
+}
+
+function renderSourceDetails(meta, fallbackTitle) {
+  const details = document.createElement('details');
+  details.className = 'dashboard-source-details live-result-source-details';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Source';
+  details.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'dashboard-source-meta';
+  const rows = [
+    ['Question', meta.question || fallbackTitle || ''],
+    ['Tool', meta.tool || ''],
+    ['Rows', meta.row_count != null ? String(meta.row_count) : ''],
+    ['Columns', meta.column_count != null ? String(meta.column_count) : ''],
+    ['Execution', meta.execution_time_ms != null ? Math.round(meta.execution_time_ms) + ' ms' : ''],
+    ['Chart', meta.chart_type || ''],
+  ].filter(([, value]) => value);
+
+  rows.forEach(([label, value]) => {
+    const row = document.createElement('div');
+    row.className = 'dashboard-source-row';
+    row.innerHTML = '<strong>' + escapeHtml(label) + '</strong><span>' + escapeHtml(value) + '</span>';
+    body.appendChild(row);
+  });
+
+  if (meta.sql) {
+    const sql = document.createElement('pre');
+    sql.className = 'dashboard-source-sql';
+    sql.textContent = meta.sql;
+    body.appendChild(sql);
+  }
+
+  if (meta.error) {
+    const error = document.createElement('div');
+    error.className = 'dashboard-source-error';
+    error.textContent = meta.error;
+    body.appendChild(error);
+  }
+
+  details.appendChild(body);
+  return details;
+}
+
 function handleToolDone(data) {
+  lastToolMeta = data;
   sessionQueries.unshift(data);
   renderQueryHistory();
+
+  const results = messagesEl.querySelectorAll('.tool-result');
+  if (results.length > 0) {
+    const lastResult = results[results.length - 1];
+    const meta = buildSourceMeta(
+      lastResult.dataset.question || lastResult.dataset.title || '',
+      lastResult.dataset.resultType || '',
+      data,
+    );
+    const existing = lastResult.querySelector('.live-result-source-details');
+    const details = renderSourceDetails(meta, lastResult.dataset.title || '');
+    if (existing) {
+      existing.replaceWith(details);
+    } else {
+      const pinBtn = lastResult.querySelector('.pin-btn');
+      if (pinBtn) {
+        pinBtn.insertAdjacentElement('beforebegin', details);
+      } else {
+        lastResult.appendChild(details);
+      }
+    }
+  }
 }
 
 function renderQueryHistory() {
@@ -1101,6 +1523,7 @@ async function loadSchema() {
   try {
     const data = await fetchJson('/api/schema');
     schemaData = data.tables || [];
+    clearSchemaInsightCaches();
     renderTables(schemaData);
   } catch (e) {
     document.getElementById('tables-container').innerHTML =
@@ -1119,36 +1542,518 @@ async function loadQueries() {
   }
 }
 
-function renderTables(tables) {
-  const container = document.getElementById('tables-container');
-  if (!tables.length) {
-    container.innerHTML = '<div class="no-queries">No tables found</div>';
+function updateInspectScopeLabel() {
+  const el = document.getElementById('inspect-scope-label');
+  if (!el) return;
+  el.textContent = selectedTable ? ('Scope: selected table `' + selectedTable + '`') : 'Scope: dataset';
+}
+
+async function loadRecipes() {
+  try {
+    const data = await fetchJson('/api/recipes');
+    recipesCache = data.recipes || [];
+    renderRecipes(recipesCache);
+  } catch (e) {
+    const container = document.getElementById('recipes-list');
+    if (container) {
+      container.innerHTML = '<div class="no-queries">Failed to load recipes</div>';
+    }
+  }
+}
+
+function handleSchemaSearchInput(value) {
+  schemaSearchQuery = (value || '').trim().toLowerCase();
+  renderTables(schemaData);
+}
+
+function focusTableInSidebar(tableName, columnName) {
+  const searchInput = document.getElementById('schema-search-input');
+  if (searchInput) searchInput.value = '';
+  schemaSearchQuery = '';
+  selectedTable = tableName;
+  updateInspectScopeLabel();
+  renderTables(schemaData);
+  filterQueries();
+
+  const header = Array.from(document.querySelectorAll('.table-header')).find(
+    el => el.dataset.table === tableName
+  );
+  if (!header) return;
+  if (sidebar.classList.contains('collapsed')) {
+    toggleSidebar();
+  }
+  header.scrollIntoView({ block: 'center' });
+
+  if (!header.classList.contains('expanded')) {
+    toggleTable(header);
+  }
+
+  if (columnName) {
+    const columnEl = Array.from(header.parentElement.querySelectorAll('.column-item')).find(el =>
+      el.textContent.toLowerCase().includes(columnName.toLowerCase())
+    );
+    if (columnEl) {
+      columnEl.scrollIntoView({ block: 'center' });
+      columnEl.classList.add('matched');
+      window.setTimeout(() => columnEl.classList.remove('matched'), 1200);
+    }
+  }
+}
+
+function useRecipePrompt(prompt) {
+  switchView('chat');
+  inputEl.value = prompt;
+  inputEl.dispatchEvent(new window.Event('input'));
+  inputEl.focus();
+}
+
+function useRecipeElement(el) {
+  if (!el) return;
+  useRecipePrompt(el.dataset.prompt || '');
+}
+
+function renderRecipes(recipes) {
+  const container = document.getElementById('recipes-list');
+  if (!container) return;
+  if (!recipes.length) {
+    container.innerHTML = '<div class="no-queries">No recipes yet.</div>';
+    return;
+  }
+  container.innerHTML = recipes.map(recipe =>
+    '<div class="query-item" data-prompt="' + escapeHtml(recipe.prompt) + '">' +
+      '<div class="query-question">' + escapeHtml(recipe.title) + '</div>' +
+      '<div class="query-sql-preview">' + escapeHtml(recipe.category || 'Recipe') + '</div>' +
+      (recipe.reason ? '<div class="query-sql-preview">' + escapeHtml(recipe.reason) + '</div>' : '') +
+    '</div>'
+  ).join('');
+}
+
+function openSidebarSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  if (sidebar.classList.contains('collapsed')) {
+    toggleSidebar();
+  }
+  if (section.classList.contains('collapsed')) {
+    toggleSidebarSection(sectionId);
+  }
+  section.scrollIntoView({ block: 'nearest' });
+}
+
+function openProjectHealthPanel() {
+  toggleSettingsPanel();
+  loadProjectHealth();
+  const panel = document.getElementById('project-health');
+  if (panel) {
+    panel.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function previewTableInSidebar(tableName) {
+  switchView('chat');
+  focusTableInSidebar(tableName);
+  const header = Array.from(document.querySelectorAll('.table-header')).find(
+    el => el.dataset.table === tableName
+  );
+  if (!header) return;
+  const previewBtn = header.parentElement.querySelector('.preview-btn');
+  if (previewBtn && previewBtn.textContent !== 'Hide preview') {
+    previewTable(tableName, previewBtn);
+  }
+}
+
+function openColumnStatsInSidebar(tableName, columnName) {
+  switchView('chat');
+  focusTableInSidebar(tableName, columnName);
+  const header = Array.from(document.querySelectorAll('.table-header')).find(
+    el => el.dataset.table === tableName
+  );
+  if (!header) return;
+  const columnEl = Array.from(header.parentElement.querySelectorAll('.column-item')).find(el =>
+    el.textContent.toLowerCase().includes(columnName.toLowerCase())
+  );
+  if (!columnEl) return;
+  const statsEl = columnEl.querySelector('.col-stats');
+  if (!statsEl || !statsEl.innerHTML) {
+    toggleColumnStats(columnEl, tableName, columnName);
+  }
+}
+
+function askAboutTable(tableName) {
+  switchView('chat');
+  sendMessage('Describe the purpose of the `' + tableName + '` table, its key columns, likely joins, and the best first questions to ask about it.');
+}
+
+function askAboutColumn(tableName, columnName) {
+  switchView('chat');
+  sendMessage('Explain the `' + tableName + '.' + columnName + '` column, what it likely represents, how it should be used in analysis, and any data quality concerns.');
+}
+
+function getCommandPaletteResults(query) {
+  const results = [];
+  const q = query.trim().toLowerCase();
+
+  const actions = [
+    { type: 'action', group: 'Actions', title: 'Switch to Chat', subtitle: 'View', score: 800, run: () => switchView('chat') },
+    { type: 'action', group: 'Actions', title: 'Switch to Dashboard', subtitle: 'View', score: 800, run: () => switchView('dashboard') },
+    { type: 'action', group: 'Actions', title: 'Toggle SQL Panel', subtitle: 'Panels', score: 760, run: () => toggleRightPanel() },
+    { type: 'action', group: 'Actions', title: 'Open Project Switcher', subtitle: 'Projects', score: 760, run: () => openProjectsPanel() },
+    { type: 'action', group: 'Actions', title: 'Open Settings', subtitle: 'Settings', score: 740, run: () => toggleSettingsPanel() },
+    { type: 'action', group: 'Actions', title: 'Open Project Health', subtitle: 'Diagnostics', score: 745, run: () => openProjectHealthPanel() },
+    { type: 'action', group: 'Actions', title: 'New Chat', subtitle: 'Conversation', score: 760, run: () => clearChat() },
+    { type: 'action', group: 'Actions', title: 'Summarize Dataset', subtitle: 'Analysis', score: 780, run: () => summarizeDataset() },
+    { type: 'action', group: 'Actions', title: 'Profile This Dataset', subtitle: 'Starter', score: 790, run: () => runStarterAction('profile') },
+    { type: 'action', group: 'Actions', title: 'Find Key Dimensions', subtitle: 'Starter', score: 780, run: () => runStarterAction('dimensions') },
+    { type: 'action', group: 'Actions', title: 'Build a Trend Chart', subtitle: 'Starter', score: 780, run: () => runStarterAction('trend') },
+    { type: 'action', group: 'Actions', title: 'Audit Nulls and Outliers', subtitle: 'Starter', score: 780, run: () => runStarterAction('quality') },
+    { type: 'action', group: 'Actions', title: 'Open Inspect Tools', subtitle: 'Sidebar', score: 720, run: () => openSidebarSection('inspect-section') },
+    { type: 'action', group: 'Actions', title: 'Inspect Dataset Profile', subtitle: 'Deterministic', score: 760, run: () => runInspectAction('profile', 'dataset') },
+    { type: 'action', group: 'Actions', title: 'Inspect Dataset Quality', subtitle: 'Deterministic', score: 750, run: () => runInspectAction('quality', 'dataset') },
+    { type: 'action', group: 'Actions', title: 'Inspect Dataset Dimensions', subtitle: 'Deterministic', score: 750, run: () => runInspectAction('dimensions', 'dataset') },
+    { type: 'action', group: 'Actions', title: 'Inspect Dataset Trends', subtitle: 'Deterministic', score: 750, run: () => runInspectAction('trend', 'dataset') },
+    { type: 'action', group: 'Actions', title: 'Add Dashboard Note', subtitle: 'Dashboard', score: 730, run: () => { switchView('dashboard'); addDashboardNote(); } },
+    { type: 'action', group: 'Actions', title: 'Add Dashboard Section', subtitle: 'Dashboard', score: 730, run: () => { switchView('dashboard'); addDashboardSection(); } },
+    { type: 'action', group: 'Actions', title: 'Open Example Queries', subtitle: 'Sidebar', score: 710, run: () => openSidebarSection('queries-section') },
+    { type: 'action', group: 'Actions', title: 'Open Recipes', subtitle: 'Sidebar', score: 710, run: () => openSidebarSection('recipes-section') },
+    { type: 'action', group: 'Actions', title: 'Open Bookmarks', subtitle: 'Sidebar', score: 710, run: () => openSidebarSection('bookmarks-section') },
+    { type: 'action', group: 'Actions', title: 'Open Saved Reports', subtitle: 'Sidebar', score: 710, run: () => openSidebarSection('reports-section') },
+    { type: 'action', group: 'Actions', title: 'Open Conversation History', subtitle: 'Sidebar', score: 710, run: () => openSidebarSection('conversations-section') },
+  ];
+
+  actions.forEach(action => {
+    const score = scorePaletteResult(q, [action.title, action.subtitle], action.score);
+    if (score >= 0) {
+      results.push({ ...action, score });
+    }
+  });
+
+  schemaData.forEach(table => {
+    const tableScore = scorePaletteResult(q, [table.name], 620);
+    if (tableScore >= 0) {
+      results.push({
+        type: 'table',
+        group: 'Tables',
+        title: table.name,
+        subtitle: 'Table',
+        score: tableScore,
+        run: () => {
+          switchView('chat');
+          closeCommandPalette();
+          focusTableInSidebar(table.name);
+        },
+      });
+      results.push({
+        type: 'action',
+        group: 'Table Actions',
+        title: 'Preview ' + table.name,
+        subtitle: 'Preview rows',
+        score: tableScore - 20,
+        run: () => {
+          closeCommandPalette();
+          previewTableInSidebar(table.name);
+        },
+      });
+      results.push({
+        type: 'action',
+        group: 'Table Actions',
+        title: 'Ask about ' + table.name,
+        subtitle: 'Explain table',
+        score: tableScore - 30,
+        run: () => {
+          closeCommandPalette();
+          askAboutTable(table.name);
+        },
+      });
+    }
+
+    (table.columns || []).forEach(column => {
+      const columnScore = scorePaletteResult(q, [column.name, table.name + ' ' + column.name], 560);
+      if (columnScore >= 0) {
+        results.push({
+          type: 'column',
+          group: 'Columns',
+          title: column.name,
+          subtitle: table.name,
+          score: columnScore,
+          run: () => {
+            switchView('chat');
+            closeCommandPalette();
+            focusTableInSidebar(table.name, column.name);
+          },
+        });
+        results.push({
+          type: 'action',
+          group: 'Column Actions',
+          title: 'Column stats for ' + table.name + '.' + column.name,
+          subtitle: 'Inspect stats',
+          score: columnScore - 20,
+          run: () => {
+            closeCommandPalette();
+            openColumnStatsInSidebar(table.name, column.name);
+          },
+        });
+        results.push({
+          type: 'action',
+          group: 'Column Actions',
+          title: 'Ask about ' + table.name + '.' + column.name,
+          subtitle: 'Explain column',
+          score: columnScore - 30,
+          run: () => {
+            closeCommandPalette();
+            askAboutColumn(table.name, column.name);
+          },
+        });
+      }
+    });
+  });
+
+  recentProjectsCache.forEach(project => {
+    const score = scorePaletteResult(q, [project.name, project.path], 500);
+    if (score >= 0) {
+      results.push({
+        type: 'project',
+        group: 'Projects',
+        title: project.name,
+        subtitle: project.path,
+        score,
+        run: () => {
+          closeCommandPalette();
+          if (project.path !== currentProjectPath || !projectLoaded) {
+            doLoadProject(project.path);
+          }
+        },
+      });
+    }
+  });
+
+  bookmarksCache.forEach(bookmark => {
+    const bookmarkTitle = bookmark.name || (bookmark.sql || '').substring(0, 60);
+    const bookmarkScore = scorePaletteResult(q, [bookmarkTitle, bookmark.sql], 520);
+    if (bookmarkScore >= 0) {
+      results.push({
+        type: 'bookmark',
+        group: 'Bookmarks',
+        title: bookmarkTitle,
+        subtitle: 'Saved SQL',
+        score: bookmarkScore,
+        run: () => {
+          closeCommandPalette();
+          openSidebarSection('bookmarks-section');
+          switchView('chat');
+          inputEl.value = 'Run this SQL query and display the results as a table:\n' + bookmark.sql;
+          inputEl.dispatchEvent(new window.Event('input'));
+          inputEl.focus();
+        },
+      });
+    }
+  });
+
+  reportsCache.forEach(report => {
+    const reportTitle = report.name || (report.sql || '').substring(0, 60);
+    const reportScore = scorePaletteResult(q, [reportTitle, report.sql], 530);
+    if (reportScore >= 0) {
+      results.push({
+        type: 'report',
+        group: 'Reports',
+        title: reportTitle,
+        subtitle: report.tool === 'visualize_data' ? 'Saved chart report' : 'Saved query report',
+        score: reportScore,
+        run: () => {
+          closeCommandPalette();
+          openSidebarSection('reports-section');
+          runReport(report.id);
+        },
+      });
+    }
+  });
+
+  conversationsCache.forEach(conversation => {
+    const conversationScore = scorePaletteResult(
+      q,
+      [conversation.title, conversation.session_id],
+      510
+    );
+    if (conversationScore >= 0) {
+      results.push({
+        type: 'conversation',
+        group: 'Conversations',
+        title: conversation.title,
+        subtitle: String(conversation.message_count || 0) + ' messages',
+        score: conversationScore,
+        run: () => {
+          closeCommandPalette();
+          openSidebarSection('conversations-section');
+          loadConversation(conversation.session_id);
+        },
+      });
+    }
+  });
+
+  recipesCache.forEach(recipe => {
+    const recipeScore = scorePaletteResult(q, [recipe.title, recipe.category, recipe.reason, recipe.prompt], 540);
+    if (recipeScore >= 0) {
+      results.push({
+        type: 'recipe',
+        group: 'Recipes',
+        title: recipe.title,
+        subtitle: recipe.reason || recipe.category || 'Recipe',
+        score: recipeScore,
+        run: () => {
+          closeCommandPalette();
+          openSidebarSection('recipes-section');
+          useRecipePrompt(recipe.prompt);
+        },
+      });
+    }
+  });
+
+  results.sort((a, b) => {
+    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+    return a.title.localeCompare(b.title);
+  });
+
+  return results.slice(0, 60);
+}
+
+function renderCommandPalette() {
+  const container = document.getElementById('command-palette-results');
+  if (!container) return;
+  const input = document.getElementById('command-palette-input');
+  const query = input ? input.value.trim().toLowerCase() : '';
+  if (commandPaletteResults.length === 0) {
+    container.innerHTML = '<div class="command-palette-empty">No matching actions, schema items, projects, bookmarks, reports, or conversations.</div>';
     return;
   }
 
-  container.innerHTML = tables.map((t, idx) => {
+  let html = '';
+  let currentGroup = '';
+  commandPaletteResults.forEach((item, idx) => {
+    if (item.group && item.group !== currentGroup) {
+      currentGroup = item.group;
+      html += '<div class="command-palette-group">' + escapeHtml(currentGroup) + '</div>';
+    }
+    html +=
+      '<button class="command-palette-item' + (idx === commandPaletteSelectedIdx ? ' selected' : '') +
+      '" onclick="executeCommandPaletteResult(' + idx + ')">' +
+        '<span class="command-palette-item-main">' + highlightMatch(item.title, query) + '</span>' +
+        '<span class="command-palette-item-sub">' + highlightMatch(item.subtitle || '', query) + '</span>' +
+      '</button>';
+  });
+  container.innerHTML = html;
+  const selected = container.querySelector('.command-palette-item.selected');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
+}
+
+function updateCommandPaletteResults() {
+  const input = document.getElementById('command-palette-input');
+  commandPaletteResults = getCommandPaletteResults(input ? input.value : '');
+  commandPaletteSelectedIdx = Math.min(commandPaletteSelectedIdx, Math.max(commandPaletteResults.length - 1, 0));
+  renderCommandPalette();
+}
+
+async function openCommandPalette() {
+  await ensureRecentProjectsLoaded();
+  commandPaletteOpen = true;
+  commandPaletteSelectedIdx = 0;
+  document.getElementById('command-palette-overlay').classList.add('open');
+  document.getElementById('command-palette').classList.add('open');
+  const input = document.getElementById('command-palette-input');
+  input.value = '';
+  updateCommandPaletteResults();
+  input.focus();
+}
+
+function closeCommandPalette() {
+  commandPaletteOpen = false;
+  document.getElementById('command-palette-overlay').classList.remove('open');
+  document.getElementById('command-palette').classList.remove('open');
+}
+
+function executeCommandPaletteResult(idx) {
+  const item = commandPaletteResults[idx];
+  if (!item) return;
+  closeCommandPalette();
+  item.run();
+}
+
+function renderSchemaQuickActions(tableName, columnName) {
+  const actions = [];
+  if (columnName) {
+    actions.push(
+      '<button class="schema-action-btn" onclick="event.stopPropagation(); openColumnStatsInSidebar(\'' +
+      escapeHtml(tableName) + '\', \'' + escapeHtml(columnName) + '\')">Stats</button>'
+    );
+    actions.push(
+      '<button class="schema-action-btn" onclick="event.stopPropagation(); askAboutColumn(\'' +
+      escapeHtml(tableName) + '\', \'' + escapeHtml(columnName) + '\')">Ask</button>'
+    );
+  } else {
+    actions.push(
+      '<button class="schema-action-btn" onclick="event.stopPropagation(); previewTableInSidebar(\'' +
+      escapeHtml(tableName) + '\')">Preview</button>'
+    );
+    actions.push(
+      '<button class="schema-action-btn" onclick="event.stopPropagation(); askAboutTable(\'' +
+      escapeHtml(tableName) + '\')">Ask</button>'
+    );
+  }
+  return '<div class="schema-quick-actions">' + actions.join('') + '</div>';
+}
+
+function renderTables(tables) {
+  const container = document.getElementById('tables-container');
+  const query = schemaSearchQuery;
+  const visibleTables = getVisibleSchemaEntries(tables, query);
+
+  if (!visibleTables.length) {
+    container.innerHTML = '<div class="no-queries">No matching tables or columns</div>';
+    selectedTable = null;
+    updateInspectScopeLabel();
+    filterQueries();
+    return;
+  }
+
+  if (selectedTable && !visibleTables.some(entry => entry.table.name === selectedTable)) {
+    selectedTable = null;
+    updateInspectScopeLabel();
+    filterQueries();
+  }
+
+  container.innerHTML = visibleTables.map(({ table: t, tableMatches, matchingColumns }, idx) => {
     const rowCount = t.row_count != null ? Number(t.row_count).toLocaleString() : '?';
     const isView = t.name.startsWith('v_');
+    const autoExpand = selectedTable === t.name || (!!query && matchingColumns.length > 0 && !tableMatches);
     const icon = isView
       ? '<svg class="table-icon" viewBox="0 0 16 16" fill="none"><path d="M8 2C4.13 2 1 3.79 1 6v4c0 2.21 3.13 4 7 4s7-1.79 7-4V6c0-2.21-3.13-4-7-4z" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M1 6c0 2.21 3.13 4 7 4s7-1.79 7-4" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>'
       : '<svg class="table-icon" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.3"/><line x1="1" y1="5.5" x2="15" y2="5.5" stroke="currentColor" stroke-width="1.3"/><line x1="1" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1"/><line x1="6" y1="5.5" x2="6" y2="14" stroke="currentColor" stroke-width="1"/></svg>';
 
-    const cols = (t.columns || []).map(c =>
-      '<div class="column-item" onclick="toggleColumnStats(this, \'' + escapeHtml(t.name) + '\', \'' + escapeHtml(c.name) + '\')">' +
-        '<span class="col-name">' + escapeHtml(c.name) + '</span>' +
-        '<span class="col-type">' + escapeHtml(c.dtype) + '</span>' +
+    const visibleColumns = query
+      ? (tableMatches ? (t.columns || []) : matchingColumns)
+      : (t.columns || []);
+
+    const cols = visibleColumns.map(c =>
+      '<div class="column-item' + (query && c.name.toLowerCase().includes(query) ? ' matched' : '') +
+        '" onclick="toggleColumnStats(this, \'' + escapeHtml(t.name) + '\', \'' + escapeHtml(c.name) + '\')">' +
+        '<div class="column-item-main">' +
+          '<span class="col-name">' + highlightMatch(c.name, query) + '</span>' +
+          '<span class="col-type">' + escapeHtml(c.dtype) + '</span>' +
+        '</div>' +
+        (query ? renderSchemaQuickActions(t.name, c.name) : '') +
         '<div class="col-stats"></div>' +
       '</div>'
     ).join('');
 
     return '<div class="table-item">' +
-      '<div class="table-header" data-table="' + escapeHtml(t.name) + '" data-idx="' + idx + '" onclick="toggleTable(this)">' +
+      '<div class="table-header' + (selectedTable === t.name ? ' selected' : '') + (autoExpand ? ' expanded' : '') +
+        (query && (tableMatches || matchingColumns.length > 0) ? ' search-hit' : '') +
+        '" data-table="' + escapeHtml(t.name) + '" data-idx="' + idx + '" onclick="toggleTable(this)">' +
         icon +
-        '<span class="table-name">' + escapeHtml(t.name) + '</span>' +
+        '<span class="table-name">' + highlightMatch(t.name, query) + '</span>' +
         '<span class="table-rows">' + rowCount + '</span>' +
+        (query ? renderSchemaQuickActions(t.name, '') : '') +
         '<svg class="table-chevron" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>' +
       '</div>' +
-      '<div class="column-list" id="cols-' + idx + '">' +
+      '<div class="column-list' + (autoExpand ? ' visible' : '') + '" id="cols-' + idx + '">' +
         '<button class="preview-btn" onclick="event.stopPropagation(); previewTable(\'' + escapeHtml(t.name) + '\', this)">Preview rows</button>' +
         '<div class="table-preview" id="preview-' + idx + '"></div>' +
         cols +
@@ -1177,6 +2082,7 @@ function toggleTable(headerEl) {
   } else {
     selectedTable = null;
   }
+  updateInspectScopeLabel();
 
   // Filter queries
   filterQueries();
@@ -1190,7 +2096,12 @@ async function toggleColumnStats(el, tableName, colName) {
   }
   statsEl.innerHTML = '<span class="col-stats-loading">Loading...</span>';
   try {
-    const data = await fetchJson('/api/column-stats/' + encodeURIComponent(tableName) + '/' + encodeURIComponent(colName));
+    const cacheKey = tableName + '.' + colName;
+    let data = columnStatsCache.get(cacheKey);
+    if (!data) {
+      data = await fetchJson('/api/column-stats/' + encodeURIComponent(tableName) + '/' + encodeURIComponent(colName));
+      columnStatsCache.set(cacheKey, data);
+    }
     if (data.stats) {
       const s = data.stats;
       const parts = [];
@@ -1217,7 +2128,11 @@ async function previewTable(tableName, btn) {
   }
   btn.textContent = 'Loading...';
   try {
-    const data = await fetchJson('/api/preview/' + encodeURIComponent(tableName));
+    let data = tablePreviewCache.get(tableName);
+    if (!data) {
+      data = await fetchJson('/api/preview/' + encodeURIComponent(tableName));
+      tablePreviewCache.set(tableName, data);
+    }
     if (data.html) {
       previewEl.innerHTML = sanitizeHtml(data.html);
       bindTableEvents(previewEl);
@@ -1263,7 +2178,7 @@ function renderQueries(queries, filterLabel) {
 
   container.innerHTML = queries.map(q => {
     const sqlPreview = (q.sql || '').split('\n')[0].trim();
-    return '<div class="query-item" onclick="useQuery(this)" data-question="' + escapeHtml(q.question) + '">' +
+    return '<div class="query-item" data-question="' + escapeHtml(q.question) + '">' +
       '<div class="query-question">' + escapeHtml(q.question) + '</div>' +
       '<div class="query-sql-preview">' + escapeHtml(sqlPreview) + '</div>' +
     '</div>';
@@ -1306,6 +2221,513 @@ function handleSubmit(e) {
 function sendExample(text) {
   if (isStreaming) return;
   sendMessage(text);
+}
+
+function landingChooseStarter(starterId) {
+  pendingStarterAction = starterId;
+  document.querySelectorAll('.landing-starter').forEach(el => {
+    el.classList.toggle('active', el.dataset.starterId === starterId);
+  });
+
+  const statusEl = document.getElementById('landing-starter-status');
+  const config = STARTER_CONFIG[starterId];
+  if (statusEl && config) {
+    statusEl.innerHTML = 'Selected: <strong>' + escapeHtml(config.title) + '</strong>. ' +
+      escapeHtml(config.status);
+  }
+
+  document.getElementById('landing-explore-input')?.focus();
+}
+
+function renderOverviewMetric(label, value) {
+  return (
+    '<div class="overview-metric">' +
+      '<span class="overview-metric-label">' + escapeHtml(label) + '</span>' +
+      '<strong class="overview-metric-value">' + escapeHtml(String(value)) + '</strong>' +
+    '</div>'
+  );
+}
+
+function renderOverviewList(title, items, emptyText, renderItem) {
+  const body = items.length
+    ? '<div class="overview-list">' + items.map(renderItem).join('') + '</div>'
+    : '<div class="overview-empty">' + escapeHtml(emptyText) + '</div>';
+
+  return (
+    '<section class="overview-section">' +
+      '<div class="overview-section-title">' + escapeHtml(title) + '</div>' +
+      body +
+    '</section>'
+  );
+}
+
+function runStarterFollowup(encodedPrompt) {
+  const prompt = decodeURIComponent(encodedPrompt || '');
+  if (!prompt) return;
+  sendMessage(prompt);
+}
+
+function renderStarterActions(actions) {
+  if (!actions.length) return '';
+  return (
+    '<div class="starter-actions">' +
+      actions.map(action =>
+        '<button type="button" class="starter-action-btn" data-prompt="' +
+        escapeHtml(encodeURIComponent(action.prompt)) + '">' + escapeHtml(action.label) + '</button>'
+      ).join('') +
+    '</div>'
+  );
+}
+
+function renderDatasetOverview(overview) {
+  const largestTables = overview.largest_tables || [];
+  const dateColumns = overview.date_columns || [];
+  const measureColumns = overview.measure_columns || [];
+  const dimensionColumns = overview.dimension_columns || [];
+  const qualityFlags = overview.quality_flags || [];
+  const actions = [];
+
+  if (largestTables.length) {
+    actions.push({
+      label: 'Profile ' + largestTables[0].name,
+      prompt: 'Profile the `' + largestTables[0].name + '` table and highlight its most important columns.',
+    });
+  }
+  if (dateColumns.length && measureColumns.length) {
+    actions.push({
+      label: 'Build a First Trend',
+      prompt: 'Create a trend chart of `' + measureColumns[0].table + '.' + measureColumns[0].column +
+        '` over `' + dateColumns[0].table + '.' + dateColumns[0].column + '` and explain why this is a good starting view.',
+    });
+  }
+  if (dimensionColumns.length) {
+    actions.push({
+      label: 'Inspect Top Dimension',
+      prompt: 'Explain whether `' + dimensionColumns[0].table + '.' + dimensionColumns[0].column +
+        '` is a good grouping dimension and show the top categories.',
+    });
+  }
+
+  const html =
+    '<div class="starter-overview">' +
+      '<div class="starter-overview-head">' +
+        '<span class="starter-overview-kicker">Starter result</span>' +
+        '<h3>Dataset profile</h3>' +
+        '<p>A deterministic overview of the schema to help you get oriented before asking follow-up questions.</p>' +
+      '</div>' +
+      '<div class="overview-metrics">' +
+        renderOverviewMetric('Tables', Number(overview.table_count || 0).toLocaleString()) +
+        renderOverviewMetric('Columns', Number(overview.total_columns || 0).toLocaleString()) +
+        renderOverviewMetric('Rows', Number(overview.total_rows || 0).toLocaleString()) +
+      '</div>' +
+      renderOverviewList(
+        'Largest tables',
+        largestTables,
+        'No table metadata available.',
+        item => '<div class="overview-item"><strong>' + escapeHtml(item.name) +
+          '</strong><span>' + escapeHtml(Number(item.row_count || 0).toLocaleString() + ' rows') +
+          '</span><span>' + escapeHtml(String(item.column_count || 0) + ' cols') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Date coverage',
+        dateColumns,
+        'No obvious date columns detected.',
+        item => '<div class="overview-item"><strong>' + escapeHtml(item.table + '.' + item.column) +
+          '</strong><span>' + escapeHtml((item.min || '?') + ' → ' + (item.max || '?')) + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Measure candidates',
+        measureColumns,
+        'No obvious numeric measure columns detected.',
+        item => '<div class="overview-item"><strong>' + escapeHtml(item.table + '.' + item.column) +
+          '</strong><span>' + escapeHtml(item.dtype || 'unknown') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Dimension candidates',
+        dimensionColumns,
+        'No obvious text dimensions detected.',
+        item => {
+          const sampleText = item.sample_values && item.sample_values.length
+            ? 'Samples: ' + item.sample_values.join(', ')
+            : 'No sample values';
+          const stats = [];
+          if (item.distinct_count != null) stats.push(item.distinct_count + ' distinct');
+          if (item.null_rate != null) stats.push(item.null_rate + '% null');
+          return '<div class="overview-item overview-item-rich"><strong>' +
+            escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+            escapeHtml(stats.join(' • ') || 'No quick stats') + '</span><span>' +
+            escapeHtml(sampleText) + '</span></div>';
+        }
+      ) +
+      (qualityFlags.length ? renderOverviewList(
+        'Quick notes',
+        qualityFlags,
+        '',
+        item => '<div class="overview-item overview-item-note"><span>' + escapeHtml(item) + '</span></div>'
+      ) : '') +
+      renderStarterActions(actions) +
+    '</div>';
+
+  addAssistantHtml(html, 'starter-overview-bubble');
+}
+
+function renderDimensionOverview(overview) {
+  const dimensionColumns = overview.dimension_columns || [];
+  const dateColumns = overview.date_columns || [];
+  const measureColumns = overview.measure_columns || [];
+  const suggestedBreakdowns = overview.suggested_breakdowns || [];
+  const joinHints = overview.join_hints || [];
+  const actions = [];
+
+  if (suggestedBreakdowns.length) {
+    actions.push({
+      label: 'Run Top Breakdown',
+      prompt: 'Show the most useful breakdown using `' + suggestedBreakdowns[0].table + '.' +
+        suggestedBreakdowns[0].column + '` and explain what stands out.',
+    });
+  }
+  if (measureColumns.length && dimensionColumns.length) {
+    actions.push({
+      label: 'Rank by Dimension',
+      prompt: 'Aggregate `' + measureColumns[0].table + '.' + measureColumns[0].column + '` by `' +
+        dimensionColumns[0].table + '.' + dimensionColumns[0].column +
+        '` and show the top groups.',
+    });
+  }
+  if (joinHints.length) {
+    actions.push({
+      label: 'Use Join Hint',
+      prompt: 'Use this join hint in an example query: ' + joinHints[0],
+    });
+  }
+
+  const html =
+    '<div class="starter-overview">' +
+      '<div class="starter-overview-head">' +
+        '<span class="starter-overview-kicker">Starter result</span>' +
+        '<h3>Key dimensions</h3>' +
+        '<p>A deterministic pass over likely grouping fields, common breakdowns, and join hints.</p>' +
+      '</div>' +
+      '<div class="overview-metrics">' +
+        renderOverviewMetric('Tables', Number(overview.table_count || 0).toLocaleString()) +
+        renderOverviewMetric('Dimensions', Number(dimensionColumns.length || 0).toLocaleString()) +
+        renderOverviewMetric('Measures', Number(measureColumns.length || 0).toLocaleString()) +
+      '</div>' +
+      renderOverviewList(
+        'Best grouping columns',
+        dimensionColumns,
+        'No strong text dimensions detected.',
+        item => {
+          const stats = [];
+          if (item.distinct_count != null) stats.push(item.distinct_count + ' distinct');
+          if (item.null_rate != null) stats.push(item.null_rate + '% null');
+          const sampleText = item.sample_values && item.sample_values.length
+            ? 'Samples: ' + item.sample_values.join(', ')
+            : 'No sample values';
+          return '<div class="overview-item overview-item-rich"><strong>' +
+            escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+            escapeHtml(stats.join(' • ') || 'No quick stats') + '</span><span>' +
+            escapeHtml(sampleText) + '</span></div>';
+        }
+      ) +
+      renderOverviewList(
+        'Suggested breakdowns',
+        suggestedBreakdowns,
+        'No obvious breakdown suggestions yet.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+          escapeHtml(item.reason || '') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Date columns',
+        dateColumns,
+        'No obvious date columns detected.',
+        item => '<div class="overview-item"><strong>' + escapeHtml(item.table + '.' + item.column) +
+          '</strong><span>' + escapeHtml((item.min || '?') + ' → ' + (item.max || '?')) + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Measure columns',
+        measureColumns,
+        'No obvious measure columns detected.',
+        item => '<div class="overview-item"><strong>' + escapeHtml(item.table + '.' + item.column) +
+          '</strong><span>' + escapeHtml(item.dtype || 'unknown') + '</span></div>'
+      ) +
+      (joinHints.length ? renderOverviewList(
+        'Join hints',
+        joinHints,
+        '',
+        item => '<div class="overview-item overview-item-note"><span>' + escapeHtml(item) + '</span></div>'
+      ) : '') +
+      renderStarterActions(actions) +
+    '</div>';
+
+  addAssistantHtml(html, 'starter-overview-bubble');
+}
+
+function renderQualityOverview(overview) {
+  const nullColumns = overview.null_columns || [];
+  const numericFlags = overview.numeric_flags || [];
+  const dateColumns = overview.date_columns || [];
+  const notes = overview.notes || [];
+  const actions = [];
+
+  if (nullColumns.length) {
+    actions.push({
+      label: 'Investigate Nulls',
+      prompt: 'Investigate why `' + nullColumns[0].table + '.' + nullColumns[0].column +
+        '` has ' + nullColumns[0].null_rate + '% null values and show how those nulls are distributed.',
+    });
+  }
+  if (numericFlags.length) {
+    actions.push({
+      label: 'Inspect Range Flag',
+      prompt: 'Inspect the numeric quality issue on `' + numericFlags[0].table + '.' +
+        numericFlags[0].column + '` and explain whether it is expected.',
+    });
+  }
+  if (dateColumns.length) {
+    actions.push({
+      label: 'Check Freshness',
+      prompt: 'Assess data freshness using `' + dateColumns[0].table + '.' + dateColumns[0].column +
+        '` and summarize whether the latest data looks current.',
+    });
+  }
+
+  const html =
+    '<div class="starter-overview">' +
+      '<div class="starter-overview-head">' +
+        '<span class="starter-overview-kicker">Starter result</span>' +
+        '<h3>Data quality audit</h3>' +
+        '<p>A deterministic first pass over null-heavy columns, numeric range anomalies, and date coverage.</p>' +
+      '</div>' +
+      '<div class="overview-metrics">' +
+        renderOverviewMetric('Tables', Number(overview.table_count || 0).toLocaleString()) +
+        renderOverviewMetric('Null Issues', Number(nullColumns.length || 0).toLocaleString()) +
+        renderOverviewMetric('Range Flags', Number(numericFlags.length || 0).toLocaleString()) +
+      '</div>' +
+      renderOverviewList(
+        'Null-heavy columns',
+        nullColumns,
+        'No null-heavy columns detected.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+          escapeHtml((item.null_rate || 0) + '% null') + '</span><span>' +
+          escapeHtml(String(item.null_count || 0) + ' nulls') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Numeric range flags',
+        numericFlags,
+        'No obvious numeric range issues detected.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+          escapeHtml(item.issue || '') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Date coverage',
+        dateColumns,
+        'No obvious date columns detected.',
+        item => '<div class="overview-item"><strong>' + escapeHtml(item.table + '.' + item.column) +
+          '</strong><span>' + escapeHtml((item.min || '?') + ' → ' + (item.max || '?')) + '</span></div>'
+      ) +
+      (notes.length ? renderOverviewList(
+        'Quick notes',
+        notes,
+        '',
+        item => '<div class="overview-item overview-item-note"><span>' + escapeHtml(item) + '</span></div>'
+      ) : '') +
+      renderStarterActions(actions) +
+    '</div>';
+
+  addAssistantHtml(html, 'starter-overview-bubble');
+}
+
+function renderTrendOverview(overview) {
+  const trendCandidates = overview.trend_candidates || [];
+  const breakoutDimensions = overview.breakout_dimensions || [];
+  const chartRecommendations = overview.chart_recommendations || [];
+  const notes = overview.notes || [];
+  const actions = [];
+
+  if (trendCandidates.length) {
+    actions.push({
+      label: 'Create Starter Chart',
+      prompt: 'Create a line chart of `' + trendCandidates[0].table + '.' + trendCandidates[0].measure_column +
+        '` over `' + trendCandidates[0].table + '.' + trendCandidates[0].date_column + '`.',
+    });
+  }
+  if (trendCandidates.length && breakoutDimensions.length) {
+    actions.push({
+      label: 'Add a Breakout',
+      prompt: 'Create a trend chart of `' + trendCandidates[0].table + '.' + trendCandidates[0].measure_column +
+        '` over `' + trendCandidates[0].table + '.' + trendCandidates[0].date_column +
+        '`, broken out by `' + breakoutDimensions[0].table + '.' + breakoutDimensions[0].column + '`.',
+    });
+  }
+  if (chartRecommendations.length) {
+    actions.push({
+      label: 'Explain Chart Choice',
+      prompt: 'Explain why `' + chartRecommendations[0].title + '` is a good starter chart for this dataset.',
+    });
+  }
+
+  const html =
+    '<div class="starter-overview">' +
+      '<div class="starter-overview-head">' +
+        '<span class="starter-overview-kicker">Starter result</span>' +
+        '<h3>Trend chart ideas</h3>' +
+        '<p>A deterministic pass over likely date columns, measures, and chart setups worth trying first.</p>' +
+      '</div>' +
+      '<div class="overview-metrics">' +
+        renderOverviewMetric('Tables', Number(overview.table_count || 0).toLocaleString()) +
+        renderOverviewMetric('Trend Pairs', Number(trendCandidates.length || 0).toLocaleString()) +
+        renderOverviewMetric('Breakouts', Number(breakoutDimensions.length || 0).toLocaleString()) +
+      '</div>' +
+      renderOverviewList(
+        'Best time-series pairs',
+        trendCandidates,
+        'No obvious date/measure pairs detected.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.table + '.' + item.measure_column) + '</strong><span>' +
+          escapeHtml('by ' + item.date_column) + '</span><span>' +
+          escapeHtml(item.date_range || '') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Chart recommendations',
+        chartRecommendations,
+        'No starter chart recommendations available.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.title || '') + '</strong><span>' +
+          escapeHtml(item.chart_type || '') + '</span><span>' +
+          escapeHtml(item.reason || '') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Category breakouts',
+        breakoutDimensions,
+        'No obvious category breakouts detected.',
+        item => {
+          const stats = [];
+          if (item.distinct_count != null) stats.push(item.distinct_count + ' distinct');
+          if (item.null_rate != null) stats.push(item.null_rate + '% null');
+          return '<div class="overview-item overview-item-rich"><strong>' +
+            escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+            escapeHtml(stats.join(' • ') || 'No quick stats') + '</span></div>';
+        }
+      ) +
+      (notes.length ? renderOverviewList(
+        'Quick notes',
+        notes,
+        '',
+        item => '<div class="overview-item overview-item-note"><span>' + escapeHtml(item) + '</span></div>'
+      ) : '') +
+      renderStarterActions(actions) +
+    '</div>';
+
+  addAssistantHtml(html, 'starter-overview-bubble');
+}
+
+async function runInspectOverview(kind, scope) {
+  if (isStreaming) return;
+  if (welcomeEl) welcomeEl.style.display = 'none';
+
+  const scopeTable = scope === 'table' ? selectedTable : null;
+  if (scope === 'table' && !scopeTable) {
+    showToast('Select a table in the sidebar first.', 'error');
+    addMessage('assistant', 'Select a table in the sidebar first, then run the table-scoped inspect action again.');
+    return;
+  }
+
+  let endpoint = '/api/dataset-overview';
+  let failureMessage = 'Failed to build the dataset overview.';
+  let toastMessage = 'Failed to profile the dataset.';
+
+  if (kind === 'dimensions') {
+    endpoint = '/api/dimension-overview';
+    failureMessage = 'Failed to identify key dimensions.';
+    toastMessage = 'Failed to analyze grouping dimensions.';
+  } else if (kind === 'quality') {
+    endpoint = '/api/quality-overview';
+    failureMessage = 'Failed to run the data quality audit.';
+    toastMessage = 'Failed to run the data quality inspection.';
+  } else if (kind === 'trend') {
+    endpoint = '/api/trend-overview';
+    failureMessage = 'Failed to identify trend-chart ideas.';
+    toastMessage = 'Failed to run the trend inspection.';
+  }
+
+  const typingEl = addTypingIndicator();
+  try {
+    const data = await fetchJson(scopeTable ? (endpoint + '?table=' + encodeURIComponent(scopeTable)) : endpoint);
+    typingEl.remove();
+    if (data.error || !data.overview) {
+      addMessage('assistant', (data.error || failureMessage) + ' Load data and try again.');
+      return;
+    }
+    if (kind === 'profile') renderDatasetOverview(data.overview);
+    else if (kind === 'dimensions') renderDimensionOverview(data.overview);
+    else if (kind === 'quality') renderQualityOverview(data.overview);
+    else renderTrendOverview(data.overview);
+  } catch (e) {
+    if (document.contains(typingEl)) typingEl.remove();
+    addMessage('assistant', failureMessage + ' Please try again.');
+    showToast(toastMessage, 'error');
+  }
+}
+
+async function runDatasetProfileStarter() {
+  await runInspectOverview('profile', 'dataset');
+}
+
+async function runDimensionStarter() {
+  await runInspectOverview('dimensions', 'dataset');
+}
+
+async function runQualityStarter() {
+  await runInspectOverview('quality', 'dataset');
+}
+
+async function runTrendStarter() {
+  await runInspectOverview('trend', 'dataset');
+}
+
+async function runInspectAction(kind, scope) {
+  switchView('chat');
+  await runInspectOverview(kind, scope);
+}
+
+async function runStarterAction(starterId) {
+  const config = STARTER_CONFIG[starterId] || STARTER_CONFIG.profile;
+  pendingStarterAction = null;
+
+  if (starterId === 'profile') {
+    await runDatasetProfileStarter();
+    return;
+  }
+
+  if (starterId === 'dimensions') {
+    await runDimensionStarter();
+    return;
+  }
+
+  if (starterId === 'quality') {
+    await runQualityStarter();
+    return;
+  }
+
+  if (starterId === 'trend') {
+    await runTrendStarter();
+    return;
+  }
+
+  if (config.prompt) {
+    sendMessage(config.prompt);
+  }
+}
+
+async function maybeRunPendingStarter() {
+  if (!pendingStarterAction) return false;
+  const starterId = pendingStarterAction;
+  await runStarterAction(starterId);
+  return true;
 }
 
 async function summarizeDataset() {
@@ -1622,7 +3044,9 @@ function handleToolResult(data) {
 
   const resultEl = document.createElement('div');
   resultEl.className = 'tool-result';
+  resultEl.dataset.resultType = data.type || '';
   if (data.title) resultEl.dataset.title = data.title;
+  if (data.title) resultEl.dataset.question = data.title;
 
   if (data.type === 'chart') {
     const iframe = document.createElement('iframe');
@@ -1650,6 +3074,9 @@ function handleToolResult(data) {
   pinBtn.className = 'pin-btn';
   pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
   pinBtn.onclick = () => pinResult(pinBtn);
+  const initialSourceMeta = buildSourceMeta(resultEl.dataset.question || '', data.type || '', {});
+  const sourceDetails = renderSourceDetails(initialSourceMeta, data.title || '');
+  resultEl.appendChild(sourceDetails);
   resultEl.appendChild(pinBtn);
 
   if (lastSql) {
@@ -2183,7 +3610,8 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 async function loadConversations() {
   try {
     const data = await fetchJson('/api/conversations');
-    renderConversations(data.conversations || []);
+    conversationsCache = data.conversations || [];
+    renderConversations(conversationsCache);
   } catch (e) { /* ignore */ }
 }
 
@@ -2304,7 +3732,8 @@ async function clearAllConversations() {
 async function loadBookmarks() {
   try {
     const data = await fetchJson('/api/bookmarks');
-    renderBookmarks(data.bookmarks || []);
+    bookmarksCache = data.bookmarks || [];
+    renderBookmarks(bookmarksCache);
   } catch (e) { /* ignore */ }
 }
 
@@ -2490,7 +3919,8 @@ async function clearAllReports() {
 async function loadReports() {
   try {
     const data = await fetchJson('/api/reports');
-    renderReports(data.reports || []);
+    reportsCache = data.reports || [];
+    renderReports(reportsCache);
   } catch (e) { /* ignore */ }
 }
 
@@ -2499,9 +3929,16 @@ async function runReport(id) {
     const resp = await fetch('/api/reports/' + id + '/run', { method: 'POST' });
     const data = await resp.json();
     if (!data.ok || !data.html) return;
+    lastToolMeta = data.meta || null;
+    lastSql = (data.meta && data.meta.sql) ? data.meta.sql : lastSql;
+    lastToolName = (data.meta && data.meta.tool) ? data.meta.tool : (data.type === 'chart' ? 'visualize_data' : 'run_sql');
+    lastPlotlySpec = data.plotly_spec || null;
+
     const resultEl = document.createElement('div');
     resultEl.className = 'tool-result';
+    resultEl.dataset.resultType = data.type || '';
     if (data.title) resultEl.dataset.title = data.title;
+    if (data.title) resultEl.dataset.question = data.title;
 
     if (data.type === 'chart') {
       const iframe = document.createElement('iframe');
@@ -2525,11 +3962,38 @@ async function runReport(id) {
       if (tableWrap) paginateTable(tableWrap);
     }
 
+    const sourceMeta = buildSourceMeta(resultEl.dataset.question || '', data.type || '', data.meta || {});
+    const sourceDetails = renderSourceDetails(sourceMeta, data.title || '');
+    resultEl.appendChild(sourceDetails);
+
     const pinBtn = document.createElement('button');
     pinBtn.className = 'pin-btn';
     pinBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9.5 2L14 6.5 8.5 12 4 14 2 12 3.5 7.5z"/><path d="M2 14l4-4"/></svg> Pin';
     pinBtn.onclick = () => pinResult(pinBtn);
     resultEl.appendChild(pinBtn);
+
+    if (lastSql) {
+      const bmBtn = document.createElement('button');
+      bmBtn.className = 'bookmark-btn';
+      bmBtn.innerHTML = '★ Bookmark';
+      bmBtn.onclick = () => {
+        bookmarkQuery(lastSql, lastToolName, data.title || '');
+        bmBtn.innerHTML = '★ Saved!';
+        setTimeout(() => { bmBtn.innerHTML = '★ Bookmark'; }, 1200);
+      };
+      resultEl.appendChild(bmBtn);
+
+      const rptBtn = document.createElement('button');
+      rptBtn.className = 'bookmark-btn';
+      rptBtn.style.right = '208px';
+      rptBtn.innerHTML = '⟳ Save Report';
+      rptBtn.onclick = () => {
+        saveReport(lastSql, lastToolName, data.title || '', lastPlotlySpec);
+        rptBtn.innerHTML = '⟳ Saved!';
+        setTimeout(() => { rptBtn.innerHTML = '⟳ Save Report'; }, 1200);
+      };
+      resultEl.appendChild(rptBtn);
+    }
 
     const delResult = _makeDeleteBtn('Delete result');
     delResult.onclick = (e) => { e.stopPropagation(); deleteElement(resultEl); };
@@ -2755,7 +4219,8 @@ function showShortcutsModal() {
         '<button class="shortcuts-close" onclick="hideShortcutsModal()">&times;</button>' +
       '</div>' +
       '<div class="shortcuts-list">' +
-        '<div class="shortcut-row"><kbd>/</kbd> or <kbd>' + mod + '</kbd>+<kbd>K</kbd><span>Focus question input</span></div>' +
+        '<div class="shortcut-row"><kbd>/</kbd><span>Focus question input</span></div>' +
+        '<div class="shortcut-row"><kbd>' + mod + '</kbd>+<kbd>K</kbd><span>Open command palette</span></div>' +
         '<div class="shortcut-row"><kbd>' + mod + '</kbd>+<kbd>B</kbd><span>Toggle sidebar</span></div>' +
         '<div class="shortcut-row"><kbd>N</kbd><span>New conversation</span></div>' +
         '<div class="shortcut-row"><kbd>D</kbd><span>Toggle dashboard view</span></div>' +
@@ -2779,6 +4244,35 @@ document.addEventListener('keydown', function(e) {
   const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement.isContentEditable;
   const mod = e.metaKey || e.ctrlKey;
 
+  if (commandPaletteOpen) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeCommandPalette();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (commandPaletteResults.length > 0) {
+        commandPaletteSelectedIdx = Math.min(commandPaletteSelectedIdx + 1, commandPaletteResults.length - 1);
+        renderCommandPalette();
+      }
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (commandPaletteResults.length > 0) {
+        commandPaletteSelectedIdx = Math.max(commandPaletteSelectedIdx - 1, 0);
+        renderCommandPalette();
+      }
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      executeCommandPaletteResult(commandPaletteSelectedIdx);
+      return;
+    }
+  }
+
   // Escape: exit fullscreen, close modals, or blur input
   if (e.key === 'Escape') {
     if (fullscreenCardId !== null) { exitCardFullscreen(); return; }
@@ -2787,10 +4281,11 @@ document.addEventListener('keydown', function(e) {
     return;
   }
 
-  // Mod+K: focus input (always, even from input)
+  // Mod+K: open command palette
   if (mod && e.key === 'k') {
     e.preventDefault();
-    inputEl.focus();
+    if (commandPaletteOpen) closeCommandPalette();
+    else openCommandPalette();
     return;
   }
 
@@ -3009,9 +4504,12 @@ async function landingExplore() {
 
     hideLanding();
     updateSessionIndicator('explore', data.tables.length);
+    clearSchemaSearchState();
     await loadSchema();
+    await loadRecipes();
     loadSettings();
-    showWelcome();
+    const starterRan = await maybeRunPendingStarter();
+    if (!starterRan) showWelcome();
 
     if (!llmConnected) {
       window.setTimeout(promptLlmConfigIfNeeded, 300);
@@ -3057,15 +4555,18 @@ async function landingOpenProject(path) {
 
     hideLanding();
     updateSessionIndicator('project', data.path.split('/').pop());
+    clearSchemaSearchState();
     await loadSchema();
     await loadQueries();
+    await loadRecipes();
     loadSettings();
     loadConversations();
     loadBookmarks();
     loadReports();
     loadDashboard();
     restoreSession();
-    showWelcome();
+    const starterRan = await maybeRunPendingStarter();
+    if (!starterRan) showWelcome();
 
   } catch (e) {
     errorEl.textContent = 'Failed to load project';
@@ -3108,7 +4609,9 @@ async function addFilesFromSidebar() {
     }
 
     // Reload schema to show new tables
+    clearSchemaSearchState();
     await loadSchema();
+    await loadRecipes();
   } catch (e) {
     showToast('Failed to add files', 'error');
   } finally {
@@ -3199,8 +4702,11 @@ async function saveFromPopover() {
               currentProjectPath = data.path;
               updateSessionIndicator('project', data.name || data.path.split('/').pop());
               showToast('Project saved with documentation: ' + (data.files || []).join(', '), 'success');
+              clearSchemaSearchState();
               await loadSchema();
               await loadQueries();
+              await loadRecipes();
+              await loadProjectHealth();
             } else if (eventType === 'error') {
               showToast('Error: ' + (data.error || 'Unknown error'), 'error');
             }
@@ -3232,8 +4738,11 @@ async function saveFromPopover() {
       currentProjectPath = data.path;
       updateSessionIndicator('project', projectName || data.path.split('/').pop());
       showToast('Project saved to ' + data.path, 'success');
+      clearSchemaSearchState();
       await loadSchema();
       await loadQueries();
+      await loadRecipes();
+      await loadProjectHealth();
     } catch (e) {
       errorEl.textContent = 'Failed to save project';
     }
@@ -3261,12 +4770,14 @@ function showToast(message, type) {
 async function initApp() {
   applyTheme(localStorage.getItem('datasight-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   restoreCollapsedSections();
+  bindSidebarListActions();
 
   // Check if a project/session is already loaded (e.g., server restart with state)
   try {
     const projectData = await fetchJson('/api/project');
     projectLoaded = projectData.loaded;
     currentProjectPath = projectData.path;
+    updateInspectScopeLabel();
 
     if (projectLoaded) {
       // Already loaded — go straight to chat
@@ -3278,11 +4789,13 @@ async function initApp() {
       }
       loadSchema();
       loadQueries();
+      loadRecipes();
       loadSettings();
       loadConversations();
       loadBookmarks();
       loadReports();
       loadDashboard();
+      loadProjectHealth();
       restoreSession();
       return;
     }
@@ -3294,6 +4807,7 @@ async function initApp() {
   // No project loaded — show landing page
   showLanding();
   await initLanding();
+  updateInspectScopeLabel();
   loadSettings();
 }
 

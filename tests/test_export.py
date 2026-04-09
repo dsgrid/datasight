@@ -1,6 +1,6 @@
 """Tests for session export."""
 
-from datasight.export import export_session_html
+from datasight.export import export_dashboard_html, export_session_html
 
 
 def _make_events():
@@ -138,3 +138,72 @@ def test_export_multiple_turns_selective_exclusion():
     assert "Turn 1 question" in html
     assert "Turn 1 answer" in html
     assert "Turn 2" not in html
+
+
+def test_export_dashboard_includes_notes():
+    html = export_dashboard_html(
+        [
+            {
+                "id": 1,
+                "type": "note",
+                "title": "Overview",
+                "markdown": "## Findings\n\n- First note",
+            }
+        ],
+        title="Dashboard Export",
+        columns=1,
+    )
+
+    assert "Dashboard Export" in html
+    assert "Overview" in html
+    assert "data-markdown" in html
+    assert "Findings" in html
+
+
+def test_export_dashboard_includes_sections():
+    html = export_dashboard_html(
+        [
+            {
+                "id": 2,
+                "type": "section",
+                "title": "Overview Section",
+                "markdown": "## Overview\n\nOpening context.",
+            }
+        ],
+        title="Section Export",
+        columns=1,
+    )
+
+    assert "Section Export" in html
+    assert "Overview Section" in html
+    assert "section-body" in html
+    assert "Overview" in html
+
+
+def test_export_dashboard_includes_source_metadata():
+    html = export_dashboard_html(
+        [
+            {
+                "id": 3,
+                "type": "table",
+                "title": "Top States",
+                "html": "<table><tr><td>CO</td></tr></table>",
+                "source_meta": {
+                    "question": "Which states are highest?",
+                    "tool": "run_sql",
+                    "row_count": 12,
+                    "column_count": 2,
+                    "execution_time_ms": 42.4,
+                    "sql": "select state from totals",
+                },
+            }
+        ],
+        title="Source Export",
+        columns=1,
+    )
+
+    assert "Source Export" in html
+    assert "Which states are highest?" in html
+    assert "run_sql" in html
+    assert "42 ms" in html
+    assert "select state from totals" in html

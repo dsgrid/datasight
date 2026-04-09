@@ -134,9 +134,17 @@ datasight run
 ```
 
 Open <http://localhost:8084> in your browser. The sidebar shows your database
-tables and example queries. Type a question in plain English and the AI will
-write SQL, run it, and display the results. Ask for a chart and it will
-generate an interactive Plotly visualization.
+tables, recipes, example queries, and saved artifacts. The landing page also
+lets you start with guided deterministic workflows such as:
+
+- profiling the dataset
+- surfacing key dimensions
+- finding likely trend charts
+- auditing nulls and suspicious ranges
+
+After that first pass, type a question in plain English and the AI will write
+SQL, run it, and display the results. Ask for a chart and it will generate an
+interactive Plotly visualization.
 
 ### Headless mode
 
@@ -146,9 +154,15 @@ You can also ask questions from the command line without starting a web server:
 datasight ask "What are the top 10 records by the largest numeric column?"
 datasight ask "Show trends over time" --chart-format html -o chart.html
 datasight ask "Top 5 states" --format csv -o results.csv
+datasight ask --file questions.txt --output-dir batch-output
+datasight profile
+datasight quality --table orders
+datasight dimensions --table orders
+datasight trends --table orders
 ```
 
-See `datasight ask --help` for all options.
+See [Use the CLI](../end-user/cli-usage.md) for batch mode, deterministic inspection
+commands, and diagnostics.
 
 ## What happens at startup
 

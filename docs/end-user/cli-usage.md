@@ -109,6 +109,141 @@ python analyze.py counts.json
 datasight ask "Total generation by fuel type for 2024" --format table
 ```
 
+## Run batch question files
+
+`datasight ask --file` executes multiple prompts in one run. Plain text
+files use one question per non-empty line:
+
+```bash
+datasight ask --file questions.txt
+```
+
+```text
+How many rows are in the largest table?
+What are the main date columns?
+Show the top 10 categories by total volume.
+```
+
+Write per-question artifacts to a directory:
+
+```bash
+datasight ask --file questions.txt \
+  --output-dir batch-output \
+  --format json \
+  --chart-format json
+```
+
+Structured YAML or JSONL input supports per-entry overrides:
+
+```yaml
+- question: How many orders are there?
+  format: json
+  name: orders-summary
+- question: Show monthly volume as a line chart.
+  chart_format: html
+  output: reports/monthly-volume
+```
+
+```bash
+datasight ask --file questions.yaml --output-dir batch-output
+datasight ask --file questions.jsonl --output-dir batch-output
+```
+
+JSONL uses one object per line:
+
+```json
+{"question":"How many orders are there?","format":"json","name":"orders-summary"}
+{"question":"Show monthly volume as a line chart.","chart_format":"html","output":"reports/monthly-volume"}
+```
+
+## Use deterministic inspection commands
+
+These commands do not require an LLM. They inspect the connected data
+directly and return structured output in `table`, `json`, or `markdown`
+formats.
+
+### Profile the dataset
+
+```bash
+# Whole dataset
+datasight profile
+
+# One table
+datasight profile --table orders
+
+# One column
+datasight profile --column orders.order_date
+```
+
+Useful when you need row counts, date coverage, numeric ranges, candidate
+dimensions, and representative values before writing prompts.
+
+### Audit data quality
+
+```bash
+datasight quality
+datasight quality --table orders
+datasight quality --format markdown -o quality.md
+```
+
+This surfaces null-heavy columns, suspicious numeric ranges, date coverage,
+and quick notes from a deterministic quality pass.
+
+### Find likely dimensions and trend analyses
+
+```bash
+datasight dimensions
+datasight dimensions --table orders
+datasight trends
+datasight trends --table orders
+```
+
+Use these to discover:
+
+- likely grouping columns
+- suggested category breakdowns
+- candidate date/measure pairs for time-series analysis
+- lightweight chart recommendations
+
+### Generate reusable prompt recipes
+
+```bash
+datasight recipes list
+datasight recipes list --table orders
+datasight recipes list --format markdown -o recipes.md
+datasight recipes run 1
+```
+
+`datasight recipes list` builds reusable analysis prompts like “profile the
+biggest tables” or “trend `revenue` over `order_date`” from the actual schema
+and detected columns. Each recipe includes an `id`.
+
+Use `datasight recipes run <id>` to execute a selected recipe through the
+normal `ask` workflow without retyping the prompt.
+
+See [Inspection workflows](inspection-workflows.md) for a more opinionated
+way to combine `profile`, `quality`, `dimensions`, `trends`, `recipes`, and
+batch `ask --file` runs.
+
+## Run project diagnostics
+
+`datasight doctor` checks the local project setup without opening the web UI.
+
+```bash
+datasight doctor
+datasight doctor --format markdown -o doctor.md
+```
+
+It validates:
+
+- `.env`
+- LLM settings
+- database configuration
+- `schema_description.md`
+- `queries.yaml`
+- `.datasight` writability
+- live database connectivity
+
 ## Review the query log
 
 `datasight log` shows a formatted table of recent SQL queries from the

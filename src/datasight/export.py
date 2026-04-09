@@ -185,6 +185,7 @@ def _build_dashboard_cards(
     for idx, item in enumerate(items):
         item_type = item.get("type", "table")
         item_title = item.get("title", "")
+        source_meta = item.get("source_meta") or {}
 
         card: dict[str, Any] = {
             "idx": idx,
@@ -200,10 +201,53 @@ def _build_dashboard_cards(
                 # Fallback to iframe if spec extraction fails
                 card["is_iframe"] = True
                 card["html"] = escape_html_attr(item.get("html", ""))
+        elif item_type == "note":
+            card["is_note"] = True
+            card["markdown"] = escape_html_attr(item.get("markdown", ""))
+        elif item_type == "section":
+            card["is_section"] = True
+            card["markdown"] = escape_html_attr(item.get("markdown", ""))
         else:
             # Table
             card["is_table"] = True
             card["html"] = item.get("html", "")
+
+        if source_meta and item_type in {"chart", "table"}:
+            rows = [
+                {"label": "Question", "value": source_meta.get("question", "")},
+                {"label": "Tool", "value": source_meta.get("tool", "")},
+                {
+                    "label": "Rows",
+                    "value": (
+                        str(source_meta["row_count"])
+                        if source_meta.get("row_count") is not None
+                        else ""
+                    ),
+                },
+                {
+                    "label": "Columns",
+                    "value": (
+                        str(source_meta["column_count"])
+                        if source_meta.get("column_count") is not None
+                        else ""
+                    ),
+                },
+                {
+                    "label": "Execution",
+                    "value": (
+                        f"{round(source_meta['execution_time_ms'])} ms"
+                        if source_meta.get("execution_time_ms") is not None
+                        else ""
+                    ),
+                },
+                {"label": "Chart", "value": source_meta.get("chart_type", "")},
+            ]
+            card["has_source_meta"] = True
+            card["source_rows"] = [row for row in rows if row["value"]]
+            if source_meta.get("sql"):
+                card["source_sql"] = source_meta["sql"]
+            if source_meta.get("error"):
+                card["source_error"] = source_meta["error"]
 
         cards.append(card)
 
@@ -240,6 +284,8 @@ def export_dashboard_html(
         {
             "title": title,  # Let Mustache escape via {{title}}
             "plotly_cdn": PLOTLY_CDN,
+            "marked_cdn": MARKED_CDN,
+            "dompurify_cdn": DOMPURIFY_CDN,
             "columns": columns,
             "cards": cards,
             "chart_specs_json": json.dumps(chart_specs),

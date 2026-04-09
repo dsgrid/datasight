@@ -33,6 +33,14 @@ from datasight.config import (
     load_example_queries,
     load_schema_description,
 )
+from datasight.data_profile import (
+    build_dataset_overview,
+    build_dimension_overview,
+    find_table_info,
+    build_prompt_recipes,
+    build_quality_overview,
+    build_trend_overview,
+)
 from datasight.events import EventType
 from datasight.exceptions import (
     ConfigurationError,
@@ -361,6 +369,7 @@ class AppState:
         self.pending_confirms: dict[str, dict[str, Any]] = {}
         self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._response_cache_max = 100
+        self._insight_cache: dict[str, Any] = {}
         self._max_history_pairs = 10
         # Per-session locks to prevent concurrent chat on the same session
         self._session_locks: dict[str, asyncio.Lock] = {}
@@ -394,6 +403,7 @@ class AppState:
         self.reports = None
         self.query_logger = None
         self._response_cache.clear()
+        self._insight_cache.clear()
         # Reset ephemeral state
         self.is_ephemeral = False
         self.ephemeral_tables_info = []
@@ -410,6 +420,19 @@ class AppState:
             dialect=self.sql_dialect,
         )
         self._response_cache.clear()
+        self._insight_cache.clear()
+
+    def get_insight_cache(self, key: str) -> Any | None:
+        """Return cached deterministic UI diagnostics."""
+        return self._insight_cache.get(key)
+
+    def put_insight_cache(self, key: str, value: Any) -> None:
+        """Store cached deterministic UI diagnostics."""
+        self._insight_cache[key] = value
+
+    def clear_insight_cache(self) -> None:
+        """Drop cached deterministic UI diagnostics."""
+        self._insight_cache.clear()
 
     @staticmethod
     def _cache_key(question: str) -> str:
@@ -496,6 +519,199 @@ def init_llm_client(state: AppState) -> None:
         # Clear client on failure to prevent stale state
         state.llm_client = None
         state.model = ""
+
+
+async def _build_project_health(state: AppState) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+
+    def add_check(name: str, ok: bool, detail: str, category: str, remediation: str) -> None:
+        checks.append(
+            {
+                "name": name,
+                "ok": ok,
+                "detail": detail,
+                "category": category,
+                "remediation": remediation if not ok else "",
+            }
+        )
+
+    project_dir = Path(state.project_dir).resolve() if state.project_dir else None
+    env_path = project_dir / ".env" if project_dir else None
+    add_check(
+        ".env",
+        bool(env_path and env_path.exists()),
+        str(env_path) if env_path else "No project loaded",
+        "project",
+        "Create or load a project directory with a .env file.",
+    )
+
+    try:
+        settings = Settings.from_env(
+            str(env_path) if env_path and env_path.exists() else None,
+            override=False,
+        )
+        validation_errors = settings.validate()
+        add_check(
+            "LLM settings",
+            not validation_errors,
+            "; ".join(validation_errors) if validation_errors else settings.llm.provider,
+            "config",
+            "Fix missing or invalid LLM environment variables in .env.",
+        )
+    except Exception as exc:
+        settings = None
+        add_check("LLM settings", False, str(exc), "config", "Fix the LLM configuration in .env.")
+
+    if project_dir:
+        for name in ("schema_description.md", "queries.yaml"):
+            path = project_dir / name
+            add_check(
+                name,
+                path.exists(),
+                str(path),
+                "project",
+                f"Add {name} to the project root or regenerate project scaffolding.",
+            )
+
+        datasight_dir = project_dir / ".datasight"
+        try:
+            datasight_dir.mkdir(parents=True, exist_ok=True)
+            probe = datasight_dir / ".health-write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            add_check(".datasight writable", True, str(datasight_dir), "project", "")
+        except OSError as exc:
+            add_check(
+                ".datasight writable",
+                False,
+                f"{datasight_dir}: {exc}",
+                "project",
+                "Fix permissions on the project directory so datasight can write local state.",
+            )
+    else:
+        add_check(
+            "schema_description.md",
+            False,
+            "No project loaded",
+            "project",
+            "Load a project first, then add schema_description.md if you want richer context.",
+        )
+        add_check(
+            "queries.yaml",
+            False,
+            "No project loaded",
+            "project",
+            "Load a project first, then add queries.yaml for example queries.",
+        )
+        add_check(
+            ".datasight writable",
+            False,
+            "No project loaded",
+            "project",
+            "Load a project first so datasight can create its local state directory.",
+        )
+
+    if settings is not None:
+        db_detail = settings.database.mode
+        db_ok = True
+        if settings.database.mode in ("duckdb", "sqlite"):
+            db_path = settings.database.path
+            if db_path and not os.path.isabs(db_path) and project_dir:
+                db_path = str(project_dir / db_path)
+            db_ok = bool(db_path) and os.path.exists(db_path)
+            db_detail = str(db_path)
+        elif settings.database.mode == "postgres":
+            db_ok = bool(
+                settings.database.postgres_url
+                or (
+                    settings.database.postgres_database
+                    and settings.database.postgres_user
+                    and settings.database.postgres_host
+                )
+            )
+            db_detail = settings.database.postgres_url or (
+                f"{settings.database.postgres_user}@{settings.database.postgres_host}:"
+                f"{settings.database.postgres_port}/{settings.database.postgres_database}"
+            )
+        elif settings.database.mode == "flightsql":
+            db_ok = bool(settings.database.flight_uri)
+            db_detail = settings.database.flight_uri
+        add_check(
+            "Database config",
+            db_ok,
+            db_detail or settings.database.mode,
+            "config",
+            "Fix the database connection settings in .env.",
+        )
+    else:
+        add_check(
+            "Database config",
+            False,
+            "Settings unavailable",
+            "config",
+            "Load valid settings from .env.",
+        )
+
+    if state.sql_runner is not None:
+        try:
+            await state.sql_runner.run_sql("SELECT 1 AS ok")
+            add_check("Database connectivity", True, "SELECT 1", "connectivity", "")
+        except Exception as exc:
+            add_check(
+                "Database connectivity",
+                False,
+                str(exc),
+                "connectivity",
+                "Verify the database is reachable and the configured credentials are valid.",
+            )
+    else:
+        add_check(
+            "Database connectivity",
+            False,
+            "No database connection",
+            "connectivity",
+            "Load a project or fix the database config so datasight can open a connection.",
+        )
+
+    config_failures = sum(
+        1 for check in checks if not check["ok"] and check["category"] == "config"
+    )
+    connectivity_failures = sum(
+        1 for check in checks if not check["ok"] and check["category"] == "connectivity"
+    )
+    project_failures = sum(
+        1 for check in checks if not check["ok"] and check["category"] == "project"
+    )
+
+    return {
+        "project_loaded": state.project_loaded,
+        "project_dir": state.project_dir,
+        "checks": checks,
+        "summary": {
+            "ok_count": sum(1 for check in checks if check["ok"]),
+            "fail_count": sum(1 for check in checks if not check["ok"]),
+            "config_failures": config_failures,
+            "connectivity_failures": connectivity_failures,
+            "project_failures": project_failures,
+        },
+    }
+
+
+async def _get_cached_insight(
+    state: AppState,
+    cache_key: str,
+    builder,
+) -> tuple[Any, bool]:
+    """Return cached deterministic UI data or compute it once."""
+    cached = state.get_insight_cache(cache_key)
+    if cached is not None:
+        logger.debug(f"[insight-cache] HIT {cache_key}")
+        return cached, True
+
+    value = await builder()
+    state.put_insight_cache(cache_key, value)
+    logger.debug(f"[insight-cache] STORED {cache_key}")
+    return value, False
 
 
 # ---------------------------------------------------------------------------
@@ -1074,10 +1290,121 @@ async def get_schema(state: AppState = Depends(get_state)):
     return {"tables": state.schema_info}
 
 
+@app.get("/api/dataset-overview")
+async def get_dataset_overview(table: str | None = None, state: AppState = Depends(get_state)):
+    """Return a deterministic overview of the loaded dataset."""
+    if not state.project_loaded or not state.schema_info or state.sql_runner is None:
+        return {"error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    schema_info = state.schema_info
+    cache_key = "dataset-overview"
+    if table:
+        table_info = find_table_info(state.schema_info, table)
+        if table_info is None:
+            return {"error": f"Table not found: {table}"}
+        schema_info = [table_info]
+        cache_key = f"dataset-overview:{table_info['name'].lower()}"
+
+    overview, cached = await _get_cached_insight(
+        state,
+        cache_key,
+        lambda: build_dataset_overview(schema_info, sql_runner.run_sql),
+    )
+    return {"overview": overview, "cached": cached}
+
+
+@app.get("/api/dimension-overview")
+async def get_dimension_overview(table: str | None = None, state: AppState = Depends(get_state)):
+    """Return a deterministic view of likely grouping dimensions."""
+    if not state.project_loaded or state.sql_runner is None:
+        return {"error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    schema_info = state.schema_info
+    cache_key = "dimension-overview"
+    if table:
+        table_info = find_table_info(state.schema_info, table)
+        if table_info is None:
+            return {"error": f"Table not found: {table}"}
+        schema_info = [table_info]
+        cache_key = f"dimension-overview:{table_info['name'].lower()}"
+
+    overview, cached = await _get_cached_insight(
+        state,
+        cache_key,
+        lambda: build_dimension_overview(schema_info, sql_runner.run_sql),
+    )
+    return {"overview": overview, "cached": cached}
+
+
+@app.get("/api/quality-overview")
+async def get_quality_overview(table: str | None = None, state: AppState = Depends(get_state)):
+    """Return a deterministic view of basic data quality signals."""
+    if not state.project_loaded or state.sql_runner is None:
+        return {"error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    schema_info = state.schema_info
+    cache_key = "quality-overview"
+    if table:
+        table_info = find_table_info(state.schema_info, table)
+        if table_info is None:
+            return {"error": f"Table not found: {table}"}
+        schema_info = [table_info]
+        cache_key = f"quality-overview:{table_info['name'].lower()}"
+
+    overview, cached = await _get_cached_insight(
+        state,
+        cache_key,
+        lambda: build_quality_overview(schema_info, sql_runner.run_sql),
+    )
+    return {"overview": overview, "cached": cached}
+
+
+@app.get("/api/trend-overview")
+async def get_trend_overview(table: str | None = None, state: AppState = Depends(get_state)):
+    """Return a deterministic view of likely time-series analyses."""
+    if not state.project_loaded or state.sql_runner is None:
+        return {"error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    schema_info = state.schema_info
+    cache_key = "trend-overview"
+    if table:
+        table_info = find_table_info(state.schema_info, table)
+        if table_info is None:
+            return {"error": f"Table not found: {table}"}
+        schema_info = [table_info]
+        cache_key = f"trend-overview:{table_info['name'].lower()}"
+
+    overview, cached = await _get_cached_insight(
+        state,
+        cache_key,
+        lambda: build_trend_overview(schema_info, sql_runner.run_sql),
+    )
+    return {"overview": overview, "cached": cached}
+
+
 @app.get("/api/queries")
 async def get_queries(state: AppState = Depends(get_state)):
     """Return example queries."""
     return {"queries": state.example_queries_list}
+
+
+@app.get("/api/recipes")
+async def get_recipes(state: AppState = Depends(get_state)):
+    """Return reusable prompt recipes derived from the loaded schema."""
+    if not state.project_loaded or state.sql_runner is None:
+        return {"recipes": [], "error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    recipes, cached = await _get_cached_insight(
+        state,
+        "prompt-recipes",
+        lambda: build_prompt_recipes(state.schema_info, sql_runner.run_sql),
+    )
+    return {"recipes": recipes, "cached": cached}
 
 
 @app.get("/api/summarize")
@@ -1604,9 +1931,17 @@ async def preview_table(table_name: str, state: AppState = Depends(get_state)):
     if state.sql_runner is None:
         return {"html": None, "error": "Database not connected"}
     try:
+        cache_key = f"preview:{table_name}"
+        cached = state.get_insight_cache(cache_key)
+        if cached is not None:
+            logger.debug(f"[insight-cache] HIT {cache_key}")
+            return {"html": cached, "cached": True}
+
         df = await state.sql_runner.run_sql(f'SELECT * FROM "{table_name}" LIMIT 10')
         html = df_to_html_table(df, max_rows=10)
-        return {"html": html}
+        state.put_insight_cache(cache_key, html)
+        logger.debug(f"[insight-cache] STORED {cache_key}")
+        return {"html": html, "cached": False}
     except Exception as e:
         logger.debug(f"Preview error: {e}")
         return {"html": None, "error": str(e)}
@@ -1632,6 +1967,12 @@ async def column_stats(table_name: str, column_name: str, state: AppState = Depe
 
     col_info = next(c for c in table_info["columns"] if c["name"] == column_name)
     try:
+        cache_key = f"column-stats:{table_name}.{column_name}"
+        cached = state.get_insight_cache(cache_key)
+        if cached is not None:
+            logger.debug(f"[insight-cache] HIT {cache_key}")
+            return {"stats": cached, "cached": True}
+
         dtype = col_info["dtype"].lower()
         is_numeric = any(
             t in dtype for t in ("int", "float", "double", "decimal", "numeric", "real")
@@ -1670,7 +2011,9 @@ async def column_stats(table_name: str, column_name: str, state: AppState = Depe
                 stats[k] = v.item()
             elif hasattr(v, "isoformat"):
                 stats[k] = str(v)
-        return {"stats": stats}
+        state.put_insight_cache(cache_key, stats)
+        logger.debug(f"[insight-cache] STORED {cache_key}")
+        return {"stats": stats, "cached": False}
     except Exception as e:
         logger.debug(f"Column stats error: {e}")
         return {"stats": None, "error": str(e)}
@@ -1857,6 +2200,7 @@ async def run_report(report_id: int, state: AppState = Depends(get_state)):
         "type": "chart" if is_chart else "table",
         "title": report.get("name", ""),
         "meta": result.meta,
+        "plotly_spec": report.get("plotly_spec"),
     }
 
 
@@ -1893,6 +2237,8 @@ async def update_settings(request: Request, state: AppState = Depends(get_state)
             state.show_cost = bool(body["show_cost"])
         if need_rebuild:
             state.rebuild_system_prompt()
+        else:
+            state.clear_insight_cache()
     logger.info(
         f"Settings updated: confirm_sql={state.confirm_sql}, "
         f"explain_sql={state.explain_sql}, clarify_sql={state.clarify_sql}, "
@@ -1942,6 +2288,17 @@ async def get_llm_settings(state: AppState = Depends(get_state)):
     }
 
 
+@app.get("/api/project-health")
+async def get_project_health(state: AppState = Depends(get_state)):
+    """Return lightweight project health diagnostics for the UI."""
+    health, cached = await _get_cached_insight(
+        state,
+        "project-health",
+        lambda: _build_project_health(state),
+    )
+    return {**health, "cached": cached}
+
+
 @app.post("/api/settings/llm")
 async def update_llm_settings(request: Request, state: AppState = Depends(get_state)):
     """Update LLM configuration and reinitialize the client.
@@ -1984,6 +2341,7 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
 
         # Reinitialize LLM client
         init_llm_client(state)
+        state.clear_insight_cache()
 
         # Rebuild system prompt if schema is loaded
         if state.schema_text:
@@ -2071,8 +2429,15 @@ async def chat(request: Request, state: AppState = Depends(get_state)):
 
     async def locked_generator() -> AsyncIterator[str]:
         async with session_lock:
-            async for event in generate_chat_response(message, session_id, state, request=request):
-                yield event
+            try:
+                async for event in generate_chat_response(
+                    message, session_id, state, request=request
+                ):
+                    yield event
+            except Exception as exc:
+                logger.exception("Chat stream failed")
+                yield f"event: {EventType.ERROR}\ndata: {json.dumps({'error': str(exc)})}\n\n"
+                yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(
         locked_generator(),

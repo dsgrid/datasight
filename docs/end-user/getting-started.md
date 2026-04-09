@@ -26,15 +26,21 @@ datasight run
 
 Open <http://localhost:8084>. The landing page shows two options:
 
-1. **Configure your LLM** — if you haven't set environment variables, enter
+1. **Guided starters** — choose a concrete first path like **Profile this
+   dataset**, **Find key dimensions**, **Build a trend chart**, or **Audit
+   nulls and outliers**. datasight will run the selected starter immediately
+   after your data loads.
+
+2. **Configure your LLM** — if you haven't set environment variables, enter
    your provider and API key. (If you exported `ANTHROPIC_API_KEY` or similar
    in your shell, this step is skipped automatically.)
 
-2. **Explore Files** — enter the path to a CSV, Parquet, or DuckDB file
+3. **Explore Files** — enter the path to a CSV, Parquet, or DuckDB file
    (or a directory of Parquet files) and click **Explore**.
 
 datasight creates an in-memory database, introspects the schema, and drops
-you into the chat UI. Start asking questions immediately.
+you into the chat UI. Start with the guided starter output, then continue
+into freeform questions, recipes, or dashboard composition.
 
 !!! tip "Adding more files"
     Use the input at the top of the sidebar (below **Tables**) to add more
@@ -49,6 +55,25 @@ persist your session as a project. datasight will:
   original files — no data copying)
 - Auto-generate `schema_description.md` and `queries.yaml` using the LLM
 - Load the project so future sessions remember your schema context
+
+## Start from the CLI
+
+If you want a deterministic, non-LLM first pass before asking questions, use
+the CLI commands directly from the project directory:
+
+```bash
+datasight profile
+datasight quality
+datasight dimensions
+datasight trends
+datasight recipes
+```
+
+These commands inspect the data directly and return structured output without
+opening the web UI.
+
+For a recommended progression from deterministic inspection into reusable
+batch question files, see [Inspection workflows](inspection-workflows.md).
 
 ## Try the demo
 
