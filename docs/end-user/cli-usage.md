@@ -82,6 +82,32 @@ datasight ask "Generation by fuel type" --chart-format json -o chart.json
 datasight ask "Solar generation by state" --chart-format png -o solar-map.png
 ```
 
+### Inspect or replay the SQL the agent runs
+
+Print every SQL query the agent executes to the console alongside the
+answer:
+
+```bash
+datasight ask "Top 5 states by generation" --print-sql
+```
+
+Save the executed queries as a re-runnable SQL script that materializes
+each result into an auto-named table (using `CREATE OR REPLACE TABLE` on
+DuckDB, or `DROP TABLE IF EXISTS` + `CREATE TABLE` on SQLite/Postgres):
+
+```bash
+datasight ask "Top 5 states by generation" --sql-script top-states.sql
+```
+
+The generated script names each table `<question_slug>_<short_hash>_<n>`,
+where `<short_hash>` is an 8-character digest of the original question that
+keeps two different questions from colliding on the same table when their
+slugs happen to share the same prefix. Re-running the same question reuses
+the same names, so the script overwrites in place and you can inspect the
+results with normal SQL tooling. SQL queries are also appended to
+`.datasight/query_log.jsonl` just like the web UI — review them later with
+`datasight log`.
+
 ### Options
 
 | Flag | Default | Description |
@@ -89,6 +115,8 @@ datasight ask "Solar generation by state" --chart-format png -o solar-map.png
 | `--format` | `table` | Output format: `table`, `csv`, or `json` |
 | `--chart-format` | — | Chart export format: `html`, `json`, or `png` |
 | `-o` / `--output` | — | Save output to a file instead of printing |
+| `--print-sql` | off | Print executed SQL queries to the console |
+| `--sql-script` | — | Write executed queries to a re-runnable SQL script |
 | `--model` | from `.env` | Override the model for this query |
 | `--project-dir` | `.` | Project directory containing `.env` |
 | `-v` / `--verbose` | off | Show debug logging (LLM requests, SQL, timing) |

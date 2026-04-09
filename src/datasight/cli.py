@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -94,7 +95,9 @@ async def _run_ask_pipeline(
         load_example_queries,
         load_schema_description,
     )
+    from datasight.cost import build_cost_data, log_query_cost
     from datasight.prompts import build_system_prompt
+    from datasight.query_log import QueryLogger
     from datasight.schema import format_schema_context, introspect_schema
     from datasight.sql_validation import build_schema_map
 
@@ -128,7 +131,21 @@ async def _run_ask_pipeline(
         dialect=sql_dialect,
     )
 
-    return await run_agent_loop(
+    log_path = os.environ.get(
+        "QUERY_LOG_PATH",
+        os.path.join(project_dir, ".datasight", "query_log.jsonl"),
+    )
+    query_logger = QueryLogger(path=log_path)
+    # Microseconds + a short random suffix prevent collisions when several
+    # `datasight ask` runs (e.g. a fast batch or test sweep) start within
+    # the same wall-clock second.
+    import secrets
+
+    session_id = (
+        f"cli-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}-{secrets.token_hex(3)}"
+    )
+
+    result = await run_agent_loop(
         question=question,
         llm_client=llm_client,
         model=resolved_model,
@@ -136,7 +153,27 @@ async def _run_ask_pipeline(
         run_sql=sql_runner.run_sql,
         schema_map=schema_map,
         dialect=sql_dialect,
+        query_logger=query_logger,
+        session_id=session_id,
     )
+
+    # Mirror the web app: emit a turn-level cost summary so `datasight log
+    # --cost` reflects CLI usage too.
+    log_query_cost(
+        resolved_model, result.api_calls, result.total_input_tokens, result.total_output_tokens
+    )
+    cost_data = build_cost_data(
+        resolved_model, result.api_calls, result.total_input_tokens, result.total_output_tokens
+    )
+    query_logger.log_cost(
+        session_id=session_id,
+        user_question=question,
+        api_calls=result.api_calls,
+        input_tokens=result.total_input_tokens,
+        output_tokens=result.total_output_tokens,
+        estimated_cost=cost_data.get("estimated_cost"),
+    )
+    return result
 
 
 def _write_or_print(text: str, output_path: str | None) -> None:
@@ -480,6 +517,151 @@ def _slugify_filename(value: str) -> str:
     return "-".join(parts)[:64] or "question"
 
 
+def _sanitize_sql_identifier(value: str) -> str:
+    """Convert a string into a snake_case SQL identifier.
+
+    Keeps only ASCII alphanumerics (lowercased), joins with underscores,
+    and caps length at 32 characters. The result is intentionally bounded
+    and ASCII-only so callers can safely prefix/suffix it (table prefix,
+    hash, query index) and stay portable across DuckDB / SQLite / Postgres
+    — Postgres in particular folds unquoted identifiers via libc and
+    truncates at 63 *bytes*, so non-ASCII characters could blow that
+    budget on a per-character truncation scheme.
+    """
+    cleaned = "".join(ch.lower() if (ch.isascii() and ch.isalnum()) else "_" for ch in value)
+    parts = [p for p in cleaned.split("_") if p]
+    slug = "_".join(parts)[:32]
+    if not slug or not slug[0].isalpha():
+        slug = "query" if not slug else f"q_{slug}"
+    return slug
+
+
+def _question_table_prefix(question: str) -> str:
+    """Build a stable, collision-resistant table-name prefix from a question.
+
+    Combines a human-readable slug with an 8-char hash of the original
+    (untruncated) question, so two long questions that happen to share the
+    same first sanitized characters still get distinct tables. The full
+    prefix fits within Postgres' 63-byte identifier limit even after a
+    ``_<n>`` query-index suffix is appended.
+    """
+    import hashlib
+
+    slug = _sanitize_sql_identifier(question)
+    digest = hashlib.sha256(question.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}_{digest}"
+
+
+def _iter_sql_tool_results(result) -> list[tuple[int, Any]]:
+    """Return ``(index, tool_result)`` pairs that contain a SQL query."""
+    pairs: list[tuple[int, Any]] = []
+    n = 0
+    for tr in result.tool_results:
+        if not tr.meta or not tr.meta.get("sql"):
+            continue
+        n += 1
+        pairs.append((n, tr))
+    return pairs
+
+
+def _sql_comment_lines(label: str, value: Any) -> list[str]:
+    """Render ``value`` as a block of SQL line comments under ``label``.
+
+    Any newlines in ``value`` are kept commented so that user-supplied
+    questions or multi-line SQL error messages cannot escape the comment
+    and become executable statements. Returns a list of ``-- ...`` lines.
+    """
+    text = "" if value is None else str(value)
+    parts = text.splitlines() or [""]
+    out = [f"-- {label}: {parts[0]}"]
+    for cont in parts[1:]:
+        out.append(f"--   {cont}")
+    return out
+
+
+def _print_sql_queries(result) -> None:
+    """Print SQL queries from a result to stderr, prefixed with comments.
+
+    stderr (not stdout) because ``--print-sql`` is a diagnostic overlay and
+    must not corrupt machine-readable output on stdout (``--format json``,
+    ``--format csv``, shell pipelines).
+    """
+    pairs = _iter_sql_tool_results(result)
+    if not pairs:
+        return
+    click.echo(err=True)
+    click.echo("-- SQL queries executed:", err=True)
+    for idx, tr in pairs:
+        sql = (tr.meta.get("formatted_sql") or tr.meta.get("sql") or "").rstrip()
+        tool = tr.meta.get("tool", "")
+        click.echo(err=True)
+        click.echo(f"-- Query {idx} (tool: {tool})", err=True)
+        if tr.meta.get("error"):
+            for line in _sql_comment_lines("ERROR", tr.meta["error"]):
+                click.echo(line, err=True)
+        click.echo(sql.rstrip(";") + ";", err=True)
+
+
+def _build_sql_script(result, question: str, dialect: str) -> str:
+    """Build an executable SQL script that materializes results to tables.
+
+    Each successful SQL query is wrapped in a ``CREATE OR REPLACE TABLE``
+    (DuckDB) or ``DROP TABLE IF EXISTS`` + ``CREATE TABLE`` (SQLite,
+    Postgres) statement that overwrites a deterministically named table.
+
+    Tables are named ``<slug>_<hash>_<n>`` where ``slug`` is a truncated
+    snake_case rendering of the question, ``hash`` is a short SHA-256
+    digest of the original question, and ``n`` is the 1-based index of the
+    query *among the successful ones*. Failed/intermediate attempts are
+    preserved in the script as bare audit comments but do **not** consume
+    a table number — that way two reruns of the same question, even if
+    the agent retries differently, still land their final result on the
+    same table name and the script truly overwrites in place.
+    """
+    prefix = _question_table_prefix(question)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines: list[str] = [
+        "-- Generated by `datasight ask`",
+        f"-- Generated at: {timestamp}",
+        *_sql_comment_lines("Question", question),
+        f"-- Dialect: {dialect}",
+        "",
+    ]
+    pairs = _iter_sql_tool_results(result)
+    if not pairs:
+        lines.append("-- (no SQL queries were executed)")
+        lines.append("")
+        return "\n".join(lines)
+
+    success_idx = 0
+    for _, tr in pairs:
+        if tr.meta.get("error"):
+            # Audit-only: failed attempts are preserved as comments but
+            # do not consume a table-name index, so retries don't shift
+            # the final result onto a different table on the next run.
+            lines.append("-- Skipped attempt (errored, not materialized):")
+            lines.extend(_sql_comment_lines("  error", tr.meta["error"]))
+            lines.append("")
+            continue
+        body = (tr.meta.get("formatted_sql") or tr.meta.get("sql") or "").strip()
+        if not body:
+            continue
+        success_idx += 1
+        body = body.rstrip(";")
+        table = f"{prefix}_{success_idx}"
+        tool = tr.meta.get("tool", "")
+        lines.append(f"-- Query {success_idx} (tool: {tool})")
+        if dialect == "duckdb":
+            lines.append(f"CREATE OR REPLACE TABLE {table} AS")
+            lines.append(f"{body};")
+        else:
+            lines.append(f"DROP TABLE IF EXISTS {table};")
+            lines.append(f"CREATE TABLE {table} AS")
+            lines.append(f"{body};")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _default_data_extension(output_format: str) -> str:
     if output_format == "csv":
         return ".csv"
@@ -613,17 +795,21 @@ def _emit_ask_result(
                     console.print(f"[dim]Showing 50 of {len(tr.df)} rows[/dim]")
 
         if tr.plotly_spec and chart_format and output_path:
+            # Chart-export confirmations land on stderr — when both
+            # `--format` and `--chart-format` are set, the data table
+            # still goes to stdout (see the `if not chart_format` switch
+            # above), so a stdout status line would corrupt that JSON/CSV.
             if chart_format == "json":
                 Path(output_path).write_text(
                     json.dumps(tr.plotly_spec, indent=2), encoding="utf-8"
                 )
-                click.echo(f"Plotly spec saved to {output_path}")
+                click.echo(f"Plotly spec saved to {output_path}", err=True)
             elif chart_format == "html":
                 from datasight.chart import _build_artifact_html
 
                 html = _build_artifact_html(tr.plotly_spec, tr.meta.get("title", "Chart"))
                 Path(output_path).write_text(html, encoding="utf-8")
-                click.echo(f"Chart HTML saved to {output_path}")
+                click.echo(f"Chart HTML saved to {output_path}", err=True)
             elif chart_format == "png":
                 try:
                     import plotly.graph_objects as go
@@ -631,7 +817,7 @@ def _emit_ask_result(
 
                     fig = go.Figure(tr.plotly_spec)
                     pio.write_image(fig, output_path)
-                    click.echo(f"Chart PNG saved to {output_path}")
+                    click.echo(f"Chart PNG saved to {output_path}", err=True)
                 except ImportError:
                     click.echo(
                         "Error: PNG export requires kaleido. "
@@ -1329,6 +1515,21 @@ def verify(project_dir, model, queries_path, verbose):
     default=None,
     help="Directory for per-question batch outputs (only with --file).",
 )
+@click.option(
+    "--print-sql",
+    is_flag=True,
+    help="Print the SQL queries executed by the agent to the console.",
+)
+@click.option(
+    "--sql-script",
+    "sql_script_path",
+    type=click.Path(),
+    default=None,
+    help=(
+        "Write executed queries to a SQL script that materializes results "
+        "into auto-named tables (CREATE OR REPLACE)."
+    ),
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def ask(
     question,
@@ -1339,6 +1540,8 @@ def ask(
     output_path,
     questions_file,
     output_dir,
+    print_sql,
+    sql_script_path,
     verbose,
 ):
     """Ask a question about your data from the command line.
@@ -1351,6 +1554,8 @@ def ask(
       datasight ask "What are the top 5 states by generation?"
       datasight ask "Show generation by year" --chart-format html -o chart.html
       datasight ask "Top 5 states" --format csv -o results.csv
+      datasight ask "Top 5 states" --print-sql
+      datasight ask "Top 5 states" --sql-script top-states.sql
     """
     project_dir = str(Path(project_dir).resolve())
 
@@ -1370,6 +1575,13 @@ def ask(
         sys.exit(1)
     if output_dir and not questions_file:
         click.echo("Error: --output-dir can only be used with --file.", err=True)
+        sys.exit(1)
+    if sql_script_path and questions_file:
+        click.echo(
+            "Error: --sql-script cannot be combined with --file. "
+            "Run individual questions to capture per-question SQL scripts.",
+            err=True,
+        )
         sys.exit(1)
 
     # Logging
@@ -1412,6 +1624,8 @@ def ask(
                     )
                 )
                 _emit_ask_result(result, batch_output_format, None, None)
+                if print_sql:
+                    _print_sql_queries(result)
                 if output_dir or entry.get("output"):
                     written = _write_batch_result_files(
                         output_dir=output_dir,
@@ -1443,6 +1657,17 @@ def ask(
         )
     )
     _emit_ask_result(result, output_format, chart_format, output_path)
+    if print_sql:
+        _print_sql_queries(result)
+    if sql_script_path:
+        script_text = _build_sql_script(result, question, sql_dialect)
+        script_file = Path(sql_script_path)
+        script_file.parent.mkdir(parents=True, exist_ok=True)
+        script_file.write_text(script_text, encoding="utf-8")
+        # stderr (not stdout) — same reasoning as `_print_sql_queries`:
+        # the confirmation is a diagnostic and must not corrupt
+        # machine-readable output on stdout (`--format json|csv`).
+        click.echo(f"SQL script saved to {script_file}", err=True)
 
 
 @cli.command()

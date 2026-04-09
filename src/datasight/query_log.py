@@ -17,7 +17,14 @@ class QueryLogger:
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            # Mirror the OSError-tolerant behavior of log()/log_cost(): a
+            # read-only project directory must not crash callers that only
+            # *might* end up logging. Subsequent log() calls will fail the
+            # same way and be swallowed there.
+            logger.warning(f"Could not create query log directory: {e}")
 
     def log(
         self,

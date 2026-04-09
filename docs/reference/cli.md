@@ -195,6 +195,8 @@ Examples:
   datasight ask "What are the top 5 states by generation?"
   datasight ask "Show generation by year" --chart-format html -o chart.html
   datasight ask "Top 5 states" --format csv -o results.csv
+  datasight ask "Top 5 states" --print-sql
+  datasight ask "Top 5 states" --sql-script top-states.sql
 
 ```bash
 datasight ask [OPTIONS] [QUESTION]
@@ -212,6 +214,8 @@ datasight ask [OPTIONS] [QUESTION]
 | `--output`, `-o` | Output file path for chart or data export. |
 | `--file` | Read one question per line from a text file. |
 | `--output-dir` | Directory for per-question batch outputs (only with --file). |
+| `--print-sql` | Print the SQL queries executed by the agent to the console. |
+| `--sql-script` | Write executed queries to a SQL script that materializes results into auto-named tables (CREATE OR REPLACE). |
 | `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight profile`
