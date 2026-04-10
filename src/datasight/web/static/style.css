@@ -1019,6 +1019,64 @@ a.btn-icon {
   padding: 10px 12px 14px;
 }
 
+.measure-summary-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.measure-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 90%, var(--surface));
+}
+
+.measure-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.measure-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--border));
+  background: color-mix(in srgb, var(--teal) 8%, var(--surface));
+  color: color-mix(in srgb, var(--teal) 72%, var(--text));
+  font-size: 0.69rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.measure-summary-text {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.measure-summary-text code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+}
+
+.measure-summary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.measure-summary-actions .inspect-action-btn {
+  padding: 8px 10px;
+  font-size: 0.74rem;
+  border-radius: 9px;
+}
+
 .inspect-scope {
   font-size: 0.72rem;
   color: var(--text-secondary);
@@ -3223,6 +3281,251 @@ a.btn-icon {
 
 /* Wizard */
 .modal-dialog.wizard { max-width: 560px; }
+.measure-editor-modal {
+  width: min(900px, 92vw);
+  max-width: min(900px, 92vw);
+  border: 1px solid color-mix(in srgb, var(--teal) 16%, var(--border));
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--orange) 10%, transparent), transparent 34%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--teal) 12%, transparent), transparent 36%),
+    var(--surface);
+}
+
+.measure-editor-header-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.measure-editor-header-copy h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.measure-editor-header-copy p {
+  margin: 0;
+  max-width: 58ch;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.measure-editor-modal .modal-header {
+  align-items: flex-start;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--teal) 8%, var(--surface)), color-mix(in srgb, var(--surface) 96%, var(--bg)));
+}
+
+.measure-editor-content {
+  display: grid;
+  gap: 16px;
+  max-height: min(76vh, 900px);
+  overflow-y: auto;
+}
+
+.measure-editor-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--teal) 14%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--surface));
+}
+
+.measure-editor-tab {
+  padding: 10px 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.measure-editor-tab.active {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 82%, #1f8f88), color-mix(in srgb, var(--orange) 18%, var(--teal)));
+  color: white;
+  box-shadow: 0 8px 16px color-mix(in srgb, var(--teal) 20%, transparent);
+}
+
+.measure-editor-panel {
+  display: none;
+}
+
+.measure-editor-panel.active {
+  display: grid;
+  gap: 14px;
+}
+
+.measure-editor-intro {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.measure-editor-intro-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--border));
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--teal) 7%, var(--surface)), color-mix(in srgb, var(--bg) 92%, var(--surface)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 45%, transparent);
+}
+
+.measure-editor-intro-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.measure-editor-intro-card strong {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.measure-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--teal) 14%, var(--border));
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, white), color-mix(in srgb, var(--bg) 94%, var(--surface)));
+}
+
+.measure-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.measure-field > span {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--teal) 58%, var(--text-secondary));
+}
+
+.measure-field-wide {
+  grid-column: 1 / -1;
+}
+
+.measure-field input,
+.measure-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 94%, white);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.measure-field select[multiple] {
+  min-height: 124px;
+  padding: 8px;
+}
+
+.measure-field input:focus,
+.measure-field select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--teal) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 16%, transparent);
+}
+
+.measure-field input:disabled,
+.measure-field select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.measure-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.measure-editor-actions .modal-btn {
+  min-width: 132px;
+}
+
+.measure-editor-modal .modal-btn.secondary {
+  background: color-mix(in srgb, var(--surface) 85%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--border));
+}
+
+.measure-editor-modal .modal-btn.primary {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 82%, #1f8f88), color-mix(in srgb, var(--orange) 26%, var(--teal)));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--teal) 22%, transparent);
+}
+
+.measure-yaml-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--orange) 18%, var(--border));
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--orange) 7%, var(--surface)), color-mix(in srgb, var(--bg) 95%, var(--surface)));
+}
+
+.measure-yaml-panel-head {
+  display: grid;
+  gap: 4px;
+}
+
+.measure-yaml-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.measure-yaml-title code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
+
+.measure-yaml-hint {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.measure-yaml-panel textarea {
+  min-height: 320px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--orange) 18%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 96%, black);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.measure-yaml-panel textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--orange) 42%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 14%, transparent);
+}
+
 .wizard-step { display: none; }
 .wizard-step.active { display: contents; }
 .wizard-hint {
@@ -3302,6 +3605,28 @@ a.btn-icon {
 .wizard-done-message {
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+@media (max-width: 700px) {
+  .measure-editor-intro,
+  .measure-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .measure-editor-modal {
+    width: calc(100vw - 20px);
+    max-width: calc(100vw - 20px);
+  }
+
+  .measure-editor-actions,
+  .modal-actions {
+    flex-direction: column;
+  }
+
+  .measure-editor-actions .modal-btn,
+  .modal-actions .modal-btn {
+    width: 100%;
+  }
 }
 .wizard-done-message .done-path {
   display: block;

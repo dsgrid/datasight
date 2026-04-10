@@ -9,6 +9,8 @@ executing queries.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+from typing import Any
 
 try:
     import sqlglot
@@ -31,10 +33,142 @@ class ValidationResult:
         return "; ".join(self.errors)
 
 
+@dataclass(frozen=True)
+class MeasureAggregationRule:
+    """Project-defined aggregation semantics for a physical measure column."""
+
+    table: str
+    column: str
+    default_aggregation: str
+    allowed_aggregations: tuple[str, ...]
+
+
+def build_measure_rule_map(
+    overrides: list[dict[str, Any]],
+) -> dict[tuple[str, str], MeasureAggregationRule]:
+    """Build a lookup of project-defined physical measure aggregation rules."""
+    rules: dict[tuple[str, str], MeasureAggregationRule] = {}
+    for item in overrides:
+        table = str(item.get("table") or "").strip().lower()
+        column = str(item.get("column") or "").strip().lower()
+        default = str(item.get("default_aggregation") or "").strip().lower()
+        if not table or not column or not default:
+            continue
+        allowed = tuple(
+            str(value).strip().lower()
+            for value in (item.get("allowed_aggregations") or [])
+            if str(value).strip()
+        ) or (default,)
+        rules[(table, column)] = MeasureAggregationRule(
+            table=table,
+            column=column,
+            default_aggregation=default,
+            allowed_aggregations=allowed,
+        )
+    return rules
+
+
+_AGGREGATION_KEYWORDS = {
+    "sum": ("sum", "total", "totaled", "cumulative", "combined"),
+    "avg": ("avg", "average", "mean"),
+    "max": ("max", "maximum", "highest", "peak"),
+    "min": ("min", "minimum", "lowest"),
+}
+
+
+def _requested_aggregations(question: str) -> set[str]:
+    lower = question.lower()
+    requested: set[str] = set()
+    for aggregation, keywords in _AGGREGATION_KEYWORDS.items():
+        if any(re.search(rf"\b{re.escape(keyword)}\b", lower) for keyword in keywords):
+            requested.add(aggregation)
+    return requested
+
+
+def _find_measure_rule(
+    column: "exp.Column",
+    alias_to_table: dict[str, str],
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule],
+) -> MeasureAggregationRule | None:
+    column_name = str(column.name or "").strip().lower()
+    if not column_name:
+        return None
+
+    table_name = str(column.table or "").strip().lower()
+    if table_name:
+        resolved_table = alias_to_table.get(table_name, table_name)
+        return measure_rules.get((resolved_table, column_name))
+
+    matches = [rule for (table, col), rule in measure_rules.items() if col == column_name]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _validate_measure_aggregations(
+    tree: "exp.Expression",
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule],
+    user_question: str,
+) -> list[str]:
+    if not measure_rules:
+        return []
+
+    alias_to_table: dict[str, str] = {}
+    for tbl in tree.find_all(exp.Table):
+        table_name = str(tbl.name or "").strip().lower()
+        if not table_name:
+            continue
+        alias_to_table[table_name] = table_name
+        alias = str(tbl.alias or "").strip().lower()
+        if alias:
+            alias_to_table[alias] = table_name
+
+    requested = _requested_aggregations(user_question)
+    errors: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    agg_types: tuple[type[exp.Expression], ...] = (exp.Sum, exp.Avg, exp.Max, exp.Min)
+
+    for node in tree.walk():
+        if not isinstance(node, agg_types):
+            continue
+        columns = list(node.find_all(exp.Column))
+        if len(columns) != 1:
+            continue
+        rule = _find_measure_rule(columns[0], alias_to_table, measure_rules)
+        if rule is None:
+            continue
+
+        actual = node.key.lower()
+        key = (rule.table, rule.column, actual)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if actual not in rule.allowed_aggregations:
+            errors.append(
+                f"Aggregation `{actual}` is not allowed for project measure "
+                f"`{rule.table}.{rule.column}`. Allowed aggregations: "
+                f"{', '.join(rule.allowed_aggregations)}."
+            )
+            continue
+
+        if actual != rule.default_aggregation and actual not in requested:
+            errors.append(
+                f"Aggregation `{actual}` for project measure `{rule.table}.{rule.column}` "
+                f"conflicts with its default `{rule.default_aggregation}`. "
+                f"Use `{rule.default_aggregation}` unless the user explicitly asks for "
+                f"{actual}."
+            )
+
+    return errors
+
+
 def validate_sql(
     sql: str,
     schema: dict[str, set[str]],
     dialect: str = "duckdb",
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
+    user_question: str = "",
 ) -> ValidationResult:
     """Validate that table references in *sql* exist in *schema*.
 
@@ -106,6 +240,8 @@ def validate_sql(
                 f"Unknown table '{table_name}'. "
                 f"Available tables: {', '.join(sorted(schema.keys()))}"
             )
+
+    errors.extend(_validate_measure_aggregations(tree, measure_rules or {}, user_question))
 
     return (
         ValidationResult(valid=False, errors=errors)

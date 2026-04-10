@@ -269,6 +269,11 @@ You can also define calculated measures in `measures.yaml` by using
 alongside physical columns in the measure overview, trend suggestions, and
 prompt guidance.
 
+For project-defined physical measures, datasight also validates generated SQL
+before execution. If the model uses a non-default or disallowed aggregation for
+an overridden column, the SQL is rejected and the model must regenerate unless
+the user explicitly asked for that aggregation.
+
 You can generate a starting template from the current inferred measures:
 
 ```bash
@@ -279,6 +284,9 @@ datasight measures --scaffold
 
 Use `measures.yaml` when you want datasight to treat a metric differently
 from what the heuristics inferred.
+
+For physical columns, these overrides now influence both prompt guidance and
+pre-execution SQL validation.
 
 Common override fields:
 

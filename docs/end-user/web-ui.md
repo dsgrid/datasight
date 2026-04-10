@@ -209,9 +209,11 @@ You can use it to:
 Recommended workflow:
 
 1. Run **Key measures**.
-2. Click **Edit override** on a measure card if the default behavior is wrong.
-3. Adjust aggregation, weighting, display metadata, or chart preferences.
-4. Save overrides and rerun your question or deterministic inspect flow.
+2. Open **Measure Overrides** from the sidebar.
+3. Use the **Structured** tab to adjust aggregation, weighting, display
+   metadata, or chart preferences.
+4. Use **Raw YAML** when you need direct control over `measures.yaml`.
+5. Save overrides and rerun your question or deterministic inspect flow.
 
 For calculated measures:
 
@@ -223,7 +225,12 @@ For calculated measures:
 6. Save the generated YAML.
 
 Datasight reloads the semantic layer after save, so the updated measure config
-immediately affects inspect tools, recipes, and prompt guidance.
+immediately affects inspect tools, recipes, prompt guidance, and SQL
+validation for project-defined physical measures.
+
+If the model generates SQL with the wrong aggregation for an overridden
+physical measure column, datasight now rejects that SQL before execution unless
+the user explicitly asked for a different allowed aggregation.
 
 See [Semantic measures](measures.md) for a full explanation of
 `measures.yaml`, weighted averages, calculated measures, and display metadata.

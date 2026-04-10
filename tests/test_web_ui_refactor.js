@@ -264,3 +264,140 @@ test('frontend scripts avoid inline html handlers in both templates and generate
   assert.match(savedSource, /async function loadConversations\(/);
   assert.match(landingSource, /async function initLanding\(/);
 });
+
+test('saveMeasureOverrides syncs the structured editor into YAML before saving', async () => {
+  const context = createContext();
+  const register = id => {
+    const el = createFakeElement();
+    el.className = '';
+    el.classList = {
+      contains(name) {
+        return el.className.split(/\s+/).includes(name);
+      },
+      toggle(name, force) {
+        const set = new Set(el.className.split(/\s+/).filter(Boolean));
+        if (force) set.add(name);
+        else set.delete(name);
+        el.className = Array.from(set).join(' ');
+      },
+      add(name) {
+        this.toggle(name, true);
+      },
+      remove(name) {
+        this.toggle(name, false);
+      },
+    };
+    context.__registerId(id, el);
+    return el;
+  };
+
+  [
+    'messages',
+    'user-input',
+    'send-btn',
+    'stop-btn',
+    'welcome',
+    'sidebar',
+    'measure-builder-mode',
+    'measure-builder-table',
+    'measure-builder-select',
+    'measure-builder-name',
+    'measure-builder-expression',
+    'measure-builder-aggregation',
+    'measure-builder-average-strategy',
+    'measure-builder-weight-column',
+    'measure-builder-display-name',
+    'measure-builder-format',
+    'measure-builder-chart-types',
+    'measures-editor',
+    'measures-editor-status',
+    'measure-summary-count',
+    'measure-editor-count',
+    'measure-summary-scope',
+    'measure-editor-scope',
+    'measure-summary-text',
+  ].forEach(register);
+
+  const structuredPanel = createFakeElement({ 'data-measure-panel': 'structured' });
+  structuredPanel.className = 'measure-editor-panel active';
+  structuredPanel.classList = {
+    contains(name) {
+      return structuredPanel.className.split(/\s+/).includes(name);
+    },
+    toggle(name, force) {
+      const set = new Set(structuredPanel.className.split(/\s+/).filter(Boolean));
+      if (force) set.add(name);
+      else set.delete(name);
+      structuredPanel.className = Array.from(set).join(' ');
+    },
+  };
+  const yamlPanel = createFakeElement({ 'data-measure-panel': 'yaml' });
+  yamlPanel.className = 'measure-editor-panel';
+  yamlPanel.classList = {
+    contains(name) {
+      return yamlPanel.className.split(/\s+/).includes(name);
+    },
+    toggle(name, force) {
+      const set = new Set(yamlPanel.className.split(/\s+/).filter(Boolean));
+      if (force) set.add(name);
+      else set.delete(name);
+      yamlPanel.className = Array.from(set).join(' ');
+    },
+  };
+
+  context.__registerSelector('[data-measure-panel="structured"]', [structuredPanel]);
+  context.__registerSelector('[data-measure-panel="yaml"]', [yamlPanel]);
+  context.document.querySelector = selector => {
+    const matches = context.document.querySelectorAll(selector);
+    return matches[0] || null;
+  };
+
+  const chartTypesEl = context.document.getElementById('measure-builder-chart-types');
+  chartTypesEl.selectedOptions = [];
+  context.document.getElementById('measure-builder-mode').value = 'physical';
+  context.document.getElementById('measure-builder-table').value = 'generation_fuel';
+  context.document.getElementById('measure-builder-select').value = 'generation_fuel.net_generation_mwh';
+  context.document.getElementById('measure-builder-aggregation').value = 'max';
+  context.document.getElementById('measure-builder-average-strategy').value = 'avg';
+  context.document.getElementById('measure-builder-weight-column').value = '';
+  context.document.getElementById('measure-builder-name').value = '';
+  context.document.getElementById('measure-builder-expression').value = '';
+  context.document.getElementById('measure-builder-display-name').value = '';
+  context.document.getElementById('measure-builder-format').value = '';
+  context.document.getElementById('measures-editor').value =
+    '- table: generation_fuel\n  column: net_generation_mwh\n  default_aggregation: sum\n';
+
+  const fetchCalls = [];
+  loadScript('src/datasight/web/static/app_state.js', context);
+  loadScript('src/datasight/web/static/app_schema_inspect.js', context);
+
+  context.projectLoaded = true;
+  context.currentProjectPath = '/tmp/project';
+  context.measureEditorCatalog = [];
+  context.selectedTable = null;
+  context.loadSchema = async () => {};
+  context.loadQueries = async () => {};
+  context.loadRecipes = async () => {};
+  context.loadProjectHealth = async () => {};
+  context.loadMeasureOverridesEditor = async () => {};
+  context.showToast = () => {};
+  context.fetchJson = async (url, opts) => {
+    fetchCalls.push({ url, opts });
+    if (url === '/api/measures/editor/upsert') {
+      return {
+        ok: true,
+        text: '- table: generation_fuel\n  column: net_generation_mwh\n  default_aggregation: max\n',
+      };
+    }
+    if (url === '/api/measures/editor') {
+      return { ok: true };
+    }
+    throw new Error('Unexpected url ' + url);
+  };
+
+  await context.saveMeasureOverrides();
+
+  assert.equal(fetchCalls[0].url, '/api/measures/editor/upsert');
+  assert.equal(fetchCalls[1].url, '/api/measures/editor');
+  assert.match(JSON.parse(fetchCalls[1].opts.body).text, /default_aggregation: max/);
+});

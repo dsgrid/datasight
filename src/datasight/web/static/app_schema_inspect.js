@@ -26,6 +26,7 @@ function updateInspectScopeLabel() {
   const el = document.getElementById('inspect-scope-label');
   if (!el) return;
   el.textContent = selectedTable ? ('Scope: selected table `' + selectedTable + '`') : 'Scope: dataset';
+  updateMeasureEditorSummary();
 }
 
 async function loadRecipes() {
@@ -49,6 +50,130 @@ function setMeasureEditorState(text, status, kind) {
     statusEl.textContent = status || '';
     statusEl.className = kind === 'error' ? 'no-queries error visible' : 'no-queries';
   }
+  updateMeasureEditorSummary();
+}
+
+function updateMeasureEditorSummary() {
+  const count = measureEditorCatalog.length;
+  const countText = count + ' inferred measure' + (count === 1 ? '' : 's');
+  const scopeText = selectedTable || 'dataset';
+  const summaryCountEl = document.getElementById('measure-summary-count');
+  const modalCountEl = document.getElementById('measure-editor-count');
+  const summaryScopeEl = document.getElementById('measure-summary-scope');
+  const modalScopeEl = document.getElementById('measure-editor-scope');
+  const summaryTextEl = document.getElementById('measure-summary-text');
+  const editorStatusEl = document.getElementById('measures-editor-status');
+
+  if (summaryCountEl) summaryCountEl.textContent = countText;
+  if (modalCountEl) modalCountEl.textContent = countText;
+  if (summaryScopeEl) summaryScopeEl.textContent = scopeText;
+  if (modalScopeEl) modalScopeEl.textContent = scopeText;
+
+  if (summaryTextEl) {
+    if (!projectLoaded || !currentProjectPath) {
+      summaryTextEl.innerHTML = 'Open the editor to review inferred measures and update <code>measures.yaml</code>.';
+    } else if (editorStatusEl && editorStatusEl.textContent) {
+      const status = editorStatusEl.textContent;
+      if (status.startsWith('Editing ')) {
+        summaryTextEl.innerHTML = 'Ready to edit <code>measures.yaml</code>.';
+      } else if (status.startsWith('Loaded inferred scaffold.')) {
+        summaryTextEl.textContent = 'Inferred scaffold loaded. Save when you are ready to create measures.yaml.';
+      } else if (status.startsWith('Measure overrides validated.')) {
+        summaryTextEl.textContent = 'YAML validated. Open the editor to keep refining overrides.';
+      } else if (status.startsWith('Inserted override for ')) {
+        summaryTextEl.textContent = 'Override inserted. Open the editor to review or save changes.';
+      } else if (status.startsWith('Saving measure overrides')) {
+        summaryTextEl.textContent = 'Saving overrides...';
+      } else if (editorStatusEl.classList.contains('error')) {
+        summaryTextEl.textContent = status;
+      } else {
+        summaryTextEl.textContent = 'Open the editor to work with inferred measures and raw YAML together.';
+      }
+    } else {
+      summaryTextEl.textContent = 'Open the editor to create a calculated measure or refine an inferred one.';
+    }
+  }
+}
+
+function openMeasureEditorModal(showYaml) {
+  const overlay = document.getElementById('measure-editor-overlay');
+  const modal = document.getElementById('measure-editor-modal');
+  if (!overlay || !modal) return;
+  overlay.classList.add('open');
+  modal.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setMeasureEditorTab(showYaml ? 'yaml' : 'structured');
+  updateMeasureEditorSummary();
+}
+
+function closeMeasureEditorModal() {
+  const overlay = document.getElementById('measure-editor-overlay');
+  const modal = document.getElementById('measure-editor-modal');
+  if (!overlay || !modal) return;
+  overlay.classList.remove('open');
+  modal.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function setMeasureEditorTab(tab) {
+  const target = tab === 'yaml' ? 'yaml' : 'structured';
+  document.querySelectorAll('[data-measure-tab]').forEach(el => {
+    const active = el.getAttribute('data-measure-tab') === target;
+    el.classList.toggle('active', active);
+    el.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('[data-measure-panel]').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-measure-panel') === target);
+  });
+}
+
+function isMeasureEditorTabActive(tab) {
+  const panel = document.querySelector('[data-measure-panel="' + tab + '"]');
+  return Boolean(panel && panel.classList.contains('active'));
+}
+
+function shouldSyncStructuredMeasureBeforeSave() {
+  if (!isMeasureEditorTabActive('structured')) return false;
+
+  const modeEl = document.getElementById('measure-builder-mode');
+  const selectEl = document.getElementById('measure-builder-select');
+  const tableEl = document.getElementById('measure-builder-table');
+  const nameEl = document.getElementById('measure-builder-name');
+  const expressionEl = document.getElementById('measure-builder-expression');
+  if (!modeEl || !selectEl || !tableEl || !nameEl || !expressionEl) return false;
+
+  if (modeEl.value === 'calculated') {
+    return Boolean(tableEl.value.trim() || nameEl.value.trim() || expressionEl.value.trim());
+  }
+  return Boolean(selectEl.value);
+}
+
+function resetMeasureBuilderForm() {
+  const modeEl = document.getElementById('measure-builder-mode');
+  const tableEl = document.getElementById('measure-builder-table');
+  const selectEl = document.getElementById('measure-builder-select');
+  const nameEl = document.getElementById('measure-builder-name');
+  const expressionEl = document.getElementById('measure-builder-expression');
+  const aggregationEl = document.getElementById('measure-builder-aggregation');
+  const strategyEl = document.getElementById('measure-builder-average-strategy');
+  const weightEl = document.getElementById('measure-builder-weight-column');
+  const displayNameEl = document.getElementById('measure-builder-display-name');
+  const formatEl = document.getElementById('measure-builder-format');
+  const chartTypesEl = document.getElementById('measure-builder-chart-types');
+
+  if (modeEl) modeEl.value = 'physical';
+  if (tableEl) tableEl.value = selectedTable || '';
+  if (selectEl) selectEl.value = '';
+  if (nameEl) nameEl.value = '';
+  if (expressionEl) expressionEl.value = '';
+  if (aggregationEl) aggregationEl.value = 'avg';
+  if (strategyEl) strategyEl.value = 'avg';
+  if (weightEl) weightEl.value = '';
+  if (displayNameEl) displayNameEl.value = '';
+  if (formatEl) formatEl.value = '';
+  if (chartTypesEl) setMultiSelectValues(chartTypesEl, []);
+  populateWeightColumnOptions((tableEl && tableEl.value) || '', '');
+  updateMeasureBuilderMode();
 }
 
 function populateMeasureBuilderTables() {
@@ -73,6 +198,7 @@ function populateMeasureBuilderTables() {
   } else if (currentValue && tableNames.includes(currentValue)) {
     tableEl.value = currentValue;
   }
+  updateMeasureEditorSummary();
 }
 
 function populateWeightColumnOptions(tableName, selectedValue) {
@@ -115,7 +241,10 @@ function getMultiSelectValues(selectEl) {
 function populateMeasureOverrideBuilder(measures) {
   measureEditorCatalog = measures || [];
   const select = document.getElementById('measure-builder-select');
-  if (!select) return;
+  if (!select) {
+    updateMeasureEditorSummary();
+    return;
+  }
 
   const currentValue = select.value;
   select.innerHTML = '<option value="">Select inferred measure…</option>' +
@@ -129,6 +258,7 @@ function populateMeasureOverrideBuilder(measures) {
     select.value = currentValue;
   }
   populateMeasureBuilderTables();
+  updateMeasureEditorSummary();
 }
 
 function updateMeasureBuilderMode() {
@@ -193,6 +323,7 @@ function applyMeasureBuilderSelection() {
 async function loadMeasureEditorCatalog() {
   if (!projectLoaded || !currentProjectPath) {
     populateMeasureOverrideBuilder([]);
+    updateMeasureEditorSummary();
     return;
   }
 
@@ -205,8 +336,10 @@ async function loadMeasureEditorCatalog() {
     populateMeasureOverrideBuilder(data.measures || []);
     applyMeasureBuilderSelection();
     updateMeasureBuilderMode();
+    updateMeasureEditorSummary();
   } catch (e) {
     populateMeasureOverrideBuilder([]);
+    updateMeasureEditorSummary();
   }
 }
 
@@ -214,6 +347,7 @@ async function loadMeasureOverridesEditor() {
   if (!projectLoaded || !currentProjectPath) {
     setMeasureEditorState('', 'Load a saved project to edit measures.yaml overrides.', 'info');
     populateMeasureOverrideBuilder([]);
+    updateMeasureEditorSummary();
     return;
   }
 
@@ -235,6 +369,7 @@ async function loadMeasureOverridesEditor() {
       ? 'Loaded inferred scaffold. Save to create measures.yaml.'
       : ('Editing ' + (data.path || 'measures.yaml'));
     setMeasureEditorState(data.text || '', status, 'info');
+    updateMeasureEditorSummary();
   } catch (e) {
     setMeasureEditorState('', 'Failed to load measure overrides.', 'error');
   }
@@ -298,17 +433,17 @@ async function insertMeasureOverride() {
     expression = expressionEl.value.trim();
     if (!name || !expression) {
       setMeasureEditorState(editor.value || '', 'Enter a calculated measure name and expression.', 'error');
-      return;
+      return false;
     }
     table = tableEl ? tableEl.value.trim() : '';
     if (!table) {
       setMeasureEditorState(editor.value || '', 'Choose a target table for the calculated measure.', 'error');
-      return;
+      return false;
     }
   } else {
     if (!select.value) {
       setMeasureEditorState(editor.value || '', 'Choose an inferred measure first.', 'error');
-      return;
+      return false;
     }
     const parts = select.value.split('.');
     table = parts.shift() || '';
@@ -334,15 +469,17 @@ async function insertMeasureOverride() {
     });
     if (!data.ok) {
       setMeasureEditorState(editor.value || '', data.error || 'Failed to insert override.', 'error');
-      return;
+      return false;
     }
     setMeasureEditorState(
       data.text || '',
       'Inserted override for ' + table + '.' + (column || name) + '.',
       'info'
     );
+    return true;
   } catch (e) {
     setMeasureEditorState(editor.value || '', 'Failed to insert override.', 'error');
+    return false;
   }
 }
 
@@ -351,6 +488,7 @@ async function openMeasureOverrideEditorForCard(config) {
   switchView('chat');
   openSidebarSection('measures-editor-section');
   await loadMeasureOverridesEditor();
+  openMeasureEditorModal(false);
 
   const select = document.getElementById('measure-builder-select');
   const modeEl = document.getElementById('measure-builder-mode');
@@ -382,6 +520,11 @@ async function saveMeasureOverrides() {
   if (!projectLoaded || !currentProjectPath) {
     setMeasureEditorState('', 'Load a saved project to edit measures.yaml overrides.', 'error');
     return;
+  }
+
+  if (shouldSyncStructuredMeasureBeforeSave()) {
+    const inserted = await insertMeasureOverride();
+    if (!inserted) return;
   }
 
   const editor = document.getElementById('measures-editor');
@@ -538,4 +681,3 @@ function askAboutColumn(tableName, columnName) {
   switchView('chat');
   sendMessage('Explain the `' + tableName + '.' + columnName + '` column, what it likely represents, how it should be used in analysis, and any data quality concerns.');
 }
-

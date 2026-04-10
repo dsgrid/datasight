@@ -103,7 +103,7 @@ async def _run_ask_pipeline(
     from datasight.prompts import build_system_prompt
     from datasight.query_log import QueryLogger
     from datasight.schema import format_schema_context, introspect_schema
-    from datasight.sql_validation import build_schema_map
+    from datasight.sql_validation import build_measure_rule_map, build_schema_map
 
     llm_client = create_llm_client(
         provider=settings.llm.provider,
@@ -116,6 +116,7 @@ async def _run_ask_pipeline(
     user_desc = load_schema_description(None, project_dir)
     example_queries = load_example_queries(None, project_dir)
     measure_overrides = load_measure_overrides(None, project_dir)
+    measure_rules = build_measure_rule_map(measure_overrides)
     schema_text = format_schema_context(tables, user_desc)
     if example_queries:
         schema_text += format_example_queries(example_queries)
@@ -178,6 +179,7 @@ async def _run_ask_pipeline(
         run_sql=sql_runner.run_sql,
         schema_map=schema_map,
         dialect=sql_dialect,
+        measure_rules=measure_rules,
         query_logger=query_logger,
         session_id=session_id,
     )

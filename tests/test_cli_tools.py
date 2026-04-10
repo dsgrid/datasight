@@ -2118,6 +2118,106 @@ def test_run_ask_pipeline_uses_measure_semantics_for_energy_power_weighted_and_c
     assert any("AVG(load_mw - renewable_generation_mw)" in sql for sql in executed_sql)
 
 
+def test_run_agent_loop_regenerates_sql_after_measure_validation_failure():
+    import asyncio
+
+    from datasight.agent import run_agent_loop
+    from datasight.sql_validation import build_measure_rule_map
+
+    executed_sql: list[str] = []
+
+    class FakeClient:
+        async def create_message(self, *, messages, **kwargs):  # noqa: ARG002
+            last_message = messages[-1]["content"]
+            if isinstance(last_message, str):
+                return LLMResponse(
+                    content=[
+                        ToolUseBlock(
+                            id="tool-1",
+                            name="run_sql",
+                            input={
+                                "sql": (
+                                    "SELECT report_date, SUM(net_generation_mwh) AS wind_generation_mwh "
+                                    "FROM generation_fuel "
+                                    "GROUP BY report_date ORDER BY report_date"
+                                )
+                            },
+                        )
+                    ],
+                    stop_reason="tool_use",
+                    usage=Usage(),
+                )
+
+            tool_result_text = last_message[0]["content"]
+            if "SQL validation error:" in tool_result_text:
+                assert "default `max`" in tool_result_text
+                return LLMResponse(
+                    content=[
+                        ToolUseBlock(
+                            id="tool-2",
+                            name="run_sql",
+                            input={
+                                "sql": (
+                                    "SELECT report_date, MAX(net_generation_mwh) AS wind_generation_mwh "
+                                    "FROM generation_fuel "
+                                    "GROUP BY report_date ORDER BY report_date"
+                                )
+                            },
+                        )
+                    ],
+                    stop_reason="tool_use",
+                    usage=Usage(),
+                )
+
+            return LLMResponse(
+                content=[TextBlock("done")],
+                stop_reason="end_turn",
+                usage=Usage(),
+            )
+
+    async def fake_run_sql(sql, **kwargs):  # noqa: ARG001
+        executed_sql.append(sql)
+        return pd.DataFrame([{"report_date": "2024-01-01", "wind_generation_mwh": 123.0}])
+
+    schema_map = {
+        "generation_fuel": {"report_date", "net_generation_mwh"},
+    }
+    measure_rules = build_measure_rule_map(
+        [
+            {
+                "table": "generation_fuel",
+                "column": "net_generation_mwh",
+                "default_aggregation": "max",
+                "allowed_aggregations": ["sum", "avg", "min", "max"],
+            }
+        ]
+    )
+
+    result = asyncio.run(
+        run_agent_loop(
+            question="make a plot of net_generation_mwh for wind over time",
+            llm_client=FakeClient(),
+            model="test-model",
+            system_prompt="PROMPT",
+            run_sql=fake_run_sql,
+            schema_map=schema_map,
+            dialect="duckdb",
+            measure_rules=measure_rules,
+        )
+    )
+
+    assert result.text == "done"
+    assert executed_sql == [
+        "SELECT report_date, MAX(net_generation_mwh) AS wind_generation_mwh "
+        "FROM generation_fuel "
+        "GROUP BY report_date ORDER BY report_date"
+    ]
+    assert len(result.tool_results) == 2
+    assert result.tool_results[0].meta["error"] is not None
+    assert "default `max`" in result.tool_results[0].meta["error"]
+    assert result.tool_results[1].meta["error"] is None
+
+
 def test_run_ask_pipeline_session_ids_unique_within_second(monkeypatch, project_dir):
     """Two CLI runs started in the same wall-clock second must get
     distinct session ids — otherwise their query-log entries become

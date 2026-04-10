@@ -24,6 +24,7 @@ from datasight.prompts import WEB_TOOLS
 from datasight.query_log import QueryLogger
 from datasight.runner import RunSql
 from datasight.sql_validation import validate_sql
+from datasight.sql_validation import MeasureAggregationRule
 from datasight.templating import escape_html
 
 
@@ -219,6 +220,8 @@ async def execute_sql_with_validation(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
+    user_question: str = "",
 ) -> SqlExecutionResult:
     """Execute SQL with optional schema validation.
 
@@ -239,7 +242,13 @@ async def execute_sql_with_validation(
     """
     # Validate SQL against schema if available
     if schema_map:
-        vr = validate_sql(sql, schema_map, dialect=dialect)
+        vr = validate_sql(
+            sql,
+            schema_map,
+            dialect=dialect,
+            measure_rules=measure_rules,
+            user_question=user_question,
+        )
         if not vr.valid:
             logger.warning(f"SQL validation failed: {vr.error_message}")
             return SqlExecutionResult(
@@ -346,6 +355,7 @@ async def _execute_run_sql(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None,
     dialect: str,
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None,
     query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
@@ -353,7 +363,14 @@ async def _execute_run_sql(
     """Execute the run_sql tool."""
     sql = input_data.get("sql", "")
 
-    result = await execute_sql_with_validation(sql, run_sql, schema_map, dialect)
+    result = await execute_sql_with_validation(
+        sql,
+        run_sql,
+        schema_map,
+        dialect,
+        measure_rules=measure_rules,
+        user_question=user_question,
+    )
     _log_query(query_logger, session_id, user_question, "run_sql", sql, result)
     meta = _build_tool_meta("run_sql", sql, result, dialect=dialect)
 
@@ -402,6 +419,7 @@ async def _execute_visualize_data(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None,
     dialect: str,
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None,
     query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
@@ -411,7 +429,14 @@ async def _execute_visualize_data(
     title = input_data.get("title", "Chart")
     plotly_spec = input_data.get("plotly_spec", {})
 
-    result = await execute_sql_with_validation(sql, run_sql, schema_map, dialect)
+    result = await execute_sql_with_validation(
+        sql,
+        run_sql,
+        schema_map,
+        dialect,
+        measure_rules=measure_rules,
+        user_question=user_question,
+    )
     _log_query(query_logger, session_id, user_question, "visualize_data", sql, result)
     meta = _build_tool_meta("visualize_data", sql, result, dialect=dialect)
 
@@ -475,6 +500,7 @@ async def execute_tool(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
     query_logger: QueryLogger | None = None,
     session_id: str = "",
     user_question: str = "",
@@ -507,11 +533,25 @@ async def execute_tool(
     match name:
         case "run_sql":
             return await _execute_run_sql(
-                input_data, run_sql, schema_map, dialect, query_logger, session_id, user_question
+                input_data,
+                run_sql,
+                schema_map,
+                dialect,
+                measure_rules,
+                query_logger,
+                session_id,
+                user_question,
             )
         case "visualize_data":
             return await _execute_visualize_data(
-                input_data, run_sql, schema_map, dialect, query_logger, session_id, user_question
+                input_data,
+                run_sql,
+                schema_map,
+                dialect,
+                measure_rules,
+                query_logger,
+                session_id,
+                user_question,
             )
         case _:
             return ToolResult(result_text=f"Unknown tool: {name}", meta={})
@@ -543,6 +583,7 @@ async def run_agent_loop(
     run_sql: RunSql,
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
+    measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
     query_logger: QueryLogger | None = None,
     session_id: str = "",
     messages: list[dict[str, Any]] | None = None,
@@ -625,6 +666,7 @@ async def run_agent_loop(
                     run_sql=run_sql,
                     schema_map=schema_map,
                     dialect=dialect,
+                    measure_rules=measure_rules,
                     query_logger=query_logger,
                     session_id=session_id,
                     user_question=question,

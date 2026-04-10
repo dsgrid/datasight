@@ -27,8 +27,40 @@ Datasight uses this information in:
 - `datasight measures`
 - the web **Key measures** inspect flow
 - prompt guidance for `datasight ask`
+- pre-execution SQL validation for project-defined physical measures
 - trend recommendations
 - reusable recipes
+
+## How Measures Influence The AI
+
+`measures.yaml` now affects query behavior in two different ways:
+
+1. Prompt guidance
+   Datasight includes semantic measure context in the schema prompt so the model
+   sees default aggregations, weighting hints, display metadata, and suggested
+   rollup SQL before it writes a query.
+
+2. Pre-execution validation
+   Before `run_sql` or `visualize_data` executes, datasight validates the
+   generated SQL against project-defined physical measure rules from
+   `measures.yaml`.
+
+For physical measures with a `column`:
+
+- `default_aggregation` is enforced unless the user explicitly asks for a
+  different aggregation such as `sum`, `total`, `average`, `max`, or `minimum`
+- `allowed_aggregations` limits which rollups are accepted
+- invalid aggregations are rejected before the SQL runs, so the model must
+  regenerate
+
+For calculated measures defined with `name` and `expression`:
+
+- datasight uses them in prompt guidance, inspect flows, and suggestions
+- current SQL enforcement is focused on physical columns, not calculated
+  expressions embedded in arbitrary generated SQL
+
+This means semantic measures are no longer just hints. For project-defined
+physical measures, they are part of the execution contract.
 
 ## Inspect Measures
 
@@ -58,7 +90,7 @@ In the web UI:
 1. Load or explore a dataset.
 2. Use **Key measures** from the landing starter or the **Inspect** section.
 3. Review the inferred measure cards and SQL rollup guidance.
-4. Click **Edit override** if you want to change measure behavior.
+4. Open **Measure Overrides** if you want to change measure behavior.
 
 ## `measures.yaml`
 
@@ -192,7 +224,7 @@ For a calculated measure:
 5. Save overrides.
 
 Datasight reloads semantic measure state after save, so the updated measure
-config immediately affects inspect flows and prompt guidance.
+config immediately affects inspect flows, prompt guidance, and SQL validation.
 
 ## Which File Should You Edit?
 
@@ -209,3 +241,7 @@ Use:
 3. Add or edit entries in `measures.yaml`.
 4. Define calculated measures for project-specific business logic.
 5. Re-run **Key measures**, **Trend ideas**, or `datasight ask`.
+
+If a query still uses the wrong aggregation, check whether the user prompt
+explicitly asked for something like a total or average. Explicit user intent
+can override the configured default when that aggregation is allowed.

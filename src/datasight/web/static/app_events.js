@@ -53,11 +53,20 @@
     dom.bindChange('#measure-builder-mode', () => updateMeasureBuilderMode());
     dom.bindChange('#measure-builder-table', event => populateWeightColumnOptions(event.currentTarget.value, ''));
     dom.bindChange('#measure-builder-select', () => applyMeasureBuilderSelection());
+    dom.bindClick('#measure-open-btn', () => openMeasureEditorModal(false));
+    dom.bindClick('#measure-new-btn', () => {
+      openMeasureEditorModal(false);
+      resetMeasureBuilderForm();
+    });
+    dom.bindClick('#measure-yaml-btn', () => openMeasureEditorModal(true));
+    dom.bindClick('[data-measure-tab="structured"]', () => setMeasureEditorTab('structured'));
+    dom.bindClick('[data-measure-tab="yaml"]', () => setMeasureEditorTab('yaml'));
+    dom.bindClick('#measure-editor-close-btn', () => closeMeasureEditorModal());
+    dom.bindClick('#measure-editor-cancel-btn', () => closeMeasureEditorModal());
     dom.bindClick('#measure-insert-btn', () => insertMeasureOverride());
     dom.bindClick('#measure-validate-btn', () => validateMeasureOverrides());
     dom.bindClick('#measure-reload-btn', () => loadMeasureOverridesEditor());
     dom.bindClick('#measure-save-btn', stopAndRun(() => saveMeasureOverrides()));
-    dom.bindClick('#measure-save-secondary-btn', () => saveMeasureOverrides());
     dom.bindClick('#bookmarks-clear-btn', stopAndRun(() => clearAllBookmarks()));
     dom.bindClick('#reports-clear-btn', stopAndRun(() => clearAllReports()));
     dom.bindClick('#conversations-clear-btn', stopAndRun(() => clearAllConversations()));
@@ -216,6 +225,16 @@
         landingOpenRecentProject(landingRecentItem.getAttribute('data-path'));
         return;
       }
+
+      if (event.target === document.getElementById('measure-editor-overlay')) {
+        closeMeasureEditorModal();
+      }
+    });
+
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      const modal = document.getElementById('measure-editor-modal');
+      if (modal && modal.classList.contains('open')) closeMeasureEditorModal();
     });
   }
 

@@ -73,7 +73,7 @@ from datasight.generate import build_generation_context, parse_generation_respon
 from datasight.runner import SqlRunner
 from datasight.schema import format_schema_context, introspect_schema
 from datasight.settings import Settings, capture_original_env, restore_original_env
-from datasight.sql_validation import build_schema_map
+from datasight.sql_validation import build_measure_rule_map, build_schema_map
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -369,6 +369,7 @@ class AppState:
         self.show_cost: bool = True
         self.schema_text: str = ""
         self.schema_map: dict[str, set[str]] = {}
+        self.measure_rules: dict[tuple[str, str], Any] = {}
         self.sql_dialect: str = "duckdb"
         self.project_dir: str | None = None
         self.project_loaded: bool = False
@@ -397,6 +398,7 @@ class AppState:
         self.example_queries_list = []
         self.schema_text = ""
         self.schema_map = {}
+        self.measure_rules = {}
         self.system_prompt = ""
         self.project_dir = None
         self.project_loaded = False
@@ -828,6 +830,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state.schema_text = format_schema_context(tables, user_desc)
     state.schema_map = build_schema_map(state.schema_info)
     measure_overrides = load_measure_overrides(None, project_dir)
+    state.measure_rules = build_measure_rule_map(measure_overrides)
 
     measure_text = format_measure_prompt_context(
         await build_measure_overview(
@@ -912,6 +915,7 @@ async def execute_tool_web(
         run_sql=state.sql_runner.run_sql,
         schema_map=state.schema_map or None,
         dialect=state.sql_dialect,
+        measure_rules=state.measure_rules or None,
         query_logger=state.query_logger,
         session_id=session_id,
         user_question=user_question,
@@ -2512,6 +2516,7 @@ async def run_report(report_id: int, state: AppState = Depends(get_state)):
         run_sql=state.sql_runner.run_sql,
         schema_map=state.schema_map or None,
         dialect=state.sql_dialect,
+        measure_rules=state.measure_rules or None,
         query_logger=state.query_logger,
         session_id="",
         user_question=f"[Report] {report.get('name', '')}",

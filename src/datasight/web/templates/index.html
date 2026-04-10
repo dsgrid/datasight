@@ -236,68 +236,19 @@
       <div class="conversations-section collapsed" id="measures-editor-section">
         <div class="sidebar-header">
           <span><span class="sidebar-collapse-icon">▼</span>Measure Overrides</span>
-          <button class="sidebar-clear-btn" id="measure-save-btn" title="Save measure overrides">Save</button>
+          <button class="sidebar-clear-btn" id="measure-open-btn" title="Open measure editor">Open</button>
         </div>
-        <div class="inspect-panel">
-          <div class="inspect-scope">Edit <code>measures.yaml</code> for this project.</div>
-          <div class="inspect-actions">
-            <select id="measure-builder-mode" title="Measure type">
-              <option value="physical">physical measure</option>
-              <option value="calculated">calculated measure</option>
-            </select>
-            <select id="measure-builder-table" title="Target table">
-              <option value="">Select table…</option>
-            </select>
-            <select id="measure-builder-select" title="Select inferred measure">
-              <option value="">Select inferred measure…</option>
-            </select>
-            <input id="measure-builder-name" type="text" placeholder="calculated measure name" />
-            <input id="measure-builder-expression" type="text" placeholder="SQL expression, e.g. load_mw - renewable_generation_mw" />
+        <div class="measure-summary-panel">
+          <div class="measure-summary-card">
+            <div class="measure-summary-meta">
+              <span class="measure-summary-pill" id="measure-summary-count">0 inferred measures</span>
+              <span class="measure-summary-pill" id="measure-summary-scope">dataset</span>
+            </div>
+            <div class="measure-summary-text" id="measure-summary-text">Open the editor to review inferred measures and update <code>measures.yaml</code>.</div>
           </div>
-          <div class="inspect-actions">
-            <select id="measure-builder-aggregation" title="Default aggregation">
-              <option value="sum">sum</option>
-              <option value="avg">avg</option>
-              <option value="max">max</option>
-              <option value="min">min</option>
-            </select>
-            <select id="measure-builder-average-strategy" title="Average strategy">
-              <option value="avg">avg</option>
-              <option value="weighted_avg">weighted_avg</option>
-            </select>
-            <select id="measure-builder-weight-column" title="Weight column (optional)">
-              <option value="">weight column (optional)</option>
-            </select>
-          </div>
-          <div class="inspect-actions">
-            <input id="measure-builder-display-name" type="text" placeholder="display name (optional)" />
-            <select id="measure-builder-format" title="Format">
-              <option value="">format (optional)</option>
-              <option value="currency">currency</option>
-              <option value="percent">percent</option>
-              <option value="integer">integer</option>
-              <option value="float">float</option>
-              <option value="decimal">decimal</option>
-              <option value="mw">mw</option>
-              <option value="mwh">mwh</option>
-              <option value="kwh">kwh</option>
-            </select>
-            <select id="measure-builder-chart-types" title="Preferred chart types" multiple size="4">
-              <option value="line">line</option>
-              <option value="area">area</option>
-              <option value="bar">bar</option>
-              <option value="scatter">scatter</option>
-              <option value="heatmap">heatmap</option>
-            </select>
-          </div>
-          <div class="inspect-actions">
-            <button class="inspect-action-btn" id="measure-insert-btn">Insert selected override</button>
-            <button class="inspect-action-btn" id="measure-validate-btn">Validate YAML</button>
-          </div>
-          <textarea id="measures-editor" rows="14" spellcheck="false" placeholder="# measures.yaml will load here"></textarea>
-          <div class="inspect-actions">
-            <button class="inspect-action-btn" id="measure-reload-btn">Reload</button>
-            <button class="inspect-action-btn" id="measure-save-secondary-btn">Save overrides</button>
+          <div class="measure-summary-actions">
+            <button class="inspect-action-btn" id="measure-new-btn">New override</button>
+            <button class="inspect-action-btn" id="measure-yaml-btn">Open YAML</button>
           </div>
           <div class="no-queries" id="measures-editor-status">No project loaded.</div>
         </div>
@@ -469,6 +420,136 @@
     <div class="landing-error" id="save-popover-error"></div>
   </div>
   <div class="save-popover-overlay" id="save-popover-overlay"></div>
+
+  <div class="modal-overlay" id="measure-editor-overlay"></div>
+  <div class="modal-dialog measure-editor-modal" id="measure-editor-modal" role="dialog" aria-modal="true" aria-label="Measure override editor">
+    <div class="modal-header">
+      <div class="measure-editor-header-copy">
+        <h3>Measure Overrides</h3>
+        <p>Work with inferred measures in a form first, then drop to raw <code>measures.yaml</code> only when needed.</p>
+      </div>
+      <button class="modal-close-btn" id="measure-editor-close-btn" title="Close">&times;</button>
+    </div>
+    <div class="modal-content measure-editor-content">
+      <div class="measure-editor-intro">
+        <div class="measure-editor-intro-card">
+          <span class="measure-editor-intro-label">Catalog</span>
+          <strong id="measure-editor-count">0 inferred measures</strong>
+        </div>
+        <div class="measure-editor-intro-card">
+          <span class="measure-editor-intro-label">Current scope</span>
+          <strong id="measure-editor-scope">dataset</strong>
+        </div>
+      </div>
+
+      <div class="measure-editor-tabs" role="tablist" aria-label="Measure editor mode">
+        <button class="measure-editor-tab active" id="measure-tab-structured" data-measure-tab="structured" role="tab" aria-selected="true">Structured</button>
+        <button class="measure-editor-tab" id="measure-tab-yaml" data-measure-tab="yaml" role="tab" aria-selected="false">Raw YAML</button>
+      </div>
+
+      <div class="measure-editor-panel active" id="measure-panel-structured" data-measure-panel="structured" role="tabpanel">
+        <div class="measure-form-grid">
+          <label class="measure-field">
+            <span>Mode</span>
+            <select id="measure-builder-mode" title="Measure type">
+              <option value="physical">physical measure</option>
+              <option value="calculated">calculated measure</option>
+            </select>
+          </label>
+          <label class="measure-field">
+            <span>Target table</span>
+            <select id="measure-builder-table" title="Target table">
+              <option value="">Select table…</option>
+            </select>
+          </label>
+          <label class="measure-field measure-field-wide">
+            <span>Inferred measure</span>
+            <select id="measure-builder-select" title="Select inferred measure">
+              <option value="">Select inferred measure…</option>
+            </select>
+          </label>
+          <label class="measure-field">
+            <span>Calculated name</span>
+            <input id="measure-builder-name" type="text" placeholder="net_load_mw" />
+          </label>
+          <label class="measure-field measure-field-wide">
+            <span>Expression</span>
+            <input id="measure-builder-expression" type="text" placeholder="load_mw - renewable_generation_mw" />
+          </label>
+          <label class="measure-field">
+            <span>Default aggregation</span>
+            <select id="measure-builder-aggregation" title="Default aggregation">
+              <option value="sum">sum</option>
+              <option value="avg">avg</option>
+              <option value="max">max</option>
+              <option value="min">min</option>
+            </select>
+          </label>
+          <label class="measure-field">
+            <span>Average strategy</span>
+            <select id="measure-builder-average-strategy" title="Average strategy">
+              <option value="avg">avg</option>
+              <option value="weighted_avg">weighted_avg</option>
+            </select>
+          </label>
+          <label class="measure-field">
+            <span>Weight column</span>
+            <select id="measure-builder-weight-column" title="Weight column (optional)">
+              <option value="">weight column (optional)</option>
+            </select>
+          </label>
+          <label class="measure-field">
+            <span>Display name</span>
+            <input id="measure-builder-display-name" type="text" placeholder="Net load" />
+          </label>
+          <label class="measure-field">
+            <span>Format</span>
+            <select id="measure-builder-format" title="Format">
+              <option value="">format (optional)</option>
+              <option value="currency">currency</option>
+              <option value="percent">percent</option>
+              <option value="integer">integer</option>
+              <option value="float">float</option>
+              <option value="decimal">decimal</option>
+              <option value="mw">mw</option>
+              <option value="mwh">mwh</option>
+              <option value="kwh">kwh</option>
+            </select>
+          </label>
+          <label class="measure-field measure-field-wide">
+            <span>Preferred chart types</span>
+            <select id="measure-builder-chart-types" title="Preferred chart types" multiple size="4">
+              <option value="line">line</option>
+              <option value="area">area</option>
+              <option value="bar">bar</option>
+              <option value="scatter">scatter</option>
+              <option value="heatmap">heatmap</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="measure-editor-actions">
+          <button class="modal-btn secondary" id="measure-insert-btn">Insert override</button>
+          <button class="modal-btn secondary" id="measure-validate-btn">Validate YAML</button>
+          <button class="modal-btn secondary" id="measure-reload-btn">Reload</button>
+        </div>
+      </div>
+
+      <div class="measure-editor-panel" id="measure-panel-yaml" data-measure-panel="yaml" role="tabpanel">
+        <div class="measure-yaml-panel">
+          <div class="measure-yaml-panel-head">
+            <span class="measure-yaml-title">Raw <code>measures.yaml</code></span>
+            <span class="measure-yaml-hint">Edit directly when the structured form is too limiting.</span>
+          </div>
+          <textarea id="measures-editor" rows="16" spellcheck="false" placeholder="# measures.yaml will load here"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn secondary" id="measure-editor-cancel-btn">Close</button>
+      <button class="modal-btn primary" id="measure-save-btn">Save overrides</button>
+    </div>
+  </div>
 
   <!-- Settings panel (slide-out from right) -->
   <aside class="settings-panel" id="settings-panel">
