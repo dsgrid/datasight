@@ -31,7 +31,7 @@ src/datasight/
 ├── demo.py         # Demo dataset generator
 └── web/
     ├── app.py      # FastAPI server + SSE streaming
-    ├── static/     # app.js, style.css
+    ├── static/     # split vanilla JS modules, CSS, icons
     └── templates/  # index.html
 tests/              # pytest + pytest-asyncio
 docs/               # zensical documentation source
@@ -56,6 +56,12 @@ uv run python scripts/generate_cli_reference.py
 
 # Run tests
 pytest
+
+# Run frontend structure tests
+node --test tests/test_web_helpers.js tests/test_web_ui_refactor.js
+
+# Run web UI smoke tests
+pytest -q tests/test_web_ui_smoke.py
 ```
 
 ## Pre-commit hooks
@@ -72,7 +78,7 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 
 - **DB_MODE values**: `duckdb`, `sqlite`, `postgres`, `flightsql`. The legacy value `local` is accepted as a silent alias for `duckdb` via `normalize_db_mode()` in `config.py`.
 - **SQL dialect**: Tracked as `sql_dialect` (values: `duckdb`, `sqlite`, `postgres`). Mapped from `db_mode` via `_db_mode_dialects` dicts.
-- **No framework for frontend**: All JS is vanilla in `app.js`. ESLint `no-undef` is strict — add new browser APIs to `eslint.config.js` globals or use `window.` prefix.
+- **No framework for frontend**: All JS is vanilla and split across `src/datasight/web/static/app_*.js`. Keep new behavior in the matching domain file and route click/change handling through `app_events.js`. ESLint `no-undef` is strict — add new browser APIs to `eslint.config.js` globals or use `window.` prefix.
 - **Keyboard shortcuts**: Must not conflict with browser shortcuts. Use plain keys (like `n`, `/`, `?`) guarded by `isInput` check, or `Cmd/Ctrl+key` combos that browsers don't claim.
 - **Type annotations**: Use modern Python syntax — `list[str]`, `dict[str, Any]`, `str | None`. Do not use `List`, `Dict`, `Optional`, `Union`, or other imports from `typing` when a built-in equivalent exists.
 
@@ -92,5 +98,7 @@ Docs use **zensical**. Key details:
 ## Testing
 
 - **pytest + pytest-asyncio** with `asyncio_mode = "auto"`
+- **Node test runner** is used for frontend structure tests: `node --test tests/test_web_helpers.js tests/test_web_ui_refactor.js`
+- **Web UI smoke tests** live in `tests/test_web_ui_smoke.py` and exercise the rendered FastAPI app without a browser build step
 - Integration tests (marked `@pytest.mark.integration`) require a running Ollama instance
 - Test fixtures in `tests/conftest.py` create a temporary DuckDB project directory

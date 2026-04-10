@@ -79,3 +79,16 @@ uv run zensical serve
 uv run zensical build
 uv run python scripts/generate_cli_reference.py
 ```
+
+## Development Tests
+
+```bash
+# Full Python test suite
+pytest
+
+# Frontend structure tests for the split vanilla JS modules
+node --test tests/test_web_helpers.js tests/test_web_ui_refactor.js
+
+# FastAPI-backed web UI smoke tests
+pytest -q tests/test_web_ui_smoke.py
+```
