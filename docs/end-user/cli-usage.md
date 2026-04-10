@@ -108,6 +108,10 @@ results with normal SQL tooling. SQL queries are also appended to
 `.datasight/query_log.jsonl` just like the web UI — review them later with
 `datasight log`.
 
+When datasight detects likely measures such as MWh generation, MW demand,
+capacity, or rate-style columns, `ask` also uses those inferred semantics
+to steer SQL aggregation choices toward safer defaults.
+
 ### Options
 
 | Flag | Default | Description |
@@ -220,6 +224,8 @@ and quick notes from a deterministic quality pass.
 ### Find likely dimensions and trend analyses
 
 ```bash
+datasight measures
+datasight measures --table generation_fuel
 datasight dimensions
 datasight dimensions --table orders
 datasight trends
@@ -228,10 +234,107 @@ datasight trends --table orders
 
 Use these to discover:
 
+- likely measures and sensible default aggregations
 - likely grouping columns
 - suggested category breakdowns
 - candidate date/measure pairs for time-series analysis
 - lightweight chart recommendations
+
+`datasight measures` is energy-aware. It tries to distinguish additive
+energy volumes such as `net_generation_mwh`, power or demand signals such
+as `demand_mw`, capacity metrics, and non-additive rates or factors, then
+suggests whether `SUM`, `AVG`, or `MAX` is the safer default.
+
+The output includes:
+
+- a semantic role such as `energy`, `power`, `capacity`, `rate`, or `ratio`
+- the default aggregation datasight will prefer
+- forbidden aggregations such as avoiding `SUM` on non-additive metrics
+- weighted-average guidance when a valid denominator is available
+- a suggested SQL rollup shape
+- any configured display metadata such as display name, format, and preferred chart types
+
+`datasight generate` also seeds a `measures.yaml` scaffold alongside
+`schema_description.md` and `queries.yaml`, so new projects start with an
+editable semantic-measure config.
+
+If the defaults are wrong for your project, add a `measures.yaml` file in
+the project root to override them. Each entry should include at least
+`table` and `column`, plus any semantic fields you want to override such as
+`default_aggregation`, `weight_column`, or `reason`.
+
+You can also define calculated measures in `measures.yaml` by using
+`table`, `name`, and `expression`, for example a project-specific
+`net_load_mw` or `capacity_factor` formula. Datasight will surface these
+alongside physical columns in the measure overview, trend suggestions, and
+prompt guidance.
+
+You can generate a starting template from the current inferred measures:
+
+```bash
+datasight measures --scaffold
+```
+
+### Edit `measures.yaml`
+
+Use `measures.yaml` when you want datasight to treat a metric differently
+from what the heuristics inferred.
+
+Common override fields:
+
+- `default_aggregation`
+- `average_strategy`
+- `weight_column`
+- `display_name`
+- `format`
+- `preferred_chart_types`
+- `reason`
+
+Example physical measure override:
+
+```yaml
+- table: generation_hourly
+  column: demand_mw
+  display_name: System demand
+  default_aggregation: max
+  format: mw
+  preferred_chart_types:
+    - line
+  reason: This project usually wants peak demand, not average demand.
+```
+
+Example calculated measure:
+
+```yaml
+- table: generation_hourly
+  name: net_load_mw
+  expression: load_mw - renewable_generation_mw
+  display_name: Net load
+  default_aggregation: avg
+  format: mw
+  preferred_chart_types:
+    - line
+    - area
+  reason: Project-defined net load measure.
+```
+
+Calculated measures appear in:
+
+- `datasight measures`
+- prompt guidance for `datasight ask`
+- trend suggestions
+- web Measure Overview and Measure Overrides
+
+### When To Use Which File
+
+Use:
+
+- `schema_description.md` for narrative business/domain context
+- `queries.yaml` for example questions and correct SQL
+- `measures.yaml` for semantic metric behavior and calculated measures
+
+See [Semantic measures](measures.md) for a fuller walkthrough and more
+examples.
 
 ### Generate reusable prompt recipes
 

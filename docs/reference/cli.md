@@ -55,11 +55,12 @@ datasight [OPTIONS] COMMAND [ARGS]...
 
 - `init`: Create a new datasight project with template files.
 - `demo`: Download an EIA energy demo dataset and create a ready-to-run project.
-- `generate`: Generate schema_description.md and queries.yaml from your database.
+- `generate`: Generate schema_description.md, queries.yaml, and measures.yaml from your database.
 - `run`: Start the datasight web UI.
 - `verify`: Verify LLM-generated SQL against expected results.
 - `ask`: Ask a question about your data from the command line.
 - `profile`: Profile your dataset without using the LLM.
+- `measures`: Surface likely measures and default aggregations without using the LLM.
 - `quality`: Run a deterministic quality audit without using the LLM.
 - `dimensions`: Surface likely grouping dimensions without using the LLM.
 - `trends`: Surface likely trend analyses without using the LLM.
@@ -109,7 +110,7 @@ datasight demo [OPTIONS] [PROJECT_DIR]
 
 ### `datasight generate`
 
-Generate schema_description.md and queries.yaml from your database.
+Generate schema_description.md, queries.yaml, and measures.yaml from your database.
 
 Connects to the database, inspects tables and columns, samples
 code/enum columns, and asks the LLM to produce documentation
@@ -235,6 +236,25 @@ datasight profile [OPTIONS]
 | `--column` | Profile a specific column as table.column. |
 | `--format` | Output format (default: table). Default: `table`. |
 | `--output`, `-o` | Write the profile output to a file instead of stdout. |
+
+### `datasight measures`
+
+Surface likely measures and default aggregations without using the LLM.
+
+```bash
+datasight measures [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Inspect measures for a specific table. |
+| `--scaffold` | Write an editable measures.yaml scaffold and exit. |
+| `--overwrite` | Overwrite an existing scaffold file. |
+| `--format` | Output format (default: table). Default: `table`. |
+| `--output`, `-o` | Write the measure overview to a file instead of stdout. |
 
 ### `datasight quality`
 

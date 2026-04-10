@@ -204,6 +204,77 @@ def load_example_queries(path: str | None, project_dir: str) -> list[dict[str, A
     return valid
 
 
+def load_measure_overrides(path: str | None, project_dir: str) -> list[dict[str, Any]]:
+    """Load project-level measure overrides from YAML.
+
+    Expected format is a list of mappings with at least ``table`` plus either
+    ``column`` for physical measures or ``name`` + ``expression``/``sql_expression``
+    for calculated measures. Any of the semantic-measure fields may be overridden.
+    """
+    if not path:
+        default = os.path.join(project_dir, "measures.yaml")
+        if os.path.exists(default):
+            path = default
+        else:
+            return []
+    if not os.path.exists(path):
+        logger.warning(f"Measure overrides file not found: {path}")
+        return []
+    with open(path, encoding="utf-8") as f:
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse {path}: {e}")
+            return []
+    if not isinstance(data, list):
+        logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
+        return []
+
+    valid: list[dict[str, Any]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        table = str(entry.get("table") or "").strip()
+        column = str(entry.get("column") or "").strip()
+        name = str(entry.get("name") or "").strip()
+        expression = str(entry.get("expression") or entry.get("sql_expression") or "").strip()
+        if not table or (not column and not (name and expression)):
+            continue
+        item: dict[str, Any] = {"table": table}
+        if column:
+            item["column"] = column
+        if name:
+            item["name"] = name
+        if expression:
+            item["expression"] = expression
+        for key in (
+            "role",
+            "unit",
+            "default_aggregation",
+            "average_strategy",
+            "weight_column",
+            "reason",
+            "description",
+            "display_name",
+            "format",
+        ):
+            if key in entry:
+                item[key] = entry[key]
+        for key in ("allowed_aggregations", "forbidden_aggregations"):
+            if key in entry and isinstance(entry[key], list):
+                item[key] = [str(v) for v in entry[key]]
+        if "preferred_chart_types" in entry:
+            if isinstance(entry["preferred_chart_types"], list):
+                item["preferred_chart_types"] = [str(v) for v in entry["preferred_chart_types"]]
+            elif entry["preferred_chart_types"]:
+                item["preferred_chart_types"] = [str(entry["preferred_chart_types"])]
+        for key in ("additive_across_category", "additive_across_time"):
+            if key in entry:
+                item[key] = bool(entry[key])
+        valid.append(item)
+    return valid
+
+
 def format_example_queries(queries: list[dict[str, str]]) -> str:
     """Format example queries as a system prompt section.
 

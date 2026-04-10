@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pandas as pd
 from click.testing import CliRunner
 
 from datasight.cli import cli
+from datasight.llm import LLMResponse, TextBlock, ToolUseBlock, Usage
 
 
 def test_profile_dataset(project_dir):
@@ -237,6 +239,552 @@ def test_dimensions_markdown_output_writes_file(project_dir, tmp_path):
     text = output_path.read_text(encoding="utf-8")
     assert "# Dimension Overview" in text
     assert "## Suggested Breakdowns" in text
+
+
+def test_measure_overview_infers_energy_aggregations():
+    import asyncio
+
+    from datasight.data_profile import build_measure_overview
+
+    schema_info = [
+        {
+            "name": "generation_hourly",
+            "columns": [
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+                {"name": "demand_mw", "dtype": "DOUBLE"},
+                {"name": "capacity_factor_pct", "dtype": "DOUBLE"},
+                {"name": "fuel_cost_per_mmbtu", "dtype": "DOUBLE"},
+                {"name": "co2_rate_lb_per_mwh", "dtype": "DOUBLE"},
+                {"name": "fuel_consumed_mmbtu", "dtype": "DOUBLE"},
+                {"name": "plant_id", "dtype": "INTEGER"},
+            ],
+        }
+    ]
+
+    async def fake_run_sql(sql):  # noqa: ARG001
+        raise AssertionError("measure inference should not query the database")
+
+    data = asyncio.run(build_measure_overview(schema_info, fake_run_sql))
+    measures = {item["column"]: item for item in data["measures"]}
+
+    assert measures["net_generation_mwh"]["role"] == "energy"
+    assert measures["net_generation_mwh"]["default_aggregation"] == "sum"
+    assert measures["net_generation_mwh"]["additive_across_time"] is True
+
+    assert measures["demand_mw"]["role"] == "power"
+    assert measures["demand_mw"]["default_aggregation"] == "avg"
+    assert "sum" in measures["demand_mw"]["forbidden_aggregations"]
+
+    assert measures["capacity_factor_pct"]["role"] == "ratio"
+    assert measures["capacity_factor_pct"]["default_aggregation"] == "avg"
+    assert "sum" in measures["capacity_factor_pct"]["forbidden_aggregations"]
+
+    assert measures["fuel_cost_per_mmbtu"]["role"] == "price"
+    assert "sum" in measures["fuel_cost_per_mmbtu"]["forbidden_aggregations"]
+    assert measures["fuel_cost_per_mmbtu"]["average_strategy"] == "weighted_avg"
+    assert measures["fuel_cost_per_mmbtu"]["weight_column"] == "net_generation_mwh"
+    assert (
+        "SUM(fuel_cost_per_mmbtu * net_generation_mwh)"
+        in measures["fuel_cost_per_mmbtu"]["recommended_rollup_sql"]
+    )
+
+    assert measures["co2_rate_lb_per_mwh"]["role"] == "rate"
+    assert measures["co2_rate_lb_per_mwh"]["average_strategy"] == "weighted_avg"
+    assert measures["co2_rate_lb_per_mwh"]["weight_column"] == "net_generation_mwh"
+    assert (
+        "NULLIF(SUM(net_generation_mwh), 0)"
+        in measures["co2_rate_lb_per_mwh"]["recommended_rollup_sql"]
+    )
+
+    assert "plant_id" not in measures
+
+
+def test_measure_overview_applies_project_override():
+    import asyncio
+
+    from datasight.data_profile import build_measure_overview
+
+    schema_info = [
+        {
+            "name": "load_hourly",
+            "columns": [
+                {"name": "demand_mw", "dtype": "DOUBLE"},
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+            ],
+        }
+    ]
+    overrides = [
+        {
+            "table": "load_hourly",
+            "column": "demand_mw",
+            "default_aggregation": "max",
+            "reason": "This project wants peak demand by default.",
+        }
+    ]
+
+    async def fake_run_sql(sql):  # noqa: ARG001
+        raise AssertionError("measure inference should not query the database")
+
+    data = asyncio.run(build_measure_overview(schema_info, fake_run_sql, overrides))
+    measure = next(item for item in data["measures"] if item["column"] == "demand_mw")
+    assert measure["default_aggregation"] == "max"
+    assert measure["recommended_rollup_sql"] == "MAX(demand_mw) AS peak_demand_mw"
+    assert measure["reason"] == "This project wants peak demand by default."
+
+
+def test_measure_overview_includes_calculated_project_measure():
+    import asyncio
+
+    from datasight.data_profile import build_measure_overview
+
+    schema_info = [
+        {
+            "name": "load_hourly",
+            "columns": [
+                {"name": "load_mw", "dtype": "DOUBLE"},
+                {"name": "renewable_generation_mw", "dtype": "DOUBLE"},
+            ],
+        }
+    ]
+    overrides = [
+        {
+            "table": "load_hourly",
+            "name": "net_load_mw",
+            "expression": "load_mw - renewable_generation_mw",
+            "role": "power",
+            "default_aggregation": "avg",
+            "reason": "Project-defined net load measure.",
+        }
+    ]
+
+    async def fake_run_sql(sql):  # noqa: ARG001
+        raise AssertionError("measure inference should not query the database")
+
+    data = asyncio.run(build_measure_overview(schema_info, fake_run_sql, overrides))
+    measure = next(item for item in data["measures"] if item["column"] == "net_load_mw")
+    assert measure["expression"] == "load_mw - renewable_generation_mw"
+    assert measure["source"] == "calculated"
+    assert (
+        measure["recommended_rollup_sql"]
+        == "AVG(load_mw - renewable_generation_mw) AS avg_net_load_mw"
+    )
+
+
+def test_measure_overview_applies_display_and_chart_metadata():
+    import asyncio
+
+    from datasight.data_profile import build_measure_overview
+
+    schema_info = [
+        {
+            "name": "generation_hourly",
+            "columns": [
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+            ],
+        }
+    ]
+    overrides = [
+        {
+            "table": "generation_hourly",
+            "column": "net_generation_mwh",
+            "display_name": "Net generation",
+            "format": "mwh",
+            "preferred_chart_types": ["line", "area"],
+        }
+    ]
+
+    async def fake_run_sql(sql):  # noqa: ARG001
+        raise AssertionError("measure inference should not query the database")
+
+    data = asyncio.run(build_measure_overview(schema_info, fake_run_sql, overrides))
+    measure = next(item for item in data["measures"] if item["column"] == "net_generation_mwh")
+    assert measure["display_name"] == "Net generation"
+    assert measure["format"] == "mwh"
+    assert measure["preferred_chart_types"] == ["line", "area"]
+
+
+def test_format_measure_prompt_context_includes_guardrails():
+    from datasight.data_profile import format_measure_prompt_context
+
+    text = format_measure_prompt_context(
+        {
+            "measures": [
+                {
+                    "table": "generation_hourly",
+                    "column": "net_generation_mwh",
+                    "role": "energy",
+                    "unit": "mwh",
+                    "default_aggregation": "sum",
+                    "allowed_aggregations": ["sum", "avg", "min", "max"],
+                    "forbidden_aggregations": [],
+                    "reason": "Energy-volume metric; summing across periods is usually meaningful.",
+                },
+                {
+                    "table": "load_hourly",
+                    "column": "demand_mw",
+                    "role": "power",
+                    "unit": "mw",
+                    "default_aggregation": "avg",
+                    "allowed_aggregations": ["avg", "max", "min"],
+                    "forbidden_aggregations": ["sum"],
+                    "reason": "Power metric; average or peak over time rather than summing.",
+                },
+            ]
+        }
+    )
+
+    assert "## Inferred Measure Semantics" in text
+    assert "Do not SUM prices, rates, percentages, or factors" in text
+    assert "generation_hourly.net_generation_mwh" in text
+    assert "default=sum" in text
+    assert "load_hourly.demand_mw" in text
+    assert "avoid=sum" in text
+
+
+def test_format_measure_prompt_context_includes_weighted_average_guidance():
+    from datasight.data_profile import format_measure_prompt_context
+
+    text = format_measure_prompt_context(
+        {
+            "measures": [
+                {
+                    "table": "generation_hourly",
+                    "column": "co2_rate_lb_per_mwh",
+                    "role": "rate",
+                    "unit": "lb_per_mwh",
+                    "default_aggregation": "avg",
+                    "average_strategy": "weighted_avg",
+                    "weight_column": "net_generation_mwh",
+                    "allowed_aggregations": ["avg", "min", "max"],
+                    "forbidden_aggregations": ["sum"],
+                    "reason": "Rate metric; prefer a weighted average using `net_generation_mwh` when rolling up.",
+                }
+            ]
+        }
+    )
+
+    assert "weighted average instead of a plain AVG" in text
+    assert "weight=net_generation_mwh" in text
+    assert "average=weighted_avg" in text
+    assert (
+        "rollup_sql=SUM(co2_rate_lb_per_mwh * net_generation_mwh) / NULLIF(SUM(net_generation_mwh), 0) AS weighted_avg_co2_rate_lb_per_mwh"
+        in text
+    )
+
+
+def test_format_measure_prompt_context_includes_calculated_measure_formula():
+    from datasight.data_profile import format_measure_prompt_context
+
+    text = format_measure_prompt_context(
+        {
+            "measures": [
+                {
+                    "table": "load_hourly",
+                    "column": "net_load_mw",
+                    "name": "net_load_mw",
+                    "expression": "load_mw - renewable_generation_mw",
+                    "role": "power",
+                    "default_aggregation": "avg",
+                    "allowed_aggregations": ["avg", "max", "min"],
+                    "forbidden_aggregations": ["sum"],
+                    "reason": "Project-defined net load measure.",
+                    "recommended_rollup_sql": "AVG(load_mw - renewable_generation_mw) AS avg_net_load_mw",
+                }
+            ]
+        }
+    )
+
+    assert "expression=load_mw - renewable_generation_mw" in text
+    assert "rollup_sql=AVG(load_mw - renewable_generation_mw) AS avg_net_load_mw" in text
+
+
+def test_format_measure_prompt_context_includes_display_and_chart_metadata():
+    from datasight.data_profile import format_measure_prompt_context
+
+    text = format_measure_prompt_context(
+        {
+            "measures": [
+                {
+                    "table": "generation_hourly",
+                    "column": "net_generation_mwh",
+                    "role": "energy",
+                    "display_name": "Net generation",
+                    "format": "mwh",
+                    "preferred_chart_types": ["line", "area"],
+                    "default_aggregation": "sum",
+                    "allowed_aggregations": ["sum", "avg", "min", "max"],
+                    "forbidden_aggregations": [],
+                    "reason": "Energy-volume metric.",
+                    "recommended_rollup_sql": "SUM(net_generation_mwh) AS total_net_generation_mwh",
+                }
+            ]
+        }
+    )
+
+    assert "display_name=Net generation" in text
+    assert "format=mwh" in text
+    assert "preferred_charts=line, area" in text
+
+
+def test_measures_table_output(project_dir):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["measures", "--project-dir", project_dir])
+    assert result.exit_code == 0
+    assert "Measure Overview" in result.output
+    assert "Measure Candidates" in result.output
+    assert "Aggregation Guidance" in result.output
+
+
+def test_measures_table_scope(project_dir):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["measures", "--project-dir", project_dir, "--table", "orders"])
+    assert result.exit_code == 0
+    assert "Measure Overview" in result.output
+    assert "Tables scanned" in result.output
+    assert "orders" in result.output
+
+
+def test_measures_table_scope_missing_table(project_dir):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["measures", "--project-dir", project_dir, "--table", "missing"])
+    assert result.exit_code != 0
+    assert "Table not found: missing" in result.output
+
+
+def test_measures_markdown_output_writes_file(project_dir, tmp_path):
+    output_path = tmp_path / "measures.md"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "measures",
+            "--project-dir",
+            project_dir,
+            "--format",
+            "markdown",
+            "--output",
+            str(output_path),
+        ],
+    )
+    assert result.exit_code == 0
+    text = output_path.read_text(encoding="utf-8")
+    assert "# Measure Overview" in text
+    assert "## Measure Candidates" in text
+
+
+def test_measures_json_output_writes_file(project_dir, tmp_path):
+    output_path = tmp_path / "measures.json"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "measures",
+            "--project-dir",
+            project_dir,
+            "--format",
+            "json",
+            "--output",
+            str(output_path),
+        ],
+    )
+    assert result.exit_code == 0
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["table_count"] >= 1
+    assert "measures" in data
+
+
+def test_measures_scaffold_writes_template(project_dir, tmp_path):
+    output_path = tmp_path / "measures.yaml"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "measures",
+            "--project-dir",
+            project_dir,
+            "--scaffold",
+            "--output",
+            str(output_path),
+        ],
+    )
+    assert result.exit_code == 0
+    text = output_path.read_text(encoding="utf-8")
+    assert "datasight measure overrides" in text
+    assert "table:" in text
+    assert "column:" in text
+    assert "default_aggregation:" in text
+
+
+def test_measures_scaffold_requires_overwrite(project_dir, tmp_path):
+    output_path = tmp_path / "measures.yaml"
+    output_path.write_text("existing\n", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "measures",
+            "--project-dir",
+            project_dir,
+            "--scaffold",
+            "--output",
+            str(output_path),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "already exists" in result.output
+
+
+def test_trend_overview_uses_semantic_measure_aggregation():
+    import asyncio
+    import pandas as pd
+
+    from datasight.data_profile import build_trend_overview
+
+    schema_info = [
+        {
+            "name": "generation_hourly",
+            "columns": [
+                {"name": "report_time", "dtype": "TIMESTAMP"},
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+                {"name": "demand_mw", "dtype": "DOUBLE"},
+                {"name": "balancing_authority", "dtype": "VARCHAR"},
+            ],
+        }
+    ]
+
+    async def fake_run_sql(sql):
+        if "MIN(" in sql and "MAX(" in sql:
+            return pd.DataFrame(
+                [{"min_value": "2024-01-01 00:00:00", "max_value": "2024-01-02 00:00:00"}]
+            )
+        if "COUNT(DISTINCT" in sql:
+            return pd.DataFrame([{"distinct_count": 3, "null_count": 0}])
+        if "GROUP BY 1 ORDER BY COUNT(*) DESC" in sql:
+            return pd.DataFrame([{"value": "BA1"}, {"value": "BA2"}])
+        raise AssertionError(f"unexpected SQL in test: {sql}")
+
+    data = asyncio.run(build_trend_overview(schema_info, fake_run_sql))
+    candidates = {item["measure_column"]: item for item in data["trend_candidates"]}
+    charts = {item["title"]: item for item in data["chart_recommendations"]}
+
+    assert candidates["net_generation_mwh"]["aggregation"] == "sum"
+    assert candidates["net_generation_mwh"]["measure_role"] == "energy"
+    assert candidates["demand_mw"]["aggregation"] == "avg"
+    assert candidates["demand_mw"]["measure_role"] == "power"
+    assert "SUM net_generation_mwh over report_time" in charts
+    assert charts["SUM net_generation_mwh over report_time"]["aggregation"] == "sum"
+
+
+def test_trend_overview_uses_weighted_average_for_rate_metrics():
+    import asyncio
+    import pandas as pd
+
+    from datasight.data_profile import build_trend_overview
+
+    schema_info = [
+        {
+            "name": "emissions_hourly",
+            "columns": [
+                {"name": "report_time", "dtype": "TIMESTAMP"},
+                {"name": "co2_rate_lb_per_mwh", "dtype": "DOUBLE"},
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+            ],
+        }
+    ]
+
+    async def fake_run_sql(sql):
+        if "MIN(" in sql and "MAX(" in sql:
+            return pd.DataFrame(
+                [{"min_value": "2024-01-01 00:00:00", "max_value": "2024-01-02 00:00:00"}]
+            )
+        raise AssertionError(f"unexpected SQL in test: {sql}")
+
+    data = asyncio.run(build_trend_overview(schema_info, fake_run_sql))
+    candidate = next(
+        item
+        for item in data["trend_candidates"]
+        if item["measure_column"] == "co2_rate_lb_per_mwh"
+    )
+    chart = next(
+        item for item in data["chart_recommendations"] if "co2_rate_lb_per_mwh" in item["title"]
+    )
+
+    assert candidate["aggregation"] == "weighted_avg"
+    assert candidate["weight_column"] == "net_generation_mwh"
+    assert "WEIGHTED_AVG" in candidate["recommended_query_shape"]
+    assert chart["aggregation"] == "weighted_avg"
+    assert "net_generation_mwh" in chart["reason"]
+
+
+def test_trend_overview_prefers_configured_chart_type_and_display_name():
+    import asyncio
+    import pandas as pd
+
+    from datasight.data_profile import build_trend_overview
+
+    schema_info = [
+        {
+            "name": "generation_hourly",
+            "columns": [
+                {"name": "report_time", "dtype": "TIMESTAMP"},
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+            ],
+        }
+    ]
+    overrides = [
+        {
+            "table": "generation_hourly",
+            "column": "net_generation_mwh",
+            "display_name": "Net generation",
+            "format": "mwh",
+            "preferred_chart_types": ["area", "line"],
+        }
+    ]
+
+    async def fake_run_sql(sql):
+        if "MIN(" in sql and "MAX(" in sql:
+            return pd.DataFrame(
+                [{"min_value": "2024-01-01 00:00:00", "max_value": "2024-01-02 00:00:00"}]
+            )
+        raise AssertionError(f"unexpected SQL in test: {sql}")
+
+    data = asyncio.run(build_trend_overview(schema_info, fake_run_sql, overrides))
+    chart = next(
+        item for item in data["chart_recommendations"] if "Net generation" in item["title"]
+    )
+    assert chart["chart_type"] == "area"
+    assert chart["preferred_chart_types"] == ["area", "line"]
+    assert "format `mwh`" in chart["reason"]
+
+
+def test_prompt_recipes_include_rollup_sql_for_semantic_measure():
+    import asyncio
+
+    from datasight.data_profile import build_prompt_recipes
+
+    schema_info = [
+        {
+            "name": "generation_hourly",
+            "columns": [
+                {"name": "report_time", "dtype": "TIMESTAMP"},
+                {"name": "net_generation_mwh", "dtype": "DOUBLE"},
+                {"name": "co2_rate_lb_per_mwh", "dtype": "DOUBLE"},
+            ],
+        }
+    ]
+
+    async def fake_run_sql(sql):
+        if "MIN(" in sql and "MAX(" in sql:
+            import pandas as pd
+
+            return pd.DataFrame(
+                [{"min_value": "2024-01-01 00:00:00", "max_value": "2024-01-02 00:00:00"}]
+            )
+        raise AssertionError(f"unexpected SQL in test: {sql}")
+
+    recipes = asyncio.run(build_prompt_recipes(schema_info, fake_run_sql))
+    joined = "\n".join(item["prompt"] for item in recipes)
+    assert "SUM(net_generation_mwh) AS total_net_generation_mwh" in joined
 
 
 def test_trends_table_output(project_dir):
@@ -725,6 +1273,78 @@ def test_doctor_fails_when_required_files_missing(tmp_path, test_duckdb_path):
     assert result.exit_code == 1
     assert "queries.yaml" in result.output
     assert "FAIL" in result.output
+
+
+def test_generate_seeds_measure_overrides(project_dir, monkeypatch):
+    class StubClient:
+        async def create_message(self, **kwargs):  # noqa: ARG002
+            return SimpleNamespace(
+                content=[
+                    TextBlock(
+                        "--- schema_description.md ---\n"
+                        "# Generated schema\n\n"
+                        "--- queries.yaml ---\n"
+                        "- question: Example\n"
+                        "  sql: SELECT 1\n"
+                    )
+                ]
+            )
+
+    monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: StubClient())
+
+    project_path = Path(project_dir)
+    (project_path / "schema_description.md").unlink()
+    (project_path / "queries.yaml").unlink()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["generate", "--project-dir", project_dir, "--overwrite"])
+
+    assert result.exit_code == 0
+    assert "Created:" in result.output
+    assert "measures.yaml" in result.output
+    assert (project_path / "measures.yaml").exists()
+    measures_text = (project_path / "measures.yaml").read_text(encoding="utf-8")
+    assert "# datasight measure overrides" in measures_text
+
+
+def test_prompt_recipes_include_calculated_measure_formula():
+    import asyncio
+
+    from datasight.data_profile import build_prompt_recipes
+
+    schema_info = [
+        {
+            "name": "load_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "report_time", "dtype": "TIMESTAMP", "nullable": False},
+                {"name": "load_mw", "dtype": "DOUBLE", "nullable": False},
+                {"name": "renewable_generation_mw", "dtype": "DOUBLE", "nullable": False},
+            ],
+        }
+    ]
+    overrides = [
+        {
+            "table": "load_hourly",
+            "name": "net_load_mw",
+            "expression": "load_mw - renewable_generation_mw",
+            "role": "power",
+            "default_aggregation": "avg",
+            "reason": "Project-defined net load measure.",
+        }
+    ]
+
+    async def fake_run_sql(sql):
+        if "MIN(" in sql and "MAX(" in sql:
+            return __import__("pandas").DataFrame(
+                [{"min_value": "2024-01-01 00:00:00", "max_value": "2024-01-02 00:00:00"}]
+            )
+        return __import__("pandas").DataFrame()
+
+    recipes = asyncio.run(build_prompt_recipes(schema_info, fake_run_sql, overrides))
+    joined = "\n".join(recipe["prompt"] for recipe in recipes)
+    assert "net_load_mw" in joined
+    assert "AVG(load_mw - renewable_generation_mw) AS avg_net_load_mw" in joined
 
 
 # ---------------------------------------------------------------------------
@@ -1263,6 +1883,239 @@ def test_run_ask_pipeline_logs_cost_entry(monkeypatch, project_dir):
     assert cost["user_question"] == "How many orders are there?"
     # Sonnet pricing: 1500 in @ $3/M + 400 out @ $15/M = 0.0045 + 0.006 = 0.0105
     assert cost["estimated_cost"] == 0.0105
+
+
+def test_run_ask_pipeline_includes_measure_guidance_in_prompt(monkeypatch, project_dir):
+    """The ask pipeline should append inferred measure semantics to prompt context."""
+    import asyncio
+
+    from datasight import cli as cli_module
+    from datasight.agent import AgentResult
+    from datasight.settings import Settings
+
+    captured: dict[str, str] = {}
+
+    class FakeRunner:
+        async def run_sql(self, sql, **kwargs):  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli_module,
+        "create_sql_runner_from_settings",
+        lambda settings, project_dir: FakeRunner(),
+    )
+
+    async def fake_introspect_schema(run_sql, runner=None):  # noqa: ARG001
+        return [
+            SimpleNamespace(
+                name="generation_hourly",
+                row_count=24,
+                columns=[
+                    SimpleNamespace(name="report_time", dtype="TIMESTAMP", nullable=False),
+                    SimpleNamespace(name="net_generation_mwh", dtype="DOUBLE", nullable=True),
+                    SimpleNamespace(name="demand_mw", dtype="DOUBLE", nullable=True),
+                ],
+            )
+        ]
+
+    monkeypatch.setattr("datasight.schema.introspect_schema", fake_introspect_schema)
+
+    def fake_build_system_prompt(schema_text, **kwargs):
+        captured["schema_text"] = schema_text
+        return "PROMPT"
+
+    monkeypatch.setattr("datasight.prompts.build_system_prompt", fake_build_system_prompt)
+
+    async def fake_run_agent_loop(**kwargs):
+        captured["system_prompt"] = kwargs["system_prompt"]
+        return AgentResult(
+            text="answered",
+            tool_results=[],
+            total_input_tokens=0,
+            total_output_tokens=0,
+            api_calls=0,
+        )
+
+    monkeypatch.setattr("datasight.agent.run_agent_loop", fake_run_agent_loop)
+
+    settings = Settings.from_env(str(Path(project_dir) / ".env"))
+    asyncio.run(
+        cli_module._run_ask_pipeline(
+            question="Show generation over time",
+            settings=settings,
+            resolved_model="claude-sonnet-4-20250514",
+            project_dir=project_dir,
+            sql_dialect="duckdb",
+        )
+    )
+
+    schema_text = captured["schema_text"]
+    assert "## Inferred Measure Semantics" in schema_text
+    assert "generation_hourly.net_generation_mwh" in schema_text
+    assert "default=sum" in schema_text
+    assert "generation_hourly.demand_mw" in schema_text
+    assert "avoid=sum" in schema_text
+    assert captured["system_prompt"] == "PROMPT"
+
+
+def test_run_ask_pipeline_uses_measure_semantics_for_energy_power_weighted_and_calculated(
+    monkeypatch, project_dir
+):
+    import asyncio
+
+    from datasight import cli as cli_module
+    from datasight.settings import Settings
+
+    executed_sql: list[str] = []
+
+    class FakeRunner:
+        async def run_sql(self, sql, **kwargs):  # noqa: ARG002
+            executed_sql.append(sql)
+            return pd.DataFrame([{"value": 1}])
+
+    class SemanticAwareFakeClient:
+        async def create_message(self, *, system, messages, **kwargs):  # noqa: ARG002
+            last_message = messages[-1]["content"]
+            if isinstance(last_message, str):
+                question = last_message.lower()
+                if "generation" in question:
+                    sql = (
+                        "SELECT DATE_TRUNC('day', report_time) AS day, "
+                        "SUM(net_generation_mwh) AS total_net_generation_mwh "
+                        "FROM generation_hourly GROUP BY 1 ORDER BY 1"
+                    )
+                elif "peak demand" in question:
+                    sql = (
+                        "SELECT DATE_TRUNC('day', report_time) AS day, "
+                        "MAX(demand_mw) AS peak_demand_mw "
+                        "FROM generation_hourly GROUP BY 1 ORDER BY 1"
+                    )
+                elif "demand" in question:
+                    sql = (
+                        "SELECT DATE_TRUNC('day', report_time) AS day, "
+                        "AVG(demand_mw) AS avg_demand_mw "
+                        "FROM generation_hourly GROUP BY 1 ORDER BY 1"
+                    )
+                elif "co2" in question or "emissions" in question:
+                    sql = (
+                        "SELECT DATE_TRUNC('day', report_time) AS day, "
+                        "SUM(co2_rate_lb_per_mwh * net_generation_mwh) / "
+                        "NULLIF(SUM(net_generation_mwh), 0) AS weighted_avg_co2_rate_lb_per_mwh "
+                        "FROM generation_hourly GROUP BY 1 ORDER BY 1"
+                    )
+                elif "net load" in question:
+                    sql = (
+                        "SELECT DATE_TRUNC('day', report_time) AS day, "
+                        "AVG(load_mw - renewable_generation_mw) AS avg_net_load_mw "
+                        "FROM generation_hourly GROUP BY 1 ORDER BY 1"
+                    )
+                else:
+                    raise AssertionError(f"unexpected question: {question}")
+
+                if "generation" in question:
+                    assert "generation_hourly.net_generation_mwh: role=energy" in system
+                    assert "default=sum" in system
+                elif "peak demand" in question:
+                    assert "generation_hourly.demand_mw: role=power" in system
+                    assert "default=max" in system
+                elif "demand" in question:
+                    assert "generation_hourly.demand_mw: role=power" in system
+                    assert "default=avg" in system
+                    assert "avoid=sum" in system
+                elif "co2" in question or "emissions" in question:
+                    assert "weight=net_generation_mwh, average=weighted_avg" in system
+                elif "net load" in question:
+                    assert "generation_hourly.net_load_mw: role=power" in system
+                    assert "expression=load_mw - renewable_generation_mw" in system
+
+                return LLMResponse(
+                    content=[ToolUseBlock(id="tool-1", name="run_sql", input={"sql": sql})],
+                    stop_reason="tool_use",
+                    usage=Usage(),
+                )
+
+            return LLMResponse(
+                content=[TextBlock("done")],
+                stop_reason="end_turn",
+                usage=Usage(),
+            )
+
+    monkeypatch.setattr(
+        cli_module, "create_llm_client", lambda **kwargs: SemanticAwareFakeClient()
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "create_sql_runner_from_settings",
+        lambda settings, project_dir: FakeRunner(),
+    )
+
+    async def fake_introspect_schema(run_sql, runner=None):  # noqa: ARG001
+        return [
+            SimpleNamespace(
+                name="generation_hourly",
+                row_count=24,
+                columns=[
+                    SimpleNamespace(name="report_time", dtype="TIMESTAMP", nullable=False),
+                    SimpleNamespace(name="net_generation_mwh", dtype="DOUBLE", nullable=True),
+                    SimpleNamespace(name="demand_mw", dtype="DOUBLE", nullable=True),
+                    SimpleNamespace(name="co2_rate_lb_per_mwh", dtype="DOUBLE", nullable=True),
+                    SimpleNamespace(name="load_mw", dtype="DOUBLE", nullable=True),
+                    SimpleNamespace(name="renewable_generation_mw", dtype="DOUBLE", nullable=True),
+                ],
+            )
+        ]
+
+    monkeypatch.setattr("datasight.schema.introspect_schema", fake_introspect_schema)
+
+    measures_path = Path(project_dir) / "measures.yaml"
+    measures_path.write_text(
+        (
+            "- table: generation_hourly\n"
+            "  name: net_load_mw\n"
+            "  expression: load_mw - renewable_generation_mw\n"
+            "  role: power\n"
+            "  default_aggregation: avg\n"
+            "  reason: Project-defined net load measure.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    settings = Settings.from_env(str(Path(project_dir) / ".env"))
+
+    async def run_question(question: str):
+        return await cli_module._run_ask_pipeline(
+            question=question,
+            settings=settings,
+            resolved_model="claude-sonnet-4-20250514",
+            project_dir=project_dir,
+            sql_dialect="duckdb",
+        )
+
+    asyncio.run(run_question("Show generation over time"))
+    asyncio.run(run_question("Show demand over time"))
+    asyncio.run(run_question("Show average CO2 emissions rate over time"))
+    asyncio.run(run_question("Show net load over time"))
+
+    measures_path.write_text(
+        (
+            "- table: generation_hourly\n"
+            "  column: demand_mw\n"
+            "  default_aggregation: max\n"
+            "  reason: This project wants peak demand by default.\n"
+        ),
+        encoding="utf-8",
+    )
+    asyncio.run(run_question("Show peak demand over time"))
+
+    assert any("SUM(net_generation_mwh)" in sql for sql in executed_sql)
+    assert any("AVG(demand_mw)" in sql for sql in executed_sql)
+    assert any("MAX(demand_mw)" in sql for sql in executed_sql)
+    assert any(
+        "SUM(co2_rate_lb_per_mwh * net_generation_mwh) / NULLIF(SUM(net_generation_mwh), 0)" in sql
+        for sql in executed_sql
+    )
+    assert any("AVG(load_mw - renewable_generation_mw)" in sql for sql in executed_sql)
 
 
 def test_run_ask_pipeline_session_ids_unique_within_second(monkeypatch, project_dir):

@@ -110,6 +110,9 @@ code/enum columns to identify their meanings, and produces draft versions
 of both files. Review and edit the results — the AI gets you a solid
 starting point but you know your data best.
 
+If datasight detects likely measures and aggregation rules, it can also
+seed a `measures.yaml` file for project-specific semantic overrides.
+
 To regenerate after making database changes:
 
 ```bash
@@ -126,6 +129,17 @@ better SQL. See [Write a schema description](../project-developer/schema-descrip
 
 Edit `queries.yaml` with example questions and their correct SQL. See
 [Create example queries](../project-developer/example-queries.md) for guidance.
+
+If your project contains energy metrics, rates, or project-specific formulas,
+edit `measures.yaml` to lock in semantic behavior such as:
+
+- default aggregation
+- weighted-average columns
+- display name and numeric format
+- preferred chart types
+- calculated measures such as `net_load_mw`
+
+See [Semantic measures](measures.md) for the full `measures.yaml` workflow.
 
 ## Run
 

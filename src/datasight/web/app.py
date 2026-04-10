@@ -31,12 +31,17 @@ from datasight.config import (
     create_sql_runner_from_settings,
     format_example_queries,
     load_example_queries,
+    load_measure_overrides,
     load_schema_description,
 )
+import yaml
 from datasight.data_profile import (
     build_dataset_overview,
     build_dimension_overview,
+    build_measure_overview,
     find_table_info,
+    format_measure_overrides_yaml,
+    format_measure_prompt_context,
     build_prompt_recipes,
     build_quality_overview,
     build_trend_overview,
@@ -822,6 +827,15 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
 
     state.schema_text = format_schema_context(tables, user_desc)
     state.schema_map = build_schema_map(state.schema_info)
+    measure_overrides = load_measure_overrides(None, project_dir)
+
+    measure_text = format_measure_prompt_context(
+        await build_measure_overview(
+            state.schema_info, state.sql_runner.run_sql, measure_overrides
+        )
+    )
+    if measure_text:
+        state.schema_text += measure_text
 
     example_queries = load_example_queries(os.environ.get("EXAMPLE_QUERIES_PATH"), project_dir)
     state.example_queries_list = example_queries
@@ -1274,6 +1288,34 @@ async def get_dataset_overview(table: str | None = None, state: AppState = Depen
     return {"overview": overview, "cached": cached}
 
 
+@app.get("/api/measure-overview")
+async def get_measure_overview(table: str | None = None, state: AppState = Depends(get_state)):
+    """Return a deterministic view of likely measures and aggregations."""
+    if not state.project_loaded or state.sql_runner is None:
+        return {"error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    schema_info = state.schema_info
+    cache_key = "measure-overview"
+    if table:
+        table_info = find_table_info(state.schema_info, table)
+        if table_info is None:
+            return {"error": f"Table not found: {table}"}
+        schema_info = [table_info]
+        cache_key = f"measure-overview:{table_info['name'].lower()}"
+
+    overview, cached = await _get_cached_insight(
+        state,
+        cache_key,
+        lambda: build_measure_overview(
+            schema_info,
+            sql_runner.run_sql,
+            load_measure_overrides(None, state.project_dir or ""),
+        ),
+    )
+    return {"overview": overview, "cached": cached}
+
+
 @app.get("/api/dimension-overview")
 async def get_dimension_overview(table: str | None = None, state: AppState = Depends(get_state)):
     """Return a deterministic view of likely grouping dimensions."""
@@ -1341,7 +1383,11 @@ async def get_trend_overview(table: str | None = None, state: AppState = Depends
     overview, cached = await _get_cached_insight(
         state,
         cache_key,
-        lambda: build_trend_overview(schema_info, sql_runner.run_sql),
+        lambda: build_trend_overview(
+            schema_info,
+            sql_runner.run_sql,
+            load_measure_overrides(None, state.project_dir or ""),
+        ),
     )
     return {"overview": overview, "cached": cached}
 
@@ -1362,7 +1408,11 @@ async def get_recipes(state: AppState = Depends(get_state)):
     recipes, cached = await _get_cached_insight(
         state,
         "prompt-recipes",
-        lambda: build_prompt_recipes(state.schema_info, sql_runner.run_sql),
+        lambda: build_prompt_recipes(
+            state.schema_info,
+            sql_runner.run_sql,
+            load_measure_overrides(None, state.project_dir or ""),
+        ),
     )
     return {"recipes": recipes, "cached": cached}
 
@@ -1568,6 +1618,13 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         # Build schema context (no user description for ephemeral sessions)
         state.schema_text = format_schema_context(tables, user_description=None)
         state.schema_map = build_schema_map(state.schema_info)
+        measure_text = format_measure_prompt_context(
+            await build_measure_overview(
+                state.schema_info, state.sql_runner.run_sql, overrides=None
+            )
+        )
+        if measure_text:
+            state.schema_text += measure_text
 
         # Build system prompt (use rebuild to get mode="web")
         state.rebuild_system_prompt()
@@ -1647,6 +1704,7 @@ async def save_explore_as_project(request: Request, state: AppState = Depends(ge
             project_dir=project_path,
             project_name=project_name,
         )
+        await _write_measure_overrides_scaffold(saved_path, state.schema_info, state.sql_runner)
 
         # Load the newly created project
         result = await load_project(saved_path, state)
@@ -1756,6 +1814,137 @@ def _load_user_description(state: AppState) -> str | None:
     return None
 
 
+def _normalize_measure_override_text(text: str) -> str:
+    normalized = text if text.endswith("\n") else text + "\n"
+    return normalized
+
+
+def _validate_measure_override_entries(
+    entries: list[dict[str, Any]],
+    schema_info: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    table_map = {str(table["name"]): table for table in schema_info}
+    seen: set[tuple[str, str]] = set()
+    valid_aggregations = {"sum", "avg", "min", "max"}
+    valid_average_strategies = {"avg", "weighted_avg"}
+    valid_formats = {"currency", "percent", "integer", "float", "decimal", "mw", "mwh", "kwh"}
+    valid_chart_types = {"line", "bar", "area", "scatter", "heatmap"}
+
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"Entry {index} must be a mapping.")
+            continue
+
+        table_name = str(entry.get("table") or "")
+        column_name = str(entry.get("column") or entry.get("name") or "")
+        expression = str(entry.get("expression") or entry.get("sql_expression") or "")
+        label = f"Entry {index}"
+
+        if not table_name:
+            errors.append(f"{label} is missing `table`.")
+            continue
+        if not column_name:
+            errors.append(f"{label} is missing `column` or `name`.")
+            continue
+
+        key = (table_name, column_name)
+        if key in seen:
+            warnings.append(
+                f"Duplicate override for {table_name}.{column_name}; later entries win."
+            )
+        seen.add(key)
+
+        table = table_map.get(table_name)
+        if table is None:
+            errors.append(f"{table_name}.{column_name}: table not found.")
+            continue
+
+        columns = {str(column["name"]): column for column in table.get("columns", [])}
+        has_physical_column = column_name in columns
+        if not has_physical_column and not expression:
+            errors.append(f"{table_name}.{column_name}: column not found.")
+            continue
+        if expression and not str(entry.get("name") or "").strip() and not entry.get("column"):
+            errors.append(f"{table_name}.{column_name}: calculated measures must include `name`.")
+            continue
+
+        default_aggregation = entry.get("default_aggregation")
+        if default_aggregation and str(default_aggregation) not in valid_aggregations:
+            errors.append(
+                f"{table_name}.{column_name}: invalid default_aggregation `{default_aggregation}`."
+            )
+
+        average_strategy = entry.get("average_strategy")
+        if average_strategy and str(average_strategy) not in valid_average_strategies:
+            errors.append(
+                f"{table_name}.{column_name}: invalid average_strategy `{average_strategy}`."
+            )
+
+        display_name = entry.get("display_name")
+        if display_name is not None and not str(display_name).strip():
+            errors.append(f"{table_name}.{column_name}: display_name cannot be blank.")
+
+        fmt = entry.get("format")
+        if fmt and str(fmt) not in valid_formats:
+            errors.append(f"{table_name}.{column_name}: invalid format `{fmt}`.")
+
+        weight_column = str(entry.get("weight_column") or "")
+        if weight_column and weight_column not in columns:
+            errors.append(
+                f"{table_name}.{column_name}: weight_column `{weight_column}` not found."
+            )
+
+        allowed = entry.get("allowed_aggregations") or []
+        if allowed and not isinstance(allowed, list):
+            errors.append(f"{table_name}.{column_name}: allowed_aggregations must be a list.")
+        elif any(str(value) not in valid_aggregations for value in allowed):
+            errors.append(
+                f"{table_name}.{column_name}: allowed_aggregations contains invalid values."
+            )
+
+        forbidden = entry.get("forbidden_aggregations") or []
+        if forbidden and not isinstance(forbidden, list):
+            errors.append(f"{table_name}.{column_name}: forbidden_aggregations must be a list.")
+        elif any(str(value) not in valid_aggregations for value in forbidden):
+            errors.append(
+                f"{table_name}.{column_name}: forbidden_aggregations contains invalid values."
+            )
+
+        chart_types = entry.get("preferred_chart_types") or []
+        if chart_types and not isinstance(chart_types, list):
+            errors.append(f"{table_name}.{column_name}: preferred_chart_types must be a list.")
+        elif any(str(value) not in valid_chart_types for value in chart_types):
+            errors.append(
+                f"{table_name}.{column_name}: preferred_chart_types contains invalid values."
+            )
+
+    return errors, warnings
+
+
+def _serialize_measure_override_entries(entries: list[dict[str, Any]]) -> str:
+    return format_measure_overrides_yaml({"measures": entries})
+
+
+async def _write_measure_overrides_scaffold(
+    project_dir: str,
+    schema_info: list[dict[str, Any]],
+    sql_runner: SqlRunner | None,
+) -> str | None:
+    """Seed measures.yaml from inferred measures if it does not already exist."""
+    if sql_runner is None:
+        return None
+
+    path = Path(project_dir) / "measures.yaml"
+    if path.exists():
+        return None
+
+    measure_data = await build_measure_overview(schema_info, sql_runner.run_sql, overrides=None)
+    path.write_text(format_measure_overrides_yaml(measure_data), encoding="utf-8")
+    return path.name
+
+
 @app.get("/api/explore/status")
 async def explore_status(state: AppState = Depends(get_state)):
     """Get the current explore session status."""
@@ -1849,6 +2038,13 @@ async def generate_project(request: Request, state: AppState = Depends(get_state
                     queries_content + "\n", encoding="utf-8"
                 )
                 files_written.append("queries.yaml")
+            measures_file = await _write_measure_overrides_scaffold(
+                saved_path,
+                state.schema_info,
+                state.sql_runner,
+            )
+            if measures_file:
+                files_written.append(measures_file)
 
             # Step 5: Load the project
             yield _sse("status", {"step": "loading", "message": "Loading project..."})
@@ -1985,6 +2181,178 @@ async def get_query_log(n: int = 50, state: AppState = Depends(get_state)):
     if state.query_logger is None:
         return {"entries": []}
     return {"entries": state.query_logger.read_recent(n)}
+
+
+@app.get("/api/measures/editor")
+async def get_measure_overrides_editor(state: AppState = Depends(get_state)):
+    """Return editable measure override YAML for the active project."""
+    if not state.project_loaded or not state.project_dir or state.sql_runner is None:
+        return {"ok": False, "error": "No project loaded"}
+
+    path = Path(state.project_dir) / "measures.yaml"
+    if path.exists():
+        return {"ok": True, "text": path.read_text(encoding="utf-8"), "path": str(path)}
+
+    measure_data = await build_measure_overview(
+        state.schema_info,
+        state.sql_runner.run_sql,
+        load_measure_overrides(None, state.project_dir),
+    )
+    return {
+        "ok": True,
+        "text": format_measure_overrides_yaml(measure_data),
+        "path": str(path),
+        "generated": True,
+    }
+
+
+@app.get("/api/measures/editor/catalog")
+async def get_measure_overrides_catalog(state: AppState = Depends(get_state)):
+    """Return inferred measure metadata for the structured override editor."""
+    if not state.project_loaded or not state.project_dir or state.sql_runner is None:
+        return {"ok": False, "error": "No project loaded", "measures": []}
+
+    measure_data = await build_measure_overview(
+        state.schema_info,
+        state.sql_runner.run_sql,
+        load_measure_overrides(None, state.project_dir),
+    )
+    return {"ok": True, "measures": measure_data.get("measures", [])}
+
+
+@app.post("/api/measures/editor/validate")
+async def validate_measure_overrides_editor(
+    request: Request, state: AppState = Depends(get_state)
+):
+    """Validate measure override YAML for the active project."""
+    if not state.project_loaded or not state.project_dir:
+        return {"ok": False, "error": "No project loaded", "errors": ["No project loaded"]}
+
+    body = await request.json()
+    text = str(body.get("text") or "")
+    try:
+        parsed = yaml.safe_load(text) if text.strip() else []
+    except yaml.YAMLError as exc:
+        return {"ok": False, "errors": [f"Invalid YAML: {exc}"], "warnings": []}
+
+    if parsed is not None and not isinstance(parsed, list):
+        return {
+            "ok": False,
+            "errors": ["measures.yaml must contain a YAML list."],
+            "warnings": [],
+        }
+
+    entries = parsed or []
+    errors, warnings = _validate_measure_override_entries(entries, state.schema_info)
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+@app.post("/api/measures/editor/upsert")
+async def upsert_measure_override_editor(request: Request, state: AppState = Depends(get_state)):
+    """Upsert a single measure override entry into the current editor text."""
+    if not state.project_loaded or not state.project_dir:
+        return {"ok": False, "error": "No project loaded"}
+
+    body = await request.json()
+    text = str(body.get("text") or "")
+    try:
+        parsed = yaml.safe_load(text) if text.strip() else []
+    except yaml.YAMLError as exc:
+        return {"ok": False, "error": f"Invalid YAML: {exc}"}
+    if parsed is not None and not isinstance(parsed, list):
+        return {"ok": False, "error": "measures.yaml must contain a YAML list."}
+
+    table_name = str(body.get("table") or "").strip()
+    column_name = str(body.get("column") or "").strip()
+    measure_name = str(body.get("name") or "").strip()
+    expression = str(body.get("expression") or body.get("sql_expression") or "").strip()
+    if not table_name:
+        return {"ok": False, "error": "Table is required."}
+    if not column_name and not (measure_name and expression):
+        return {
+            "ok": False,
+            "error": "Provide either a physical column or a calculated measure name and expression.",
+        }
+
+    entry: dict[str, Any] = {
+        "table": table_name,
+        "default_aggregation": str(body.get("default_aggregation") or "avg"),
+        "average_strategy": str(body.get("average_strategy") or "avg"),
+    }
+    display_name = str(body.get("display_name") or "").strip()
+    fmt = str(body.get("format") or "").strip()
+    preferred_chart_types = body.get("preferred_chart_types") or []
+    if column_name:
+        entry["column"] = column_name
+    if measure_name:
+        entry["name"] = measure_name
+    if expression:
+        entry["expression"] = expression
+    if display_name:
+        entry["display_name"] = display_name
+    if fmt:
+        entry["format"] = fmt
+    if isinstance(preferred_chart_types, list) and preferred_chart_types:
+        entry["preferred_chart_types"] = [str(item) for item in preferred_chart_types if str(item)]
+    weight_column = str(body.get("weight_column") or "").strip()
+    if weight_column:
+        entry["weight_column"] = weight_column
+
+    existing_entries = [item for item in (parsed or []) if isinstance(item, dict)]
+    updated = False
+    for index, existing in enumerate(existing_entries):
+        existing_name = str(existing.get("column") or existing.get("name") or "")
+        target_name = column_name or measure_name
+        if str(existing.get("table") or "") == table_name and existing_name == target_name:
+            merged = dict(existing)
+            merged.update(entry)
+            if not weight_column and "weight_column" in merged:
+                merged.pop("weight_column", None)
+            existing_entries[index] = merged
+            updated = True
+            break
+    if not updated:
+        existing_entries.append(entry)
+
+    errors, warnings = _validate_measure_override_entries(existing_entries, state.schema_info)
+    if errors:
+        return {"ok": False, "error": errors[0], "errors": errors, "warnings": warnings}
+
+    return {
+        "ok": True,
+        "text": _serialize_measure_override_entries(existing_entries),
+        "warnings": warnings,
+    }
+
+
+@app.post("/api/measures/editor")
+async def save_measure_overrides_editor(request: Request, state: AppState = Depends(get_state)):
+    """Save measure override YAML for the active project."""
+    if not state.project_loaded or not state.project_dir:
+        return {"ok": False, "error": "No project loaded"}
+
+    body = await request.json()
+    text = str(body.get("text") or "")
+    try:
+        parsed = yaml.safe_load(text) if text.strip() else []
+    except yaml.YAMLError as exc:
+        return {"ok": False, "error": f"Invalid YAML: {exc}"}
+    if parsed is not None and not isinstance(parsed, list):
+        return {"ok": False, "error": "measures.yaml must contain a YAML list."}
+
+    entries = parsed or []
+    errors, warnings = _validate_measure_override_entries(entries, state.schema_info)
+    if errors:
+        return {"ok": False, "error": errors[0], "errors": errors, "warnings": warnings}
+
+    project_dir = state.project_dir
+    path = Path(project_dir) / "measures.yaml"
+    path.write_text(_normalize_measure_override_text(text), encoding="utf-8")
+
+    async with state.state_lock:
+        await load_project(project_dir, state)
+
+    return {"ok": True, "path": str(path), "warnings": warnings}
 
 
 @app.get("/api/bookmarks")

@@ -1,5 +1,6 @@
 """Tests for the FastAPI web app."""
 
+from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
@@ -227,6 +228,531 @@ def test_dimension_overview_requires_loaded_data():
     assert response.json()["error"] == "No dataset loaded"
 
 
+def test_measure_overview_returns_profile(monkeypatch):
+    """Measure overview should return deterministic aggregation guidance when loaded."""
+
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame()
+
+    original_project_loaded = web_app._state.project_loaded
+    original_schema_info = web_app._state.schema_info
+    original_sql_runner = web_app._state.sql_runner
+    original_insight_cache = dict(web_app._state._insight_cache)
+
+    monkeypatch.setattr(
+        web_app,
+        "build_measure_overview",
+        lambda schema_info, run_sql, overrides=None: _fake_measure_overview(schema_info, run_sql),  # noqa: ARG005
+    )
+
+    web_app._state.project_loaded = True
+    web_app._state.schema_info = [{"name": "generation_hourly", "row_count": 24, "columns": []}]
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/measure-overview")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_runner = original_sql_runner
+        web_app._state._insight_cache = original_insight_cache
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["overview"]["measures"][0]["column"] == "net_generation_mwh"
+    assert body["overview"]["measures"][0]["default_aggregation"] == "sum"
+
+
+def test_measure_overview_uses_project_overrides(monkeypatch):
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame()
+
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+    original_sql_runner = web_app._state.sql_runner
+    original_insight_cache = dict(web_app._state._insight_cache)
+    captured = {}
+
+    async def fake_measure_overview(schema_info, run_sql, overrides=None):  # noqa: ARG001
+        captured["overrides"] = overrides
+        return await _fake_measure_overview(schema_info, run_sql)
+
+    monkeypatch.setattr(web_app, "build_measure_overview", fake_measure_overview)
+    monkeypatch.setattr(
+        web_app,
+        "load_measure_overrides",
+        lambda path, project_dir: [  # noqa: ARG005
+            {
+                "table": "generation_hourly",
+                "column": "net_generation_mwh",
+                "default_aggregation": "avg",
+            }
+        ],
+    )
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [{"name": "generation_hourly", "row_count": 24, "columns": []}]
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+    web_app._state.clear_insight_cache()
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/measure-overview")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_runner = original_sql_runner
+        web_app._state._insight_cache = original_insight_cache
+
+    assert response.status_code == 200
+    assert captured["overrides"][0]["default_aggregation"] == "avg"
+
+
+def test_measure_overview_supports_table_scope(monkeypatch):
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame()
+
+    captured = {}
+    original_project_loaded = web_app._state.project_loaded
+    original_schema_info = web_app._state.schema_info
+    original_sql_runner = web_app._state.sql_runner
+    original_insight_cache = dict(web_app._state._insight_cache)
+
+    async def fake_overview(schema_info, run_sql, overrides=None):  # noqa: ARG001
+        captured["tables"] = [table["name"] for table in schema_info]
+        return await _fake_measure_overview(schema_info, run_sql)
+
+    monkeypatch.setattr(web_app, "build_measure_overview", fake_overview)
+    web_app._state.project_loaded = True
+    web_app._state.schema_info = [
+        {"name": "generation_hourly", "row_count": 24, "columns": []},
+        {"name": "plants", "row_count": 10, "columns": []},
+    ]
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+    web_app._state.clear_insight_cache()
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/measure-overview?table=generation_hourly")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_runner = original_sql_runner
+        web_app._state._insight_cache = original_insight_cache
+
+    assert response.status_code == 200
+    assert captured["tables"] == ["generation_hourly"]
+
+
+def test_measure_overview_requires_loaded_data():
+    """Measure overview should fail cleanly when no dataset is loaded."""
+    original_project_loaded = web_app._state.project_loaded
+    original_schema_info = web_app._state.schema_info
+    original_sql_runner = web_app._state.sql_runner
+
+    web_app._state.project_loaded = False
+    web_app._state.schema_info = []
+    web_app._state.sql_runner = None
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/measure-overview")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_runner = original_sql_runner
+
+    assert response.status_code == 200
+    assert response.json()["error"] == "No dataset loaded"
+
+
+def test_measure_editor_returns_generated_scaffold_when_missing(monkeypatch, tmp_path):
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame()
+
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+    original_sql_runner = web_app._state.sql_runner
+
+    async def fake_measure_overview(schema_info, run_sql, overrides=None):  # noqa: ARG001
+        return await _fake_measure_overview(schema_info, run_sql)
+
+    monkeypatch.setattr(web_app, "build_measure_overview", fake_measure_overview)
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = str(tmp_path)
+    web_app._state.schema_info = [{"name": "generation_hourly", "row_count": 24, "columns": []}]
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/measures/editor")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_runner = original_sql_runner
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["generated"] is True
+    assert body["path"] == str(tmp_path / "measures.yaml")
+    assert "# datasight measure overrides" in body["text"]
+    assert "net_generation_mwh" in body["text"]
+
+
+def test_measure_editor_save_writes_file_and_reloads_project(monkeypatch, tmp_path):
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+
+    captured: dict[str, Any] = {}
+
+    async def fake_load_project(project_dir, state):  # noqa: ARG001
+        captured["project_dir"] = project_dir
+        return {"path": project_dir, "name": Path(project_dir).name, "tables": 1, "queries": 0}
+
+    monkeypatch.setattr(web_app, "load_project", fake_load_project)
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = str(tmp_path)
+    web_app._state.schema_info = [
+        {
+            "name": "generation_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "net_generation_mwh", "dtype": "DOUBLE", "nullable": False},
+            ],
+        }
+    ]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/measures/editor",
+                json={
+                    "text": (
+                        "- table: generation_hourly\n"
+                        "  column: net_generation_mwh\n"
+                        "  default_aggregation: sum\n"
+                    )
+                },
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert captured["project_dir"] == str(tmp_path)
+    assert (tmp_path / "measures.yaml").read_text(encoding="utf-8").endswith("\n")
+
+
+def test_measure_editor_catalog_returns_measures(monkeypatch):
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame()
+
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+    original_sql_runner = web_app._state.sql_runner
+
+    async def fake_measure_overview(schema_info, run_sql, overrides=None):  # noqa: ARG001
+        return await _fake_measure_overview(schema_info, run_sql)
+
+    monkeypatch.setattr(web_app, "build_measure_overview", fake_measure_overview)
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [{"name": "generation_hourly", "row_count": 24, "columns": []}]
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/measures/editor/catalog")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_runner = original_sql_runner
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["measures"][0]["column"] == "net_generation_mwh"
+
+
+def test_measure_editor_validate_reports_unknown_weight_column():
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [
+        {
+            "name": "generation_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "net_generation_mwh", "dtype": "DOUBLE", "nullable": False},
+                {"name": "co2_rate_lb_per_mwh", "dtype": "DOUBLE", "nullable": True},
+            ],
+        }
+    ]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/measures/editor/validate",
+                json={
+                    "text": (
+                        "- table: generation_hourly\n"
+                        "  column: co2_rate_lb_per_mwh\n"
+                        "  default_aggregation: avg\n"
+                        "  average_strategy: weighted_avg\n"
+                        "  weight_column: missing_weight\n"
+                    )
+                },
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "weight_column `missing_weight` not found" in body["errors"][0]
+
+
+def test_measure_editor_validate_accepts_calculated_measure():
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [
+        {
+            "name": "generation_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "load_mw", "dtype": "DOUBLE", "nullable": False},
+                {"name": "renewable_generation_mw", "dtype": "DOUBLE", "nullable": False},
+            ],
+        }
+    ]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/measures/editor/validate",
+                json={
+                    "text": (
+                        "- table: generation_hourly\n"
+                        "  name: net_load_mw\n"
+                        "  expression: load_mw - renewable_generation_mw\n"
+                        "  default_aggregation: avg\n"
+                    )
+                },
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+def test_measure_editor_upsert_adds_override(monkeypatch):
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [
+        {
+            "name": "generation_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "net_generation_mwh", "dtype": "DOUBLE", "nullable": False},
+                {"name": "co2_rate_lb_per_mwh", "dtype": "DOUBLE", "nullable": True},
+            ],
+        }
+    ]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/measures/editor/upsert",
+                json={
+                    "text": "",
+                    "table": "generation_hourly",
+                    "column": "co2_rate_lb_per_mwh",
+                    "default_aggregation": "avg",
+                    "average_strategy": "weighted_avg",
+                    "weight_column": "net_generation_mwh",
+                },
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert "co2_rate_lb_per_mwh" in body["text"]
+    assert "weight_column: net_generation_mwh" in body["text"]
+
+
+def test_measure_editor_upsert_adds_calculated_measure():
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [
+        {
+            "name": "generation_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "load_mw", "dtype": "DOUBLE", "nullable": False},
+                {"name": "renewable_generation_mw", "dtype": "DOUBLE", "nullable": False},
+            ],
+        }
+    ]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/measures/editor/upsert",
+                json={
+                    "text": "",
+                    "table": "generation_hourly",
+                    "name": "net_load_mw",
+                    "expression": "load_mw - renewable_generation_mw",
+                    "default_aggregation": "avg",
+                    "average_strategy": "avg",
+                },
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert "name: net_load_mw" in body["text"]
+    assert "expression: load_mw - renewable_generation_mw" in body["text"]
+
+
+def test_measure_editor_upsert_persists_display_and_chart_metadata():
+    original_project_loaded = web_app._state.project_loaded
+    original_project_dir = web_app._state.project_dir
+    original_schema_info = web_app._state.schema_info
+
+    web_app._state.project_loaded = True
+    web_app._state.project_dir = "/tmp/example-project"
+    web_app._state.schema_info = [
+        {
+            "name": "generation_hourly",
+            "row_count": 24,
+            "columns": [
+                {"name": "net_generation_mwh", "dtype": "DOUBLE", "nullable": False},
+            ],
+        }
+    ]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/measures/editor/upsert",
+                json={
+                    "text": "",
+                    "table": "generation_hourly",
+                    "column": "net_generation_mwh",
+                    "default_aggregation": "sum",
+                    "display_name": "Net generation",
+                    "format": "mwh",
+                    "preferred_chart_types": ["line", "area"],
+                },
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.project_dir = original_project_dir
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert "display_name: Net generation" in body["text"]
+    assert "format: mwh" in body["text"]
+    assert "- line" in body["text"]
+
+
+def test_save_explore_project_seeds_measure_overrides(monkeypatch, tmp_path):
+    original_is_ephemeral = web_app._state.is_ephemeral
+    original_sql_runner = web_app._state.sql_runner
+    original_schema_info = web_app._state.schema_info
+
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame()
+
+    captured: dict[str, Any] = {}
+
+    monkeypatch.setattr(web_app, "save_ephemeral_as_project", lambda **kwargs: str(tmp_path))  # noqa: ARG005
+
+    async def fake_seed(project_dir, schema_info, sql_runner):  # noqa: ARG001
+        captured["project_dir"] = project_dir
+        captured["schema_info"] = schema_info
+        return "measures.yaml"
+
+    async def fake_load_project(project_dir, state):  # noqa: ARG001
+        return {"path": project_dir, "name": Path(project_dir).name, "tables": 1, "queries": 0}
+
+    monkeypatch.setattr(web_app, "_write_measure_overrides_scaffold", fake_seed)
+    monkeypatch.setattr(web_app, "load_project", fake_load_project)
+
+    web_app._state.is_ephemeral = True
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+    web_app._state.schema_info = [{"name": "generation_hourly", "row_count": 24, "columns": []}]
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/explore/save-project",
+                json={"path": str(tmp_path), "name": "Example project"},
+            )
+    finally:
+        web_app._state.is_ephemeral = original_is_ephemeral
+        web_app._state.sql_runner = original_sql_runner
+        web_app._state.schema_info = original_schema_info
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert captured["project_dir"] == str(tmp_path)
+    assert captured["schema_info"][0]["name"] == "generation_hourly"
+
+
 def test_quality_overview_returns_profile(monkeypatch):
     """Quality overview should return deterministic quality data when loaded."""
 
@@ -337,7 +863,7 @@ def test_trend_overview_returns_profile(monkeypatch):
     monkeypatch.setattr(
         web_app,
         "build_trend_overview",
-        lambda schema_info, run_sql: _fake_trend_overview(schema_info, run_sql),  # noqa: ARG005
+        lambda schema_info, run_sql, overrides=None: _fake_trend_overview(schema_info, run_sql),  # noqa: ARG005
     )
 
     web_app._state.project_loaded = True
@@ -369,7 +895,7 @@ def test_trend_overview_supports_table_scope(monkeypatch):
     original_sql_runner = web_app._state.sql_runner
     original_insight_cache = dict(web_app._state._insight_cache)
 
-    async def fake_overview(schema_info, run_sql):  # noqa: ARG001
+    async def fake_overview(schema_info, run_sql, overrides=None):  # noqa: ARG001
         captured["tables"] = [table["name"] for table in schema_info]
         return await _fake_trend_overview(schema_info, run_sql)
 
@@ -454,13 +980,13 @@ def test_recipes_returns_prompt_recipes(monkeypatch):
     original_sql_runner = web_app._state.sql_runner
     original_insight_cache = dict(web_app._state._insight_cache)
 
-    async def fake_recipes(schema_info, run_sql):  # noqa: ARG001
+    async def fake_recipes(schema_info, run_sql, overrides=None):  # noqa: ARG001
         return [
             {
-                "title": "Break down by customer_state",
-                "category": "Dimensions",
-                "reason": "Suggested because customer_state looks like a strong grouping column.",
-                "prompt": "Analyze customer_state as a breakdown.",
+                "title": "SUM net_generation_mwh",
+                "category": "Measures",
+                "reason": "Suggested because generation_hourly.net_generation_mwh looks like an energy measure with default sum aggregation.",
+                "prompt": "Analyze net_generation_mwh with SUM.",
             }
         ]
 
@@ -482,7 +1008,7 @@ def test_recipes_returns_prompt_recipes(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["recipes"][0]["category"] == "Dimensions"
+    assert body["recipes"][0]["category"] == "Measures"
     assert body["recipes"][0]["reason"].startswith("Suggested because")
     assert body["cached"] is False
 
@@ -500,7 +1026,7 @@ def test_recipes_uses_cache(monkeypatch):
     original_insight_cache = dict(web_app._state._insight_cache)
     call_count = {"value": 0}
 
-    async def fake_recipes(schema_info, run_sql):  # noqa: ARG001
+    async def fake_recipes(schema_info, run_sql, overrides=None):  # noqa: ARG001
         call_count["value"] += 1
         return [
             {
@@ -893,6 +1419,50 @@ async def _fake_dimension_overview(schema_info, run_sql):  # noqa: ARG001
     }
 
 
+async def _fake_measure_overview(schema_info, run_sql):  # noqa: ARG001
+    return {
+        "table_count": len(schema_info),
+        "measures": [
+            {
+                "table": "generation_hourly",
+                "column": "net_generation_mwh",
+                "role": "energy",
+                "unit": "mwh",
+                "default_aggregation": "sum",
+                "average_strategy": "avg",
+                "weight_column": None,
+                "recommended_rollup_sql": "SUM(net_generation_mwh) AS total_net_generation_mwh",
+                "allowed_aggregations": ["sum", "avg", "min", "max"],
+                "forbidden_aggregations": [],
+                "additive_across_category": True,
+                "additive_across_time": True,
+                "confidence": 0.98,
+                "reason": "Energy-volume metric; summing across periods is usually meaningful.",
+            },
+            {
+                "table": "load_hourly",
+                "column": "demand_mw",
+                "role": "power",
+                "unit": "mw",
+                "default_aggregation": "avg",
+                "average_strategy": "avg",
+                "weight_column": None,
+                "recommended_rollup_sql": "AVG(demand_mw) AS avg_demand_mw",
+                "allowed_aggregations": ["avg", "max", "min"],
+                "forbidden_aggregations": ["sum"],
+                "additive_across_category": True,
+                "additive_across_time": False,
+                "confidence": 0.95,
+                "reason": "Power metric; average or peak over time rather than summing.",
+            },
+        ],
+        "notes": [
+            "Energy-volume fields usually roll up with SUM.",
+            "Power and demand fields usually need AVG or MAX, not SUM.",
+        ],
+    }
+
+
 async def _fake_quality_overview(schema_info, run_sql):  # noqa: ARG001
     return {
         "table_count": len(schema_info),
@@ -932,7 +1502,10 @@ async def _fake_trend_overview(schema_info, run_sql):  # noqa: ARG001
                 "date_column": "order_date",
                 "measure_column": "quantity",
                 "measure_dtype": "INTEGER",
+                "measure_role": "count",
+                "aggregation": "sum",
                 "date_range": "2024-01-01 → 2024-04-01",
+                "recommended_query_shape": "SUM(quantity) BY order_date",
             }
         ],
         "breakout_dimensions": [
@@ -945,10 +1518,11 @@ async def _fake_trend_overview(schema_info, run_sql):  # noqa: ARG001
         ],
         "chart_recommendations": [
             {
-                "title": "quantity over order_date",
+                "title": "SUM quantity over order_date",
                 "table": "orders",
                 "chart_type": "line",
-                "reason": "date coverage 2024-01-01 → 2024-04-01",
+                "aggregation": "sum",
+                "reason": "count metric with default SUM aggregation; date coverage 2024-01-01 → 2024-04-01",
             }
         ],
         "notes": ["Start with a single-series line chart before adding category splits."],

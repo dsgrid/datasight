@@ -38,6 +38,7 @@ let bookmarksCache = [];
 let reportsCache = [];
 let conversationsCache = [];
 let recipesCache = [];
+let measureEditorCatalog = [];
 const searchHelpers = window.DatasightSearchHelpers || {};
 const scorePaletteResult = searchHelpers.scorePaletteResult;
 const highlightMatch = searchHelpers.highlightMatch;
@@ -47,6 +48,10 @@ const STARTER_CONFIG = {
   profile: {
     title: 'Profile this dataset',
     status: 'Open a file or project below to start with a structured overview.',
+  },
+  measures: {
+    title: 'Inspect key measures',
+    status: 'Open a file or project below to surface likely energy measures and safer default aggregations.',
   },
   dimensions: {
     title: 'Find key dimensions',
@@ -108,6 +113,22 @@ function bindInteractiveBubbleActions(container) {
       event.preventDefault();
       event.stopPropagation();
       runStarterFollowup(btn.getAttribute('data-prompt') || '');
+    });
+  });
+  container.querySelectorAll('.measure-override-btn[data-table][data-column]').forEach(btn => {
+    btn.addEventListener('click', async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      await openMeasureOverrideEditorForCard({
+        table: btn.getAttribute('data-table') || '',
+        column: btn.getAttribute('data-column') || '',
+        defaultAggregation: btn.getAttribute('data-default-aggregation') || 'avg',
+        averageStrategy: btn.getAttribute('data-average-strategy') || 'avg',
+        weightColumn: btn.getAttribute('data-weight-column') || '',
+        displayName: btn.getAttribute('data-display-name') || '',
+        format: btn.getAttribute('data-format') || '',
+        preferredChartTypes: (btn.getAttribute('data-preferred-chart-types') || '').split(',').filter(Boolean),
+      });
     });
   });
 }
@@ -337,6 +358,7 @@ async function doLoadProject(path) {
     await loadSchema();
     await loadQueries();
     await loadRecipes();
+    await loadMeasureOverridesEditor();
     await loadConversations();
     await loadBookmarks();
     await loadReports();
@@ -1525,6 +1547,7 @@ async function loadSchema() {
     schemaData = data.tables || [];
     clearSchemaInsightCaches();
     renderTables(schemaData);
+    populateMeasureBuilderTables();
   } catch (e) {
     document.getElementById('tables-container').innerHTML =
       '<div class="no-queries">Failed to load schema</div>';
@@ -1561,6 +1584,375 @@ async function loadRecipes() {
   }
 }
 
+function setMeasureEditorState(text, status, kind) {
+  const editor = document.getElementById('measures-editor');
+  const statusEl = document.getElementById('measures-editor-status');
+  if (editor) editor.value = text || '';
+  if (statusEl) {
+    statusEl.textContent = status || '';
+    statusEl.className = kind === 'error' ? 'no-queries error visible' : 'no-queries';
+  }
+}
+
+function populateMeasureBuilderTables() {
+  const tableEl = document.getElementById('measure-builder-table');
+  if (!tableEl) return;
+
+  const currentValue = tableEl.value;
+  const tableNames = Array.from(new Set(
+    [
+      ...schemaData.map(table => table.name),
+      ...measureEditorCatalog.map(item => item.table),
+    ].filter(Boolean)
+  )).sort();
+
+  tableEl.innerHTML = '<option value="">Select table…</option>' +
+    tableNames.map(name =>
+      '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>'
+    ).join('');
+
+  if (selectedTable && tableNames.includes(selectedTable)) {
+    tableEl.value = selectedTable;
+  } else if (currentValue && tableNames.includes(currentValue)) {
+    tableEl.value = currentValue;
+  }
+}
+
+function populateWeightColumnOptions(tableName, selectedValue) {
+  const weightEl = document.getElementById('measure-builder-weight-column');
+  if (!weightEl) return;
+
+  const table = schemaData.find(item => item.name === tableName);
+  const numericColumns = table
+    ? table.columns
+      .filter(column => {
+        const dtype = String(column.dtype || '').toLowerCase();
+        return ['int', 'decimal', 'numeric', 'float', 'double', 'real', 'number'].some(token => dtype.includes(token));
+      })
+      .map(column => column.name)
+    : [];
+
+  weightEl.innerHTML = '<option value="">weight column (optional)</option>' +
+    numericColumns.map(name =>
+      '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>'
+    ).join('');
+
+  if (selectedValue && numericColumns.includes(selectedValue)) {
+    weightEl.value = selectedValue;
+  }
+}
+
+function setMultiSelectValues(selectEl, values) {
+  if (!selectEl) return;
+  const valueSet = new Set(values || []);
+  Array.from(selectEl.options).forEach(option => {
+    option.selected = valueSet.has(option.value);
+  });
+}
+
+function getMultiSelectValues(selectEl) {
+  if (!selectEl) return [];
+  return Array.from(selectEl.selectedOptions).map(option => option.value);
+}
+
+function populateMeasureOverrideBuilder(measures) {
+  measureEditorCatalog = measures || [];
+  const select = document.getElementById('measure-builder-select');
+  if (!select) return;
+
+  const currentValue = select.value;
+  select.innerHTML = '<option value="">Select inferred measure…</option>' +
+    measureEditorCatalog.map(item => {
+      const value = item.table + '.' + item.column;
+      const label = item.table + '.' + item.column + ' [' + (item.default_aggregation || 'avg') + ']';
+      return '<option value="' + escapeHtml(value) + '">' + escapeHtml(label) + '</option>';
+    }).join('');
+
+  if (currentValue && measureEditorCatalog.some(item => (item.table + '.' + item.column) === currentValue)) {
+    select.value = currentValue;
+  }
+  populateMeasureBuilderTables();
+}
+
+function updateMeasureBuilderMode() {
+  const modeEl = document.getElementById('measure-builder-mode');
+  const tableEl = document.getElementById('measure-builder-table');
+  const selectEl = document.getElementById('measure-builder-select');
+  const nameEl = document.getElementById('measure-builder-name');
+  const expressionEl = document.getElementById('measure-builder-expression');
+  if (!modeEl || !tableEl || !selectEl || !nameEl || !expressionEl) return;
+
+  const calculated = modeEl.value === 'calculated';
+  selectEl.disabled = calculated;
+  tableEl.disabled = false;
+  nameEl.disabled = !calculated;
+  expressionEl.disabled = !calculated;
+  if (!calculated) {
+    nameEl.value = '';
+    expressionEl.value = '';
+  }
+  populateWeightColumnOptions(tableEl.value, document.getElementById('measure-builder-weight-column')?.value || '');
+}
+
+function applyMeasureBuilderSelection() {
+  const modeEl = document.getElementById('measure-builder-mode');
+  const tableEl = document.getElementById('measure-builder-table');
+  const select = document.getElementById('measure-builder-select');
+  const aggregationEl = document.getElementById('measure-builder-aggregation');
+  const strategyEl = document.getElementById('measure-builder-average-strategy');
+  const weightEl = document.getElementById('measure-builder-weight-column');
+  const nameEl = document.getElementById('measure-builder-name');
+  const expressionEl = document.getElementById('measure-builder-expression');
+  const displayNameEl = document.getElementById('measure-builder-display-name');
+  const formatEl = document.getElementById('measure-builder-format');
+  const chartTypesEl = document.getElementById('measure-builder-chart-types');
+  if (!select || !aggregationEl || !strategyEl || !weightEl || !modeEl || !tableEl || !nameEl || !expressionEl || !displayNameEl || !formatEl || !chartTypesEl) return;
+  if (modeEl.value === 'calculated') return;
+
+  const selected = measureEditorCatalog.find(item => (item.table + '.' + item.column) === select.value);
+  if (!selected) {
+    aggregationEl.value = 'avg';
+    strategyEl.value = 'avg';
+    weightEl.value = '';
+    nameEl.value = '';
+    expressionEl.value = '';
+    displayNameEl.value = '';
+    formatEl.value = '';
+    chartTypesEl.value = '';
+    return;
+  }
+
+  aggregationEl.value = selected.default_aggregation || 'avg';
+  strategyEl.value = selected.average_strategy || 'avg';
+  tableEl.value = selected.table || '';
+  populateWeightColumnOptions(tableEl.value, selected.weight_column || '');
+  nameEl.value = selected.name || '';
+  expressionEl.value = selected.expression || '';
+  displayNameEl.value = selected.display_name || '';
+  formatEl.value = selected.format || '';
+  setMultiSelectValues(chartTypesEl, selected.preferred_chart_types || []);
+}
+
+async function loadMeasureEditorCatalog() {
+  if (!projectLoaded || !currentProjectPath) {
+    populateMeasureOverrideBuilder([]);
+    return;
+  }
+
+  try {
+    const data = await fetchJson('/api/measures/editor/catalog');
+    if (!data.ok) {
+      populateMeasureOverrideBuilder([]);
+      return;
+    }
+    populateMeasureOverrideBuilder(data.measures || []);
+    applyMeasureBuilderSelection();
+    updateMeasureBuilderMode();
+  } catch (e) {
+    populateMeasureOverrideBuilder([]);
+  }
+}
+
+async function loadMeasureOverridesEditor() {
+  if (!projectLoaded || !currentProjectPath) {
+    setMeasureEditorState('', 'Load a saved project to edit measures.yaml overrides.', 'info');
+    populateMeasureOverrideBuilder([]);
+    return;
+  }
+
+  setMeasureEditorState(
+    document.getElementById('measures-editor')?.value || '',
+    'Loading measure overrides...',
+    'info'
+  );
+  try {
+    const [data] = await Promise.all([
+      fetchJson('/api/measures/editor'),
+      loadMeasureEditorCatalog(),
+    ]);
+    if (!data.ok) {
+      setMeasureEditorState('', data.error || 'Failed to load measure overrides.', 'error');
+      return;
+    }
+    const status = data.generated
+      ? 'Loaded inferred scaffold. Save to create measures.yaml.'
+      : ('Editing ' + (data.path || 'measures.yaml'));
+    setMeasureEditorState(data.text || '', status, 'info');
+  } catch (e) {
+    setMeasureEditorState('', 'Failed to load measure overrides.', 'error');
+  }
+}
+
+async function validateMeasureOverrides() {
+  if (!projectLoaded || !currentProjectPath) {
+    setMeasureEditorState('', 'Load a saved project to validate measures.yaml overrides.', 'error');
+    return;
+  }
+
+  const editor = document.getElementById('measures-editor');
+  const text = editor ? editor.value : '';
+  try {
+    const data = await fetchJson('/api/measures/editor/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!data.ok) {
+      const message = (data.errors || [data.error || 'Validation failed.']).join(' ');
+      setMeasureEditorState(text, message, 'error');
+      return;
+    }
+    const warningText = (data.warnings || []).length
+      ? (' Valid with warnings: ' + data.warnings.join(' '))
+      : ' YAML looks valid.';
+    setMeasureEditorState(text, 'Measure overrides validated.' + warningText, 'info');
+  } catch (e) {
+    setMeasureEditorState(text, 'Failed to validate measure overrides.', 'error');
+  }
+}
+
+async function insertMeasureOverride() {
+  if (!projectLoaded || !currentProjectPath) {
+    setMeasureEditorState('', 'Load a saved project to edit measures.yaml overrides.', 'error');
+    return;
+  }
+
+  const modeEl = document.getElementById('measure-builder-mode');
+  const select = document.getElementById('measure-builder-select');
+  const nameEl = document.getElementById('measure-builder-name');
+  const expressionEl = document.getElementById('measure-builder-expression');
+  const aggregationEl = document.getElementById('measure-builder-aggregation');
+  const strategyEl = document.getElementById('measure-builder-average-strategy');
+  const weightEl = document.getElementById('measure-builder-weight-column');
+  const displayNameEl = document.getElementById('measure-builder-display-name');
+  const formatEl = document.getElementById('measure-builder-format');
+  const chartTypesEl = document.getElementById('measure-builder-chart-types');
+  const editor = document.getElementById('measures-editor');
+  if (!modeEl || !select || !nameEl || !expressionEl || !aggregationEl || !strategyEl || !weightEl || !displayNameEl || !formatEl || !chartTypesEl || !editor) return;
+
+  const isCalculated = modeEl.value === 'calculated';
+  const tableEl = document.getElementById('measure-builder-table');
+  let table = '';
+  let column = '';
+  let name = '';
+  let expression = '';
+  if (isCalculated) {
+    name = nameEl.value.trim();
+    expression = expressionEl.value.trim();
+    if (!name || !expression) {
+      setMeasureEditorState(editor.value || '', 'Enter a calculated measure name and expression.', 'error');
+      return;
+    }
+    table = tableEl ? tableEl.value.trim() : '';
+    if (!table) {
+      setMeasureEditorState(editor.value || '', 'Choose a target table for the calculated measure.', 'error');
+      return;
+    }
+  } else {
+    if (!select.value) {
+      setMeasureEditorState(editor.value || '', 'Choose an inferred measure first.', 'error');
+      return;
+    }
+    const parts = select.value.split('.');
+    table = parts.shift() || '';
+    column = parts.join('.');
+  }
+  try {
+    const data = await fetchJson('/api/measures/editor/upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: editor.value || '',
+        table,
+        column,
+        name,
+        expression,
+        default_aggregation: aggregationEl.value,
+        average_strategy: strategyEl.value,
+        weight_column: weightEl.value.trim(),
+        display_name: displayNameEl.value.trim(),
+        format: formatEl.value.trim(),
+        preferred_chart_types: getMultiSelectValues(chartTypesEl),
+      }),
+    });
+    if (!data.ok) {
+      setMeasureEditorState(editor.value || '', data.error || 'Failed to insert override.', 'error');
+      return;
+    }
+    setMeasureEditorState(
+      data.text || '',
+      'Inserted override for ' + table + '.' + (column || name) + '.',
+      'info'
+    );
+  } catch (e) {
+    setMeasureEditorState(editor.value || '', 'Failed to insert override.', 'error');
+  }
+}
+
+async function openMeasureOverrideEditorForCard(config) {
+  if (!config || !config.table || !config.column) return;
+  switchView('chat');
+  openSidebarSection('measures-editor-section');
+  await loadMeasureOverridesEditor();
+
+  const select = document.getElementById('measure-builder-select');
+  const modeEl = document.getElementById('measure-builder-mode');
+  const tableEl = document.getElementById('measure-builder-table');
+  const nameEl = document.getElementById('measure-builder-name');
+  const expressionEl = document.getElementById('measure-builder-expression');
+  const aggregationEl = document.getElementById('measure-builder-aggregation');
+  const strategyEl = document.getElementById('measure-builder-average-strategy');
+  const weightEl = document.getElementById('measure-builder-weight-column');
+  const displayNameEl = document.getElementById('measure-builder-display-name');
+  const formatEl = document.getElementById('measure-builder-format');
+  const chartTypesEl = document.getElementById('measure-builder-chart-types');
+  if (modeEl) modeEl.value = 'physical';
+  if (tableEl) tableEl.value = config.table || '';
+  if (select) select.value = config.table + '.' + config.column;
+  if (nameEl) nameEl.value = '';
+  if (expressionEl) expressionEl.value = '';
+  if (aggregationEl) aggregationEl.value = config.defaultAggregation || 'avg';
+  if (strategyEl) strategyEl.value = config.averageStrategy || 'avg';
+  populateWeightColumnOptions(config.table || '', config.weightColumn || '');
+  if (displayNameEl) displayNameEl.value = config.displayName || '';
+  if (formatEl) formatEl.value = config.format || '';
+  if (chartTypesEl) setMultiSelectValues(chartTypesEl, config.preferredChartTypes || []);
+  updateMeasureBuilderMode();
+  await insertMeasureOverride();
+}
+
+async function saveMeasureOverrides() {
+  if (!projectLoaded || !currentProjectPath) {
+    setMeasureEditorState('', 'Load a saved project to edit measures.yaml overrides.', 'error');
+    return;
+  }
+
+  const editor = document.getElementById('measures-editor');
+  const text = editor ? editor.value : '';
+  setMeasureEditorState(text, 'Saving measure overrides...', 'info');
+
+  try {
+    const data = await fetchJson('/api/measures/editor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!data.ok) {
+      setMeasureEditorState(text, data.error || 'Failed to save measure overrides.', 'error');
+      return;
+    }
+
+    await loadSchema();
+    await loadQueries();
+    await loadRecipes();
+    await loadProjectHealth();
+    await loadMeasureOverridesEditor();
+    showToast('Saved measure overrides.', 'success');
+  } catch (e) {
+    setMeasureEditorState(text, 'Failed to save measure overrides.', 'error');
+  }
+}
+
 function handleSchemaSearchInput(value) {
   schemaSearchQuery = (value || '').trim().toLowerCase();
   renderTables(schemaData);
@@ -1573,6 +1965,7 @@ function focusTableInSidebar(tableName, columnName) {
   selectedTable = tableName;
   updateInspectScopeLabel();
   renderTables(schemaData);
+  populateMeasureBuilderTables();
   filterQueries();
 
   const header = Array.from(document.querySelectorAll('.table-header')).find(
@@ -1703,11 +2096,13 @@ function getCommandPaletteResults(query) {
     { type: 'action', group: 'Actions', title: 'New Chat', subtitle: 'Conversation', score: 760, run: () => clearChat() },
     { type: 'action', group: 'Actions', title: 'Summarize Dataset', subtitle: 'Analysis', score: 780, run: () => summarizeDataset() },
     { type: 'action', group: 'Actions', title: 'Profile This Dataset', subtitle: 'Starter', score: 790, run: () => runStarterAction('profile') },
+    { type: 'action', group: 'Actions', title: 'Inspect Key Measures', subtitle: 'Starter', score: 785, run: () => runStarterAction('measures') },
     { type: 'action', group: 'Actions', title: 'Find Key Dimensions', subtitle: 'Starter', score: 780, run: () => runStarterAction('dimensions') },
     { type: 'action', group: 'Actions', title: 'Build a Trend Chart', subtitle: 'Starter', score: 780, run: () => runStarterAction('trend') },
     { type: 'action', group: 'Actions', title: 'Audit Nulls and Outliers', subtitle: 'Starter', score: 780, run: () => runStarterAction('quality') },
     { type: 'action', group: 'Actions', title: 'Open Inspect Tools', subtitle: 'Sidebar', score: 720, run: () => openSidebarSection('inspect-section') },
     { type: 'action', group: 'Actions', title: 'Inspect Dataset Profile', subtitle: 'Deterministic', score: 760, run: () => runInspectAction('profile', 'dataset') },
+    { type: 'action', group: 'Actions', title: 'Inspect Dataset Measures', subtitle: 'Deterministic', score: 755, run: () => runInspectAction('measures', 'dataset') },
     { type: 'action', group: 'Actions', title: 'Inspect Dataset Quality', subtitle: 'Deterministic', score: 750, run: () => runInspectAction('quality', 'dataset') },
     { type: 'action', group: 'Actions', title: 'Inspect Dataset Dimensions', subtitle: 'Deterministic', score: 750, run: () => runInspectAction('dimensions', 'dataset') },
     { type: 'action', group: 'Actions', title: 'Inspect Dataset Trends', subtitle: 'Deterministic', score: 750, run: () => runInspectAction('trend', 'dataset') },
@@ -2551,15 +2946,17 @@ function renderTrendOverview(overview) {
   if (trendCandidates.length) {
     actions.push({
       label: 'Create Starter Chart',
-      prompt: 'Create a line chart of `' + trendCandidates[0].table + '.' + trendCandidates[0].measure_column +
-        '` over `' + trendCandidates[0].table + '.' + trendCandidates[0].date_column + '`.',
+      prompt: 'Create a line chart of `' + (trendCandidates[0].aggregation || 'sum').toUpperCase() +
+        '(' + trendCandidates[0].table + '.' + trendCandidates[0].measure_column + ')` over `' +
+        trendCandidates[0].table + '.' + trendCandidates[0].date_column + '`.',
     });
   }
   if (trendCandidates.length && breakoutDimensions.length) {
     actions.push({
       label: 'Add a Breakout',
-      prompt: 'Create a trend chart of `' + trendCandidates[0].table + '.' + trendCandidates[0].measure_column +
-        '` over `' + trendCandidates[0].table + '.' + trendCandidates[0].date_column +
+      prompt: 'Create a trend chart of `' + (trendCandidates[0].aggregation || 'sum').toUpperCase() +
+        '(' + trendCandidates[0].table + '.' + trendCandidates[0].measure_column + ')` over `' +
+        trendCandidates[0].table + '.' + trendCandidates[0].date_column +
         '`, broken out by `' + breakoutDimensions[0].table + '.' + breakoutDimensions[0].column + '`.',
     });
   }
@@ -2587,9 +2984,11 @@ function renderTrendOverview(overview) {
         trendCandidates,
         'No obvious date/measure pairs detected.',
         item => '<div class="overview-item overview-item-rich"><strong>' +
-          escapeHtml(item.table + '.' + item.measure_column) + '</strong><span>' +
-          escapeHtml('by ' + item.date_column) + '</span><span>' +
-          escapeHtml(item.date_range || '') + '</span></div>'
+          escapeHtml((item.aggregation || 'sum').toUpperCase() + '(' + item.table + '.' + (item.measure_display_name || item.measure_column) + ')') +
+          '</strong><span>' + escapeHtml('by ' + item.date_column) + '</span><span>' +
+          escapeHtml((item.measure_role || 'measure') +
+            (item.measure_format ? (' • format ' + item.measure_format) : '') +
+            ' • ' + (item.date_range || '')) + '</span></div>'
       ) +
       renderOverviewList(
         'Chart recommendations',
@@ -2597,7 +2996,8 @@ function renderTrendOverview(overview) {
         'No starter chart recommendations available.',
         item => '<div class="overview-item overview-item-rich"><strong>' +
           escapeHtml(item.title || '') + '</strong><span>' +
-          escapeHtml(item.chart_type || '') + '</span><span>' +
+          escapeHtml((item.chart_type || '') + ' • ' + (item.aggregation || '').toUpperCase() +
+            ((item.preferred_chart_types || []).length ? (' • pref ' + item.preferred_chart_types.join('/')) : '')) + '</span><span>' +
           escapeHtml(item.reason || '') + '</span></div>'
       ) +
       renderOverviewList(
@@ -2612,6 +3012,114 @@ function renderTrendOverview(overview) {
             escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
             escapeHtml(stats.join(' • ') || 'No quick stats') + '</span></div>';
         }
+      ) +
+      (notes.length ? renderOverviewList(
+        'Quick notes',
+        notes,
+        '',
+        item => '<div class="overview-item overview-item-note"><span>' + escapeHtml(item) + '</span></div>'
+      ) : '') +
+      renderStarterActions(actions) +
+    '</div>';
+
+  addAssistantHtml(html, 'starter-overview-bubble');
+}
+
+function renderMeasureOverview(overview) {
+  const measures = overview.measures || [];
+  const notes = overview.notes || [];
+  const actions = [];
+
+  if (measures.length) {
+    const primary = measures[0];
+    const primaryLabel = primary.display_name || (primary.table + '.' + primary.column);
+    actions.push({
+      label: 'Use Default Aggregation',
+      prompt: 'Analyze `' + primaryLabel + '` using its default `' +
+        primary.default_aggregation + '` aggregation. Use this rollup shape as a guide: `' +
+        primary.recommended_rollup_sql + '`. Explain why that aggregation matches the metric.',
+    });
+    if (primary.role === 'power' || primary.role === 'capacity') {
+      actions.push({
+        label: 'Compare Peak vs Average',
+        prompt: 'Compare average and peak behavior for `' + primaryLabel +
+          '` over time and explain when AVG is better than MAX and vice versa.',
+      });
+    } else if (primary.role === 'energy') {
+      actions.push({
+        label: 'Build Energy Trend',
+        prompt: 'Create a trend chart of total `' + primaryLabel +
+          '` over time using an appropriate time grain and explain what stands out.',
+      });
+    }
+  }
+
+  const html =
+    '<div class="starter-overview">' +
+      '<div class="starter-overview-head">' +
+        '<span class="starter-overview-kicker">Starter result</span>' +
+        '<h3>Key measures</h3>' +
+        '<p>An energy-aware pass over likely measures, their default aggregations, and the metrics that need extra care.</p>' +
+      '</div>' +
+      '<div class="overview-metrics">' +
+        renderOverviewMetric('Tables', Number(overview.table_count || 0).toLocaleString()) +
+        renderOverviewMetric('Measures', Number(measures.length || 0).toLocaleString()) +
+        renderOverviewMetric('Guardrails', Number(measures.filter(item => (item.forbidden_aggregations || []).length).length || 0).toLocaleString()) +
+      '</div>' +
+      renderOverviewList(
+        'Measure candidates',
+        measures,
+        'No obvious numeric measures detected.',
+        item => {
+          const additive = [];
+          if (item.additive_across_category) additive.push('category');
+          if (item.additive_across_time) additive.push('time');
+          const unit = item.unit ? 'Unit: ' + item.unit : 'No inferred unit';
+          const additiveText = additive.length ? 'Additive across ' + additive.join(' + ') : 'Not safely additive';
+          const averagingText = item.weight_column
+            ? ('Weighted avg by ' + item.weight_column)
+            : ('Averaging: ' + (item.average_strategy || 'avg'));
+          const displayNameText = item.display_name ? ('Display: ' + item.display_name + ' • ') : '';
+          const formatText = item.format ? ('Format: ' + item.format + ' • ') : '';
+          const chartText = (item.preferred_chart_types || []).length
+            ? ('Charts: ' + item.preferred_chart_types.join('/') + ' • ')
+            : '';
+          return '<div class="overview-item overview-item-rich"><strong>' +
+            escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+            escapeHtml(item.role + ' • default ' + item.default_aggregation.toUpperCase()) + '</span><span>' +
+            escapeHtml(displayNameText + formatText + chartText + unit + ' • ' + additiveText + ' • ' + averagingText) + '</span>' +
+            '<button type="button" class="measure-override-btn" ' +
+              'data-table="' + escapeHtml(item.table) + '" ' +
+              'data-column="' + escapeHtml(item.column) + '" ' +
+              'data-default-aggregation="' + escapeHtml(item.default_aggregation || 'avg') + '" ' +
+              'data-average-strategy="' + escapeHtml(item.average_strategy || 'avg') + '" ' +
+              'data-weight-column="' + escapeHtml(item.weight_column || '') + '" ' +
+              'data-display-name="' + escapeHtml(item.display_name || '') + '" ' +
+              'data-format="' + escapeHtml(item.format || '') + '" ' +
+              'data-preferred-chart-types="' + escapeHtml((item.preferred_chart_types || []).join(',')) + '">' +
+              'Edit override</button></div>';
+        }
+      ) +
+      renderOverviewList(
+        'Suggested SQL rollups',
+        measures,
+        'No rollup formulas available.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+          escapeHtml(item.recommended_rollup_sql || '') + '</span></div>'
+      ) +
+      renderOverviewList(
+        'Aggregation guidance',
+        measures,
+        'No aggregation guidance available.',
+        item => '<div class="overview-item overview-item-rich"><strong>' +
+          escapeHtml(item.table + '.' + item.column) + '</strong><span>' +
+          escapeHtml('Allowed: ' + (item.allowed_aggregations || []).join(', ')) + '</span><span>' +
+          escapeHtml((item.forbidden_aggregations || []).length
+            ? ('Avoid: ' + item.forbidden_aggregations.join(', ') +
+              (item.weight_column ? (' • weighted by ' + item.weight_column) : '') +
+              ' • ' + item.reason)
+            : (item.reason || '')) + '</span></div>'
       ) +
       (notes.length ? renderOverviewList(
         'Quick notes',
@@ -2644,6 +3152,10 @@ async function runInspectOverview(kind, scope) {
     endpoint = '/api/dimension-overview';
     failureMessage = 'Failed to identify key dimensions.';
     toastMessage = 'Failed to analyze grouping dimensions.';
+  } else if (kind === 'measures') {
+    endpoint = '/api/measure-overview';
+    failureMessage = 'Failed to identify key measures.';
+    toastMessage = 'Failed to analyze likely measures.';
   } else if (kind === 'quality') {
     endpoint = '/api/quality-overview';
     failureMessage = 'Failed to run the data quality audit.';
@@ -2663,6 +3175,7 @@ async function runInspectOverview(kind, scope) {
       return;
     }
     if (kind === 'profile') renderDatasetOverview(data.overview);
+    else if (kind === 'measures') renderMeasureOverview(data.overview);
     else if (kind === 'dimensions') renderDimensionOverview(data.overview);
     else if (kind === 'quality') renderQualityOverview(data.overview);
     else renderTrendOverview(data.overview);
@@ -2675,6 +3188,10 @@ async function runInspectOverview(kind, scope) {
 
 async function runDatasetProfileStarter() {
   await runInspectOverview('profile', 'dataset');
+}
+
+async function runMeasureStarter() {
+  await runInspectOverview('measures', 'dataset');
 }
 
 async function runDimensionStarter() {
@@ -2700,6 +3217,11 @@ async function runStarterAction(starterId) {
 
   if (starterId === 'profile') {
     await runDatasetProfileStarter();
+    return;
+  }
+
+  if (starterId === 'measures') {
+    await runMeasureStarter();
     return;
   }
 
@@ -4507,6 +5029,7 @@ async function landingExplore() {
     clearSchemaSearchState();
     await loadSchema();
     await loadRecipes();
+    setMeasureEditorState('', 'Load a saved project to edit measures.yaml overrides.', 'info');
     loadSettings();
     const starterRan = await maybeRunPendingStarter();
     if (!starterRan) showWelcome();
@@ -4559,6 +5082,7 @@ async function landingOpenProject(path) {
     await loadSchema();
     await loadQueries();
     await loadRecipes();
+    await loadMeasureOverridesEditor();
     loadSettings();
     loadConversations();
     loadBookmarks();
@@ -4703,10 +5227,11 @@ async function saveFromPopover() {
               updateSessionIndicator('project', data.name || data.path.split('/').pop());
               showToast('Project saved with documentation: ' + (data.files || []).join(', '), 'success');
               clearSchemaSearchState();
-              await loadSchema();
-              await loadQueries();
-              await loadRecipes();
-              await loadProjectHealth();
+    await loadSchema();
+    await loadQueries();
+    await loadRecipes();
+    await loadMeasureOverridesEditor();
+    await loadProjectHealth();
             } else if (eventType === 'error') {
               showToast('Error: ' + (data.error || 'Unknown error'), 'error');
             }
@@ -4742,6 +5267,7 @@ async function saveFromPopover() {
       await loadSchema();
       await loadQueries();
       await loadRecipes();
+      await loadMeasureOverridesEditor();
       await loadProjectHealth();
     } catch (e) {
       errorEl.textContent = 'Failed to save project';
@@ -4790,6 +5316,7 @@ async function initApp() {
       loadSchema();
       loadQueries();
       loadRecipes();
+      await loadMeasureOverridesEditor();
       loadSettings();
       loadConversations();
       loadBookmarks();

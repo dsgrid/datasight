@@ -19,12 +19,15 @@ from datasight.data_profile import (
     build_column_profile,
     build_dataset_overview,
     build_dimension_overview,
+    build_measure_overview,
     build_prompt_recipes,
     build_quality_overview,
     build_table_profile,
     build_trend_overview,
     find_column_info,
     find_table_info,
+    format_measure_overrides_yaml,
+    format_measure_prompt_context,
 )
 from datasight.llm import create_llm_client
 from datasight.settings import Settings
@@ -93,6 +96,7 @@ async def _run_ask_pipeline(
     from datasight.config import (
         format_example_queries,
         load_example_queries,
+        load_measure_overrides,
         load_schema_description,
     )
     from datasight.cost import build_cost_data, log_query_cost
@@ -111,9 +115,30 @@ async def _run_ask_pipeline(
     tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
     user_desc = load_schema_description(None, project_dir)
     example_queries = load_example_queries(None, project_dir)
+    measure_overrides = load_measure_overrides(None, project_dir)
     schema_text = format_schema_context(tables, user_desc)
     if example_queries:
         schema_text += format_example_queries(example_queries)
+
+    measure_text = format_measure_prompt_context(
+        await build_measure_overview(
+            [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "columns": [
+                        {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
+                        for c in t.columns
+                    ],
+                }
+                for t in tables
+            ],
+            sql_runner.run_sql,
+            measure_overrides,
+        )
+    )
+    if measure_text:
+        schema_text += measure_text
 
     schema_info = [
         {
@@ -399,8 +424,8 @@ def _render_trends_markdown(trend_data: dict[str, Any]) -> str:
         lines.extend(["", "## Trend Candidates"])
         for item in trend_data["trend_candidates"]:
             lines.append(
-                f"- `{item['table']}`: `{item['measure_column']}` over `{item['date_column']}` "
-                f"({item['date_range']})"
+                f"- `{item['table']}`: `{str(item.get('aggregation') or '').upper()}({item['measure_column']})` "
+                f"over `{item['date_column']}` ({item['date_range']})"
             )
     if trend_data["breakout_dimensions"]:
         lines.extend(["", "## Breakout Dimensions"])
@@ -415,6 +440,46 @@ def _render_trends_markdown(trend_data: dict[str, Any]) -> str:
     if trend_data["notes"]:
         lines.extend(["", "## Notes"])
         for item in trend_data["notes"]:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _render_measures_markdown(measure_data: dict[str, Any]) -> str:
+    lines = [
+        "# Measure Overview",
+        "",
+        f"- Tables scanned: {measure_data['table_count']}",
+    ]
+    if measure_data["measures"]:
+        lines.extend(["", "## Measure Candidates"])
+        for item in measure_data["measures"]:
+            unit = f" [{item['unit']}]" if item.get("unit") else ""
+            expression = f"; expression `{item['expression']}`" if item.get("expression") else ""
+            display_name = (
+                f"; display `{item['display_name']}`" if item.get("display_name") else ""
+            )
+            fmt = f"; format `{item['format']}`" if item.get("format") else ""
+            charts = (
+                f"; charts {', '.join(item['preferred_chart_types'])}"
+                if item.get("preferred_chart_types")
+                else ""
+            )
+            forbidden = (
+                f"; avoid {', '.join(item['forbidden_aggregations'])}"
+                if item.get("forbidden_aggregations")
+                else ""
+            )
+            weighting = (
+                f"; weighted avg by {item['weight_column']}" if item.get("weight_column") else ""
+            )
+            lines.append(
+                f"- `{item['table']}.{item['column']}`{unit}: role `{item['role']}`, "
+                f"default `{item['default_aggregation']}`, allowed {', '.join(item['allowed_aggregations'])}"
+                f"{display_name}{fmt}{charts}{expression}{forbidden}{weighting}; rollup SQL `{item['recommended_rollup_sql']}`. {item['reason']}"
+            )
+    if measure_data["notes"]:
+        lines.extend(["", "## Notes"])
+        for item in measure_data["notes"]:
             lines.append(f"- {item}")
     return "\n".join(lines)
 
@@ -446,6 +511,8 @@ def _load_recipe_entries(
     settings: Settings,
     table: str | None = None,
 ) -> list[dict[str, Any]]:
+    from datasight.config import load_measure_overrides
+
     resolved_db_path = _resolve_db_path(settings, project_dir)
     if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
         click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
@@ -453,12 +520,13 @@ def _load_recipe_entries(
 
     async def _run_recipes() -> list[dict[str, Any]]:
         sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        measure_overrides = load_measure_overrides(None, project_dir)
         if table:
             table_info = find_table_info(schema_info, table)
             if table_info is None:
                 raise click.ClickException(f"Table not found: {table}")
             schema_info = [table_info]
-        recipes = await build_prompt_recipes(schema_info, sql_runner.run_sql)
+        recipes = await build_prompt_recipes(schema_info, sql_runner.run_sql, measure_overrides)
         return [{"id": idx, **recipe} for idx, recipe in enumerate(recipes, start=1)]
 
     return asyncio.run(_run_recipes())
@@ -1067,7 +1135,7 @@ def demo(project_dir: str, min_year: int):
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def generate(project_dir, model, overwrite, table, verbose):
-    """Generate schema_description.md and queries.yaml from your database.
+    """Generate schema_description.md, queries.yaml, and measures.yaml from your database.
 
     Connects to the database, inspects tables and columns, samples
     code/enum columns, and asks the LLM to produce documentation
@@ -1080,12 +1148,15 @@ def generate(project_dir, model, overwrite, table, verbose):
     # Check for existing files early
     schema_path = Path(project_dir) / "schema_description.md"
     queries_path = Path(project_dir) / "queries.yaml"
+    measures_path = Path(project_dir) / "measures.yaml"
     if not overwrite:
         existing = []
         if schema_path.exists():
             existing.append("schema_description.md")
         if queries_path.exists():
             existing.append("queries.yaml")
+        if measures_path.exists():
+            existing.append("measures.yaml")
         if existing:
             click.echo(
                 f"Error: {', '.join(existing)} already exist. Use --overwrite to replace.",
@@ -1181,6 +1252,16 @@ def generate(project_dir, model, overwrite, table, verbose):
     if queries_content:
         queries_path.write_text(queries_content + "\n", encoding="utf-8")
         written.append("queries.yaml")
+
+    async def _build_measure_scaffold() -> str:
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        measure_data = await build_measure_overview(
+            schema_info, sql_runner.run_sql, overrides=None
+        )
+        return format_measure_overrides_yaml(measure_data)
+
+    measures_path.write_text(asyncio.run(_build_measure_scaffold()), encoding="utf-8")
+    written.append("measures.yaml")
 
     click.echo()
     if written:
@@ -1974,6 +2055,164 @@ def profile(project_dir, table, column, output_format, output_path):
     default=".",
     help="Project directory containing .env and config files.",
 )
+@click.option("--table", default=None, help="Inspect measures for a specific table.")
+@click.option(
+    "--scaffold", is_flag=True, help="Write an editable measures.yaml scaffold and exit."
+)
+@click.option("--overwrite", is_flag=True, help="Overwrite an existing scaffold file.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the measure overview to a file instead of stdout.",
+)
+def measures(project_dir, table, scaffold, overwrite, output_format, output_path):
+    """Surface likely measures and default aggregations without using the LLM."""
+    from rich.console import Console
+    from datasight.config import load_measure_overrides
+
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    async def _run_measures():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        measure_overrides = load_measure_overrides(None, project_dir)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info = [table_info]
+        return await build_measure_overview(schema_info, sql_runner.run_sql, measure_overrides)
+
+    measure_data = asyncio.run(_run_measures())
+
+    if scaffold:
+        scaffold_path = Path(output_path) if output_path else Path(project_dir) / "measures.yaml"
+        if scaffold_path.exists() and not overwrite:
+            click.echo(
+                f"Error: {scaffold_path} already exists. Use --overwrite to replace.",
+                err=True,
+            )
+            sys.exit(1)
+        scaffold_path.parent.mkdir(parents=True, exist_ok=True)
+        scaffold_path.write_text(
+            format_measure_overrides_yaml(measure_data),
+            encoding="utf-8",
+        )
+        click.echo(f"Measure override scaffold saved to {scaffold_path}")
+        return
+
+    if output_format == "json":
+        _write_or_print(json.dumps(measure_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_measures_markdown(measure_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Measure Overview",
+            [("Tables scanned", str(measure_data["table_count"]))],
+        )
+    )
+    if measure_data["measures"]:
+        console.print(
+            _build_profile_detail_table(
+                "Measure Candidates",
+                [
+                    ("Column", "left"),
+                    ("Role", "left"),
+                    ("Unit", "left"),
+                    ("Default", "left"),
+                    ("Averaging", "left"),
+                    ("Rollup SQL", "left"),
+                    ("Allowed", "left"),
+                    ("Additive", "left"),
+                ],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        item["role"]
+                        + (f" [{item['display_name']}]" if item.get("display_name") else ""),
+                        _format_profile_value(item.get("unit"), "—"),
+                        item["default_aggregation"]
+                        + (f" ({item['format']})" if item.get("format") else ""),
+                        (
+                            f"weighted by {item['weight_column']}"
+                            if item.get("weight_column")
+                            else item.get("average_strategy", "avg")
+                        ),
+                        item["recommended_rollup_sql"],
+                        (
+                            (", ".join(item["allowed_aggregations"]))
+                            + (f" | expr: {item['expression']}" if item.get("expression") else "")
+                            + (
+                                f" | charts: {', '.join(item['preferred_chart_types'])}"
+                                if item.get("preferred_chart_types")
+                                else ""
+                            )
+                        ),
+                        (
+                            ("category" if item.get("additive_across_category") else "")
+                            + (
+                                ", time"
+                                if item.get("additive_across_category")
+                                and item.get("additive_across_time")
+                                else ("time" if item.get("additive_across_time") else "")
+                            )
+                        )
+                        or "no",
+                    ]
+                    for item in measure_data["measures"]
+                ],
+            )
+        )
+        console.print(
+            _build_profile_detail_table(
+                "Aggregation Guidance",
+                [("Column", "left"), ("Avoid", "left"), ("Why", "left")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        ", ".join(item.get("forbidden_aggregations") or []) or "—",
+                        item["reason"],
+                    ]
+                    for item in measure_data["measures"]
+                ],
+            )
+        )
+    if measure_data["notes"]:
+        console.print(
+            _build_profile_detail_table(
+                "Notes", [("Observation", "left")], [[item] for item in measure_data["notes"]]
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
 @click.option("--table", default=None, help="Audit a specific table.")
 @click.option(
     "--format",
@@ -2208,6 +2447,7 @@ def dimensions(project_dir, table, output_format, output_path):
 def trends(project_dir, table, output_format, output_path):
     """Surface likely trend analyses without using the LLM."""
     from rich.console import Console
+    from datasight.config import load_measure_overrides
 
     project_dir = str(Path(project_dir).resolve())
     settings, _ = _resolve_settings(project_dir)
@@ -2218,12 +2458,13 @@ def trends(project_dir, table, output_format, output_path):
 
     async def _run_trends():
         sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        measure_overrides = load_measure_overrides(None, project_dir)
         if table:
             table_info = find_table_info(schema_info, table)
             if table_info is None:
                 raise click.ClickException(f"Table not found: {table}")
             schema_info = [table_info]
-        return await build_trend_overview(schema_info, sql_runner.run_sql)
+        return await build_trend_overview(schema_info, sql_runner.run_sql, measure_overrides)
 
     trend_data = asyncio.run(_run_trends())
 
@@ -2246,11 +2487,18 @@ def trends(project_dir, table, output_format, output_path):
         console.print(
             _build_profile_detail_table(
                 "Trend Candidates",
-                [("Table", "left"), ("Date", "left"), ("Measure", "left"), ("Range", "left")],
+                [
+                    ("Table", "left"),
+                    ("Date", "left"),
+                    ("Aggregation", "left"),
+                    ("Measure", "left"),
+                    ("Range", "left"),
+                ],
                 [
                     [
                         item["table"],
                         item["date_column"],
+                        str(item.get("aggregation") or "").upper(),
                         item["measure_column"],
                         item["date_range"],
                     ]

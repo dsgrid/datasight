@@ -69,6 +69,7 @@ nav:
       - Getting started: end-user/getting-started.md
       - Try the demo dataset: end-user/demo-dataset.md
       - Project setup guide: end-user/quickstart.md
+      - Semantic measures: end-user/measures.md
       - Use the web UI: end-user/web-ui.md
       - Use the CLI: end-user/cli-usage.md
       - Inspection workflows: end-user/inspection-workflows.md

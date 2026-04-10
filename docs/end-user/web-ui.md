@@ -79,7 +79,8 @@ more files to your session. This works in both explore mode and project mode.
 
 Click **Save** in the header to persist your session. Enter a directory path
 and optional name. If an LLM is configured, datasight automatically generates
-`schema_description.md` and `queries.yaml` in the background. You can also
+`schema_description.md` and `queries.yaml` in the background. It also seeds a
+`measures.yaml` scaffold from the inferred semantic measures when possible. You can also
 provide a description of your data to improve the generated documentation.
 
 After saving, the indicator switches to **Project** mode and future sessions
@@ -101,6 +102,7 @@ A project directory contains:
 - `schema_description.md` — required, describes your data for the AI
 - `.env` — optional, database connection and settings
 - `queries.yaml` — optional, example queries
+- `measures.yaml` — optional, measure aggregation overrides
 - `.datasight/` — auto-created, stores conversations and bookmarks
 
 ### Switching projects
@@ -169,12 +171,62 @@ The **Inspect** section gives you explicit access to the same deterministic
 inspection flows that power the guided starters:
 
 - **Profile dataset**
+- **Key measures**
 - **Find dimensions**
 - **Quality audit**
 - **Trend ideas**
 
 These are useful after a project is already loaded, because you can rerun the
 deterministic inspection tools without going back to the landing page.
+
+### Key measures
+
+Use **Key measures** when you want datasight to classify likely metrics before
+you ask a question. This view shows:
+
+- the measure role, such as `energy`, `power`, `capacity`, `rate`, or `ratio`
+- the default aggregation datasight will prefer
+- weighted-average guidance
+- suggested SQL rollup formulas
+- configured display metadata such as display name, format, and preferred chart type
+
+This is especially useful for energy datasets where `MWh`, `MW`, rates, and
+factors should not be rolled up the same way.
+
+### Measure Overrides
+
+The **Measure Overrides** section lets you edit `measures.yaml` without
+leaving the app.
+
+You can use it to:
+
+- change the default aggregation for a physical column
+- set a weight column for weighted-average rollups
+- set a display name or format
+- set preferred chart types
+- create calculated measures with a name and SQL expression
+
+Recommended workflow:
+
+1. Run **Key measures**.
+2. Click **Edit override** on a measure card if the default behavior is wrong.
+3. Adjust aggregation, weighting, display metadata, or chart preferences.
+4. Save overrides and rerun your question or deterministic inspect flow.
+
+For calculated measures:
+
+1. Open **Measure Overrides**.
+2. Switch the builder to **calculated measure**.
+3. Choose a target table.
+4. Enter the measure name and SQL expression.
+5. Set aggregation, display name, format, and preferred chart types.
+6. Save the generated YAML.
+
+Datasight reloads the semantic layer after save, so the updated measure config
+immediately affects inspect tools, recipes, and prompt guidance.
+
+See [Semantic measures](measures.md) for a full explanation of
+`measures.yaml`, weighted averages, calculated measures, and display metadata.
 
 If you select a table in the sidebar first, the same section also offers
 table-scoped actions:
