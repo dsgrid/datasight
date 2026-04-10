@@ -5,6 +5,8 @@
 ```bash
 git clone https://github.com/dsgrid/datasight.git
 cd datasight
+python -m venv .venv
+. .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -97,13 +99,15 @@ datasight verify -v
 Docs use zensical.
 
 ```bash
+python -m venv .venv
+. .venv/bin/activate
 pip install -e ".[dev]"
-uv run zensical serve
-uv run zensical build
+zensical serve
+zensical build
 ```
 
 When you change Click commands or help text, regenerate the static CLI docs:
 
 ```bash
-uv run python scripts/generate_cli_reference.py
+python scripts/generate_cli_reference.py
 ```

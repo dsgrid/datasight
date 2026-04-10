@@ -41,7 +41,9 @@ mkdocs.yml          # Zensical config (MkDocs-compatible)
 ## Development commands
 
 ```bash
-# Install with dev dependencies
+# Primary workflow: stdlib venv + editable install
+python -m venv .venv
+. .venv/bin/activate
 pip install -e ".[dev]"
 
 # Run pre-commit hooks (ruff, eslint, ty)

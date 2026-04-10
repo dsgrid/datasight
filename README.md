@@ -74,10 +74,12 @@ datasight run / datasight ask / datasight profile / datasight quality
 ## Documentation
 
 ```bash
-pip install "datasight[dev] @ git+https://github.com/dsgrid/datasight.git"
-uv run zensical serve
-uv run zensical build
-uv run python scripts/generate_cli_reference.py
+python -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+zensical serve
+zensical build
+python scripts/generate_cli_reference.py
 ```
 
 ## Development Tests

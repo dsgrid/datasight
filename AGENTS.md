@@ -41,18 +41,20 @@ mkdocs.yml          # legacy docs config; zensical is the active docs workflow
 ## Development commands
 
 ```bash
-# Install with dev dependencies
+# Primary workflow: stdlib venv + editable install
+python -m venv .venv
+. .venv/bin/activate
 pip install -e ".[dev]"
 
 # Run pre-commit hooks (ruff, eslint, ty, docs CLI reference drift)
 pre-commit run --all-files
 
 # Build docs
-uv run zensical serve
-uv run zensical build
+zensical serve
+zensical build
 
 # Regenerate the static CLI reference after CLI changes
-uv run python scripts/generate_cli_reference.py
+python scripts/generate_cli_reference.py
 
 # Run tests
 pytest
@@ -87,11 +89,11 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 Docs use **zensical**. Key details:
 
 - Source content lives in `docs/` as standard Markdown
-- Serve docs locally with `uv run zensical serve`
-- Build docs with `uv run zensical build`
+- Serve docs locally with `zensical serve`
+- Build docs with `zensical build`
 - Mermaid diagrams: use ` ```mermaid ` fences
 - Admonitions: use `!!! tip`, `!!! warning`
-- `docs/reference/cli.md` is generated from the Click command tree with `uv run python scripts/generate_cli_reference.py`
+- `docs/reference/cli.md` is generated from the Click command tree with `python scripts/generate_cli_reference.py`
 - Keep docs changes aligned with the current CLI and web UI behavior
 - CI: `.github/workflows/gh-pages.yml` builds the site with `zensical build` and deploys to GitHub Pages on push to main
 
