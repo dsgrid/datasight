@@ -6,7 +6,7 @@ hide:
 
 # datasight
 
-**AI-powered database exploration with natural language.** Point datasight at
+**AI-powered data exploration with natural language.** Point datasight at
 your CSV, Parquet, or DuckDB files and start asking questions — no setup
 required. Or create a curated project with schema descriptions and example
 queries for your team. Start with guided starter workflows in the web UI or

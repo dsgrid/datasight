@@ -1,6 +1,6 @@
 # datasight
 
-AI-powered database exploration with natural language.
+AI-powered data exploration with natural language.
 
 datasight connects an AI agent to your database and provides a web UI
 where you can ask questions in natural language. The agent writes SQL, runs

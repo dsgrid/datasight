@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "datasight"
 version = "0.2.0"
-description = "AI-powered database exploration with natural language"
+description = "AI-powered data exploration with natural language"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "BSD-3-Clause"

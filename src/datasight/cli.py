@@ -1001,7 +1001,7 @@ click.rich_click.COMMAND_GROUPS = {
 @click.group()
 @click.version_option(__version__, prog_name="datasight")
 def cli():
-    """datasight — AI-powered database exploration with natural language."""
+    """datasight — AI-powered data exploration with natural language."""
 
 
 def _prepare_web_runtime(

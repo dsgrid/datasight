@@ -39,7 +39,7 @@ datasight doctor --format markdown -o doctor.md
 
 ## `datasight`
 
-datasight — AI-powered database exploration with natural language.
+datasight — AI-powered data exploration with natural language.
 
 ```bash
 datasight [OPTIONS] COMMAND [ARGS]...

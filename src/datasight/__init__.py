@@ -1,4 +1,4 @@
-"""datasight — AI-powered database exploration with natural language."""
+"""datasight — AI-powered data exploration with natural language."""
 
 # Use the OS certificate store so HTTPS works behind corporate proxies,
 # but only if truststore is installed (it's a core dependency but guard

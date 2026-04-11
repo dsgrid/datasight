@@ -2,7 +2,7 @@
 
 ## Project overview
 
-datasight is an AI-powered database exploration tool. Users ask questions in natural language, an LLM agent translates them to SQL, executes queries, and returns results as tables or interactive Plotly charts. It supports a web UI (`datasight run`) and a headless CLI (`datasight ask`).
+datasight is an AI-powered data exploration tool. Users ask questions in natural language, an LLM agent translates them to SQL, executes queries, and returns results as tables or interactive Plotly charts. It supports a web UI (`datasight run`) and a headless CLI (`datasight ask`).
 
 ## Tech stack
 
