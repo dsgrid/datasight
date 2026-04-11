@@ -105,10 +105,18 @@ you can let the AI generate them from your database:
 datasight generate
 ```
 
-This connects to your database, inspects tables and columns, samples
-code/enum columns to identify their meanings, and produces draft versions
-of both files. Review and edit the results — the AI gets you a solid
-starting point but you know your data best.
+You can also pass Parquet, CSV, or DuckDB files directly instead of
+configuring a database first:
+
+```bash
+datasight generate sales.parquet returns.csv
+```
+
+This connects to your database (or creates an ephemeral one from the given
+files), inspects tables and columns, samples code/enum columns to identify
+their meanings, and produces draft versions of both files. Review and edit
+the results — the AI gets you a solid starting point but you know your data
+best.
 
 If datasight detects likely measures and aggregation rules, it can also
 seed a `measures.yaml` file for project-specific semantic overrides.

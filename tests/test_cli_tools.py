@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 from click.testing import CliRunner
 
 from datasight.cli import cli
@@ -825,6 +826,91 @@ def test_trends_json_output_writes_file(project_dir, tmp_path):
     data = json.loads(output_path.read_text(encoding="utf-8"))
     assert data["table_count"] >= 1
     assert "trend_candidates" in data
+
+
+@pytest.fixture()
+def csv_file(tmp_path):
+    """Create a small CSV file for inspect tests."""
+    path = tmp_path / "sales.csv"
+    path.write_text(
+        "date,region,amount,units\n"
+        "2024-01-01,East,100.5,10\n"
+        "2024-01-02,West,200.3,20\n"
+        "2024-01-03,East,150.0,15\n"
+        "2024-02-01,West,300.0,25\n",
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_inspect_table_output(csv_file):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inspect", csv_file])
+    assert result.exit_code == 0
+    assert "Dataset Profile" in result.output
+    assert "Measure Candidates" in result.output
+    assert "Dimension Candidates" in result.output
+    assert "Trend Candidates" in result.output
+    assert "Prompt Recipes" in result.output
+
+
+def test_inspect_json_output(csv_file):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inspect", csv_file, "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "profile" in data
+    assert "quality" in data
+    assert "measures" in data
+    assert "dimensions" in data
+    assert "trends" in data
+    assert "recipes" in data
+    assert data["profile"]["table_count"] == 1
+
+
+def test_inspect_markdown_output(csv_file):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inspect", csv_file, "--format", "markdown"])
+    assert result.exit_code == 0
+    assert "# Dataset Profile" in result.output
+
+
+def test_inspect_writes_output_file(csv_file, tmp_path):
+    output_path = tmp_path / "report.json"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["inspect", csv_file, "--format", "json", "--output", str(output_path)]
+    )
+    assert result.exit_code == 0
+    data = json.loads(output_path.read_text(encoding="utf-8"))
+    assert data["profile"]["table_count"] == 1
+
+
+def test_inspect_multiple_files(csv_file, tmp_path):
+    second = tmp_path / "products.csv"
+    second.write_text(
+        "id,name,price\n1,Widget,9.99\n2,Gadget,19.99\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inspect", csv_file, str(second), "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["profile"]["table_count"] == 2
+
+
+def test_inspect_duckdb_file(test_duckdb_path):
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inspect", test_duckdb_path])
+    assert result.exit_code == 0
+    assert "Dataset Profile" in result.output
+    assert "orders" in result.output.lower() or "products" in result.output.lower()
+
+
+def test_inspect_requires_files():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["inspect"])
+    assert result.exit_code != 0
 
 
 def test_recipes_table_output(project_dir):

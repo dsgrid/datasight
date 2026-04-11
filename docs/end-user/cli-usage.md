@@ -194,6 +194,24 @@ These commands do not require an LLM. They inspect the connected data
 directly and return structured output in `table`, `json`, or `markdown`
 formats.
 
+### Inspect files without a project
+
+`datasight inspect` runs all deterministic analyses — profile, quality,
+measures, dimensions, trends, and recipes — in a single command directly on
+Parquet, CSV, or DuckDB files:
+
+```bash
+datasight inspect sales.parquet
+datasight inspect orders.csv products.csv
+datasight inspect data_dir/
+```
+
+Nothing is written to disk. Use `--format json` or `--format markdown` to
+change the output format, or `-o report.md` to save it to a file.
+
+This is the fastest way to get a complete overview of unfamiliar data from
+the command line.
+
 ### Profile the dataset
 
 ```bash

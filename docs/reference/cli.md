@@ -64,6 +64,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `quality`: Run a deterministic quality audit without using the LLM.
 - `dimensions`: Surface likely grouping dimensions without using the LLM.
 - `trends`: Surface likely trend analyses without using the LLM.
+- `inspect`: Run all analyses on Parquet, CSV, or DuckDB files and print results.
 - `recipes`: Generate and run reusable deterministic prompt recipes.
 - `doctor`: Check project configuration, local files, and database connectivity.
 - `export`: Export a conversation session as a self-contained HTML page.
@@ -316,6 +317,31 @@ datasight trends [OPTIONS] [FILES]...
 | `--table` | Suggest trends for a specific table. |
 | `--format` | Output format (default: table). Default: `table`. |
 | `--output`, `-o` | Write the trend overview to a file instead of stdout. |
+
+### `datasight inspect`
+
+Run all analyses on Parquet, CSV, or DuckDB files and print results.
+
+Creates an ephemeral in-memory database from the given files and runs
+profile, quality, measures, dimensions, trends, and recipes — printing
+everything to the console without creating a project.
+
+Examples:
+    datasight inspect sales.parquet
+    datasight inspect orders.csv products.csv
+    datasight inspect data_dir/
+
+```bash
+datasight inspect [OPTIONS] FILES...
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `FILES` |   |
+| `--format` | Output format (default: table). Default: `table`. |
+| `--output`, `-o` | Write the full report to a file instead of stdout. |
 
 ### `datasight recipes`
 

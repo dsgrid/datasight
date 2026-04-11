@@ -1,7 +1,26 @@
 # Inspection workflows
 
-Use these workflows when you want a deterministic first pass on a project
+Use these workflows when you want a deterministic first pass on your data
 before asking freeform LLM questions.
+
+## Quick start: inspect files directly
+
+If you have Parquet, CSV, or DuckDB files and want everything at once,
+`datasight inspect` runs all analyses in a single command — no project setup
+required:
+
+```bash
+datasight inspect sales.parquet returns.csv
+datasight inspect data_dir/
+datasight inspect --format markdown -o overview.md sales.parquet
+```
+
+This prints profile, quality, measures, dimensions, trends, and recipes to
+the console. Skip to [Move into batch mode](#move-into-batch-mode) once you
+know what questions to ask.
+
+The sections below describe how to run each analysis individually from a
+configured project directory.
 
 ## Start with a profile
 

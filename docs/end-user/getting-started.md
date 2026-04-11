@@ -58,8 +58,24 @@ persist your session as a project. datasight will:
 
 ## Start from the CLI
 
-If you want a deterministic, non-LLM first pass before asking questions, use
-the CLI commands directly from the project directory:
+### Inspect files without a project
+
+`datasight inspect` runs every deterministic analysis in one shot — profile,
+quality, measures, dimensions, trends, and recipes — directly on your files:
+
+```bash
+datasight inspect sales.parquet
+datasight inspect orders.csv products.csv
+datasight inspect data_dir/
+```
+
+No project setup, no LLM, no files written. Everything prints to the console.
+Use `--format json` or `--format markdown` to change the output, or
+`-o report.md` to save it.
+
+### Run individual commands from a project
+
+If you have a configured project and want to run one analysis at a time:
 
 ```bash
 datasight profile
