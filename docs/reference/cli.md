@@ -17,17 +17,17 @@ datasight ask --file questions.jsonl --output-dir batch-output
 
 ```bash
 datasight profile
-datasight profile --table orders
-datasight profile --column orders.order_date
+datasight profile --table generation_fuel
+datasight profile --column generation_fuel.report_date
 ```
 
 ### Run deterministic audits and suggestions
 
 ```bash
-datasight quality --table orders
-datasight dimensions --table orders
-datasight trends --table orders
-datasight recipes --table orders
+datasight quality --table generation_fuel
+datasight dimensions --table generation_fuel
+datasight trends --table generation_fuel
+datasight recipes --table generation_fuel
 ```
 
 ### Check project health
@@ -119,7 +119,7 @@ and example queries.
 
 Optionally pass one or more Parquet, CSV, or DuckDB files directly:
 
-    datasight generate sales.parquet returns.csv
+    datasight generate generation.parquet plants.csv
 
 ```bash
 datasight generate [OPTIONS] [FILES]...
@@ -302,7 +302,7 @@ Surface likely trend analyses without using the LLM.
 
 Optionally pass one or more Parquet, CSV, or DuckDB files directly:
 
-    datasight trends sales.parquet returns.parquet
+    datasight trends generation.parquet plants.parquet
 
 ```bash
 datasight trends [OPTIONS] [FILES]...
@@ -327,8 +327,8 @@ profile, quality, measures, dimensions, trends, and recipes — printing
 everything to the console without creating a project.
 
 Examples:
-    datasight inspect sales.parquet
-    datasight inspect orders.csv products.csv
+    datasight inspect generation.parquet
+    datasight inspect generation.csv plants.csv
     datasight inspect data_dir/
 
 ```bash

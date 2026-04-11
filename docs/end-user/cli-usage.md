@@ -153,7 +153,7 @@ datasight ask --file questions.txt
 ```text
 How many rows are in the largest table?
 What are the main date columns?
-Show the top 10 categories by total volume.
+Show the top 10 fuel types by total generation.
 ```
 
 Write per-question artifacts to a directory:
@@ -168,12 +168,12 @@ datasight ask --file questions.txt \
 Structured YAML or JSONL input supports per-entry overrides:
 
 ```yaml
-- question: How many orders are there?
+- question: How many power plants are there?
   format: json
-  name: orders-summary
-- question: Show monthly volume as a line chart.
+  name: plant-summary
+- question: Show monthly generation as a line chart.
   chart_format: html
-  output: reports/monthly-volume
+  output: reports/monthly-generation
 ```
 
 ```bash
@@ -184,8 +184,8 @@ datasight ask --file questions.jsonl --output-dir batch-output
 JSONL uses one object per line:
 
 ```json
-{"question":"How many orders are there?","format":"json","name":"orders-summary"}
-{"question":"Show monthly volume as a line chart.","chart_format":"html","output":"reports/monthly-volume"}
+{"question":"How many power plants are there?","format":"json","name":"plant-summary"}
+{"question":"Show monthly generation as a line chart.","chart_format":"html","output":"reports/monthly-generation"}
 ```
 
 ## Use deterministic inspection commands
@@ -201,8 +201,8 @@ measures, dimensions, trends, and recipes — in a single command directly on
 Parquet, CSV, or DuckDB files:
 
 ```bash
-datasight inspect sales.parquet
-datasight inspect orders.csv products.csv
+datasight inspect generation.parquet
+datasight inspect generation.csv plants.csv
 datasight inspect data_dir/
 ```
 
@@ -219,10 +219,10 @@ the command line.
 datasight profile
 
 # One table
-datasight profile --table orders
+datasight profile --table generation_fuel
 
 # One column
-datasight profile --column orders.order_date
+datasight profile --column generation_fuel.report_date
 ```
 
 Useful when you need row counts, date coverage, numeric ranges, candidate
@@ -232,7 +232,7 @@ dimensions, and representative values before writing prompts.
 
 ```bash
 datasight quality
-datasight quality --table orders
+datasight quality --table generation_fuel
 datasight quality --format markdown -o quality.md
 ```
 
@@ -245,9 +245,9 @@ and quick notes from a deterministic quality pass.
 datasight measures
 datasight measures --table generation_fuel
 datasight dimensions
-datasight dimensions --table orders
+datasight dimensions --table generation_fuel
 datasight trends
-datasight trends --table orders
+datasight trends --table generation_fuel
 ```
 
 Use these to discover:
@@ -366,13 +366,13 @@ examples.
 
 ```bash
 datasight recipes list
-datasight recipes list --table orders
+datasight recipes list --table generation_fuel
 datasight recipes list --format markdown -o recipes.md
 datasight recipes run 1
 ```
 
 `datasight recipes list` builds reusable analysis prompts like “profile the
-biggest tables” or “trend `revenue` over `order_date`” from the actual schema
+biggest tables” or “trend `net_generation_mwh` over `report_date`” from the actual schema
 and detected columns. Each recipe includes an `id`.
 
 Use `datasight recipes run <id>` to execute a selected recipe through the

@@ -30,19 +30,19 @@ send it directly to the chat.
 
 ```yaml
 # queries.yaml
-- question: What are the top 10 customers by revenue?
+- question: What are the top 10 states by total generation?
   sql: |
-    SELECT customer_name, SUM(amount) AS revenue
-    FROM orders
-    GROUP BY customer_name
-    ORDER BY revenue DESC
+    SELECT state, SUM(net_generation_mwh) AS total_mwh
+    FROM generation_fuel
+    GROUP BY state
+    ORDER BY total_mwh DESC
     LIMIT 10
 
-- question: Monthly order trend
+- question: Monthly generation trend
   sql: |
-    SELECT DATE_TRUNC('month', order_date) AS month,
-           COUNT(*) AS order_count
-    FROM orders
+    SELECT DATE_TRUNC('month', report_date) AS month,
+           SUM(net_generation_mwh) AS total_mwh
+    FROM generation_fuel
     GROUP BY month
     ORDER BY month
 ```

@@ -1146,7 +1146,7 @@ def generate(files, project_dir, model, overwrite, table, verbose):
 
     Optionally pass one or more Parquet, CSV, or DuckDB files directly:
 
-        datasight generate sales.parquet returns.csv
+        datasight generate generation.parquet plants.csv
     """
     import asyncio
 
@@ -2490,7 +2490,7 @@ def trends(files, project_dir, table, output_format, output_path):
 
     Optionally pass one or more Parquet, CSV, or DuckDB files directly:
 
-        datasight trends sales.parquet returns.parquet
+        datasight trends generation.parquet plants.parquet
     """
     from rich.console import Console
     from datasight.config import load_measure_overrides
@@ -2636,8 +2636,8 @@ def inspect(files, output_format, output_path):
 
     \b
     Examples:
-        datasight inspect sales.parquet
-        datasight inspect orders.csv products.csv
+        datasight inspect generation.parquet
+        datasight inspect generation.csv plants.csv
         datasight inspect data_dir/
     """
     from rich.console import Console

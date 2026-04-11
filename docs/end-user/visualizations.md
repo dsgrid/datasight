@@ -7,9 +7,9 @@ what you want in plain English.
 
 For standard visualizations, simply ask:
 
-- "Show monthly revenue as a bar chart"
-- "Plot temperature over time as a line chart"
-- "Create a pie chart of sales by region"
+- "Show monthly generation as a bar chart"
+- "Plot wind output over time as a line chart"
+- "Create a pie chart of generation by fuel type"
 
 The AI writes a SQL query, fetches the data, and builds a Plotly chart
 with the appropriate trace type, axis labels, and colors.
@@ -33,10 +33,10 @@ Beyond the basics, you can request any Plotly.js chart type:
 | Chart type | Example prompt |
 |---|---|
 | Treemap | "Show file sizes as a treemap grouped by directory" |
-| Sunburst | "Create a sunburst chart of sales by region and product category" |
+| Sunburst | "Create a sunburst chart of generation by state and fuel type" |
 | Sankey diagram | "Show the flow of energy from source to sector as a sankey diagram" |
-| Waterfall | "Show monthly profit changes as a waterfall chart" |
-| Funnel | "Create a funnel chart of the sales pipeline stages" |
+| Waterfall | "Show monthly generation changes as a waterfall chart" |
+| Funnel | "Create a funnel chart of capacity by development stage" |
 | 3D scatter | "Plot height, weight, and age as a 3D scatter plot" |
 | Parallel coordinates | "Compare all numeric columns using parallel coordinates" |
 | Candlestick | "Show daily stock price as a candlestick chart" |
@@ -75,9 +75,9 @@ Open the controls by clicking the gear icon (⚙) in the chart toolbar.
 
 ## Tips for better visualizations
 
-**Be specific about the chart type.** "Show revenue by month" will work, but
-"Show revenue by month as a stacked area chart grouped by product" gives the
-AI more to work with.
+**Be specific about the chart type.** "Show generation by month" will work, but
+"Show generation by month as a stacked area chart grouped by fuel type" gives
+the AI more to work with.
 
 **Name your columns clearly in SQL.** The AI maps column names from the query
 results into the Plotly spec. Aliases like `total_mwh` or `state_code` are

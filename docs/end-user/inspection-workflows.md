@@ -10,9 +10,9 @@ If you have Parquet, CSV, or DuckDB files and want everything at once,
 required:
 
 ```bash
-datasight inspect sales.parquet returns.csv
+datasight inspect generation.parquet plants.csv
 datasight inspect data_dir/
-datasight inspect --format markdown -o overview.md sales.parquet
+datasight inspect --format markdown -o overview.md generation.parquet
 ```
 
 This prints profile, quality, measures, dimensions, trends, and recipes to
@@ -28,8 +28,8 @@ configured project directory.
 
 ```bash
 datasight profile
-datasight profile --table orders
-datasight profile --column orders.order_date
+datasight profile --table generation_fuel
+datasight profile --column generation_fuel.report_date
 ```
 
 Use it to answer:
@@ -45,7 +45,7 @@ Use it to answer:
 
 ```bash
 datasight quality
-datasight quality --table orders
+datasight quality --table generation_fuel
 datasight quality --format markdown -o quality.md
 ```
 
@@ -63,10 +63,10 @@ next:
 
 ```bash
 datasight dimensions
-datasight dimensions --table orders
+datasight dimensions --table generation_fuel
 
 datasight trends
-datasight trends --table orders
+datasight trends --table generation_fuel
 ```
 
 Use them when you need:
@@ -83,7 +83,7 @@ deterministic profiling output:
 
 ```bash
 datasight recipes list
-datasight recipes list --table orders
+datasight recipes list --table generation_fuel
 datasight recipes list --format markdown -o recipes.md
 ```
 
@@ -109,7 +109,7 @@ Plain text:
 ```text
 How many rows are in the largest table?
 What are the main date columns?
-Show monthly order volume as a line chart.
+Show monthly generation as a line chart.
 ```
 
 ```bash
@@ -119,19 +119,19 @@ datasight ask --file questions.txt --output-dir batch-output
 Structured YAML:
 
 ```yaml
-- question: How many orders are there?
+- question: How many power plants are there?
   format: json
-  name: orders-summary
-- question: Show monthly volume as a line chart.
+  name: plant-summary
+- question: Show monthly generation as a line chart.
   chart_format: html
-  output: reports/monthly-volume
+  output: reports/monthly-generation
 ```
 
 Structured JSONL:
 
 ```json
-{"question":"How many orders are there?","format":"json","name":"orders-summary"}
-{"question":"Show monthly volume as a line chart.","chart_format":"html","output":"reports/monthly-volume"}
+{"question":"How many power plants are there?","format":"json","name":"plant-summary"}
+{"question":"Show monthly generation as a line chart.","chart_format":"html","output":"reports/monthly-generation"}
 ```
 
 ```bash

@@ -22,28 +22,29 @@ introspect.
 ## Example
 
 ```markdown
-# Customer Orders Database
+# EIA Power Plant Generation
 
-Sales data from our e-commerce platform, updated daily.
+Monthly electricity generation data from the U.S. Energy Information
+Administration (EIA), covering fuel types, capacity, and state-level
+reporting.
 
 ## Key Columns
 
-- **customer_id**: Unique customer identifier (joins to customers table)
-- **order_status**: PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED
-- **channel**: web, mobile, api, pos
+- **plant_id**: Unique plant identifier (joins to plants table)
+- **energy_source_code**: Fuel type code — NG (natural gas), SUN (solar), WND (wind), COL (coal), NUC (nuclear), etc.
+- **prime_mover_code**: Generator technology — ST (steam turbine), CT (combustion turbine), PV (photovoltaic), etc.
 
 ## Relationships
 
-- `orders.customer_id` → `customers.id`
-- `line_items.order_id` → `orders.id`
-- `line_items.product_id` → `products.id`
+- `generation_fuel.plant_id` → `plants.plant_id`
+- `plant_details.plant_id` → `plants.plant_id`
 
 ## Tips
 
-- Use `orders_summary` view for aggregated metrics (faster than raw tables)
-- Dates are in UTC; use `AT TIME ZONE` for local time
-- Revenue = `line_items.quantity * line_items.unit_price` (no discount column)
-- Cancelled orders still appear — filter with `order_status != 'CANCELLED'`
+- Use `net_generation_mwh` for total output; `total_fuel_consumption_mmbtu` for fuel input
+- Dates are monthly — `report_date` is the first of each month
+- Negative `net_generation_mwh` is valid (pumped storage plants consume more than they produce)
+- Filter to `energy_source_code IN ('SUN', 'WND')` for renewable-only analysis
 ```
 
 ## What NOT to include

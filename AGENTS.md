@@ -104,6 +104,10 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 - **Keyboard shortcuts**: Must not conflict with browser shortcuts. Use plain keys (like `n`, `/`, `?`) guarded by `isInput` check, or `Cmd/Ctrl+key` combos that browsers don't claim.
 - **Type annotations**: Use modern Python syntax — `list[str]`, `dict[str, Any]`, `str | None`. Do not use `List`, `Dict`, `Optional`, `Union`, or other imports from `typing` when a built-in equivalent exists.
 
+## Documentation domain
+
+datasight is built for energy research. Documentation examples, CLI help text, and sample prompts should use energy-domain language (generation, fuel types, plants, MWh, capacity) — not generic retail/sales/orders examples. When writing new examples or updating existing ones, use tables like `generation_fuel`, `plants`, columns like `net_generation_mwh`, `report_date`, `energy_source_code`, and questions about electricity generation, capacity, or fuel consumption.
+
 ## Documentation
 
 Docs use **Zensical**. Key details:

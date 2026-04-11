@@ -109,7 +109,7 @@ You can also pass Parquet, CSV, or DuckDB files directly instead of
 configuring a database first:
 
 ```bash
-datasight generate sales.parquet returns.csv
+datasight generate generation.parquet plants.csv
 ```
 
 This connects to your database (or creates an ephemeral one from the given
@@ -178,9 +178,9 @@ datasight ask "Show trends over time" --chart-format html -o chart.html
 datasight ask "Top 5 states" --format csv -o results.csv
 datasight ask --file questions.txt --output-dir batch-output
 datasight profile
-datasight quality --table orders
-datasight dimensions --table orders
-datasight trends --table orders
+datasight quality --table generation_fuel
+datasight dimensions --table generation_fuel
+datasight trends --table generation_fuel
 ```
 
 See [Use the CLI](../end-user/cli-usage.md) for batch mode, deterministic inspection

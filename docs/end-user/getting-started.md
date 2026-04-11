@@ -64,8 +64,8 @@ persist your session as a project. datasight will:
 quality, measures, dimensions, trends, and recipes — directly on your files:
 
 ```bash
-datasight inspect sales.parquet
-datasight inspect orders.csv products.csv
+datasight inspect generation.parquet
+datasight inspect generation.csv plants.csv
 datasight inspect data_dir/
 ```
 
