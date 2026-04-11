@@ -972,6 +972,32 @@ def _write_batch_result_files(
     return written_paths
 
 
+click.rich_click.COMMAND_GROUPS = {
+    "datasight": [
+        {
+            "name": "Quick start",
+            "commands": ["inspect", "run"],
+        },
+        {
+            "name": "Data analysis (no LLM)",
+            "commands": ["profile", "quality", "measures", "dimensions", "trends", "recipes"],
+        },
+        {
+            "name": "Project setup",
+            "commands": ["init", "generate", "demo"],
+        },
+        {
+            "name": "AI-powered",
+            "commands": ["ask", "verify"],
+        },
+        {
+            "name": "Utilities",
+            "commands": ["doctor", "log", "export", "report"],
+        },
+    ],
+}
+
+
 @click.group()
 @click.version_option(__version__, prog_name="datasight")
 def cli():
@@ -1820,7 +1846,7 @@ def ask(
     help="Write the profile output to a file instead of stdout.",
 )
 def profile(project_dir, table, column, output_format, output_path):
-    """Profile your dataset without using the LLM."""
+    """Profile your dataset — row counts, date coverage, and column statistics."""
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -2116,7 +2142,7 @@ def profile(project_dir, table, column, output_format, output_path):
     help="Write the measure overview to a file instead of stdout.",
 )
 def measures(project_dir, table, scaffold, overwrite, output_format, output_path):
-    """Surface likely measures and default aggregations without using the LLM."""
+    """Surface likely measures and default aggregations."""
     from rich.console import Console
     from datasight.config import load_measure_overrides
 
@@ -2270,7 +2296,7 @@ def measures(project_dir, table, scaffold, overwrite, output_format, output_path
     help="Write the quality audit to a file instead of stdout.",
 )
 def quality(project_dir, table, output_format, output_path):
-    """Run a deterministic quality audit without using the LLM."""
+    """Audit data quality — nulls, suspicious ranges, and date coverage."""
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -2383,7 +2409,7 @@ def quality(project_dir, table, output_format, output_path):
     help="Write the dimension overview to a file instead of stdout.",
 )
 def dimensions(project_dir, table, output_format, output_path):
-    """Surface likely grouping dimensions without using the LLM."""
+    """Surface likely grouping dimensions and category breakdowns."""
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -2486,7 +2512,7 @@ def dimensions(project_dir, table, output_format, output_path):
     help="Write the trend overview to a file instead of stdout.",
 )
 def trends(files, project_dir, table, output_format, output_path):
-    """Surface likely trend analyses without using the LLM.
+    """Surface likely trend analyses and chart recommendations.
 
     Optionally pass one or more Parquet, CSV, or DuckDB files directly:
 

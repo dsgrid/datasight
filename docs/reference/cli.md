@@ -59,11 +59,11 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `run`: Start the datasight web UI.
 - `verify`: Verify LLM-generated SQL against expected results.
 - `ask`: Ask a question about your data from the command line.
-- `profile`: Profile your dataset without using the LLM.
-- `measures`: Surface likely measures and default aggregations without using the LLM.
-- `quality`: Run a deterministic quality audit without using the LLM.
-- `dimensions`: Surface likely grouping dimensions without using the LLM.
-- `trends`: Surface likely trend analyses without using the LLM.
+- `profile`: Profile your dataset — row counts, date coverage, and column statistics.
+- `measures`: Surface likely measures and default aggregations.
+- `quality`: Audit data quality — nulls, suspicious ranges, and date coverage.
+- `dimensions`: Surface likely grouping dimensions and category breakdowns.
+- `trends`: Surface likely trend analyses and chart recommendations.
 - `inspect`: Run all analyses on Parquet, CSV, or DuckDB files and print results.
 - `recipes`: Generate and run reusable deterministic prompt recipes.
 - `doctor`: Check project configuration, local files, and database connectivity.
@@ -227,7 +227,7 @@ datasight ask [OPTIONS] [QUESTION]
 
 ### `datasight profile`
 
-Profile your dataset without using the LLM.
+Profile your dataset — row counts, date coverage, and column statistics.
 
 ```bash
 datasight profile [OPTIONS]
@@ -245,7 +245,7 @@ datasight profile [OPTIONS]
 
 ### `datasight measures`
 
-Surface likely measures and default aggregations without using the LLM.
+Surface likely measures and default aggregations.
 
 ```bash
 datasight measures [OPTIONS]
@@ -264,7 +264,7 @@ datasight measures [OPTIONS]
 
 ### `datasight quality`
 
-Run a deterministic quality audit without using the LLM.
+Audit data quality — nulls, suspicious ranges, and date coverage.
 
 ```bash
 datasight quality [OPTIONS]
@@ -281,7 +281,7 @@ datasight quality [OPTIONS]
 
 ### `datasight dimensions`
 
-Surface likely grouping dimensions without using the LLM.
+Surface likely grouping dimensions and category breakdowns.
 
 ```bash
 datasight dimensions [OPTIONS]
@@ -298,7 +298,7 @@ datasight dimensions [OPTIONS]
 
 ### `datasight trends`
 
-Surface likely trend analyses without using the LLM.
+Surface likely trend analyses and chart recommendations.
 
 Optionally pass one or more Parquet, CSV, or DuckDB files directly:
 

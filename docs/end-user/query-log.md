@@ -104,13 +104,4 @@ QUERY_LOG_PATH=/var/log/datasight/queries.jsonl datasight run --query-log
 
 ## Toggle logging at runtime
 
-The web UI button toggles logging without restarting the server. You can
-also call the API directly:
-
-```bash
-# Toggle on/off
-curl -X POST http://localhost:8084/api/query-log/toggle
-
-# Read recent entries as JSON
-curl http://localhost:8084/api/query-log?n=10
-```
+The web UI button toggles logging without restarting the server.
