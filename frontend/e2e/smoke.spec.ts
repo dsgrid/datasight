@@ -4,7 +4,7 @@ test.describe("Landing page", () => {
   test("renders the datasight header", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator("header")).toBeVisible();
-    await expect(page.locator("text=datasight")).toBeVisible();
+    await expect(page.locator("header").locator("text=datasight")).toBeVisible();
   });
 
   test("shows landing page when no project is loaded", async ({ page }) => {
