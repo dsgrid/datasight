@@ -1121,6 +1121,7 @@ def demo(project_dir: str, min_year: int):
 
 
 @cli.command()
+@click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -1136,12 +1137,16 @@ def demo(project_dir: str, min_year: int):
     help="Table or view to include (can be specified multiple times). If omitted, all tables are included.",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def generate(project_dir, model, overwrite, table, verbose):
+def generate(files, project_dir, model, overwrite, table, verbose):
     """Generate schema_description.md, queries.yaml, and measures.yaml from your database.
 
     Connects to the database, inspects tables and columns, samples
     code/enum columns, and asks the LLM to produce documentation
     and example queries.
+
+    Optionally pass one or more Parquet, CSV, or DuckDB files directly:
+
+        datasight generate sales.parquet returns.csv
     """
     import asyncio
 
@@ -1175,16 +1180,24 @@ def generate(project_dir, model, overwrite, table, verbose):
     settings, resolved_model = _resolve_settings(project_dir, model)
     _validate_settings_for_llm(settings)
 
-    resolved_db_path = _resolve_db_path(settings, project_dir)
-    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
-        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
-        sys.exit(1)
+    # Determine whether we're using file arguments or a configured database
+    use_files = bool(files)
 
-    sql_dialect = settings.database.sql_dialect
+    if not use_files:
+        resolved_db_path = _resolve_db_path(settings, project_dir)
+        if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+            click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+            sys.exit(1)
+
+    sql_dialect = "duckdb" if use_files else settings.database.sql_dialect
 
     click.echo("datasight generate")
     click.echo(f"  Model:    {resolved_model}")
-    click.echo(f"  Database: {settings.database.mode} — {resolved_db_path or sql_dialect}")
+    if use_files:
+        click.echo(f"  Files:    {', '.join(files)}")
+    else:
+        resolved_db_path = _resolve_db_path(settings, project_dir)
+        click.echo(f"  Database: {settings.database.mode} — {resolved_db_path or sql_dialect}")
     click.echo()
 
     async def _run():
@@ -1199,7 +1212,13 @@ def generate(project_dir, model, overwrite, table, verbose):
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
         )
-        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+
+        if use_files:
+            from datasight.explore import create_ephemeral_session
+
+            sql_runner, _ = create_ephemeral_session(list(files))
+        else:
+            sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
         # Introspect schema
         click.echo("Introspecting database schema...")
@@ -1234,9 +1253,9 @@ def generate(project_dir, model, overwrite, table, verbose):
         )
 
         parts = [block.text for block in response.content if isinstance(block, TextBlock)]
-        return "".join(parts)
+        return "".join(parts), sql_runner
 
-    text = asyncio.run(_run())
+    text, sql_runner = asyncio.run(_run())
 
     # Parse response into two files
     from datasight.generate import parse_generation_response
@@ -1256,10 +1275,29 @@ def generate(project_dir, model, overwrite, table, verbose):
         written.append("queries.yaml")
 
     async def _build_measure_scaffold() -> str:
-        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
-        measure_data = await build_measure_overview(
-            schema_info, sql_runner.run_sql, overrides=None
-        )
+        if use_files:
+            from datasight.schema import introspect_schema
+
+            tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+            schema_info = [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "columns": [
+                        {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
+                        for c in t.columns
+                    ],
+                }
+                for t in tables
+            ]
+            measure_data = await build_measure_overview(
+                schema_info, sql_runner.run_sql, overrides=None
+            )
+        else:
+            _, schema_info = await _load_schema_info_for_project(project_dir, settings)
+            measure_data = await build_measure_overview(
+                schema_info, sql_runner.run_sql, overrides=None
+            )
         return format_measure_overrides_yaml(measure_data)
 
     measures_path.write_text(asyncio.run(_build_measure_scaffold()), encoding="utf-8")

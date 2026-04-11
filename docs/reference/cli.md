@@ -116,14 +116,19 @@ Connects to the database, inspects tables and columns, samples
 code/enum columns, and asks the LLM to produce documentation
 and example queries.
 
+Optionally pass one or more Parquet, CSV, or DuckDB files directly:
+
+    datasight generate sales.parquet returns.csv
+
 ```bash
-datasight generate [OPTIONS]
+datasight generate [OPTIONS] [FILES]...
 ```
 
 **Parameters**
 
 | Name | Details |
 | --- | --- |
+| `FILES` |   |
 | `--project-dir` | Project directory containing .env. Default: `.`. |
 | `--model` | Model name (overrides .env). |
 | `--overwrite` | Overwrite existing files. |
