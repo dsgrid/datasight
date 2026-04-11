@@ -2424,10 +2424,11 @@ def dimensions(project_dir, table, output_format, output_path):
 
 
 @cli.command()
+@click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
-    default=".",
+    default=None,
     help="Project directory containing .env and config files.",
 )
 @click.option("--table", default=None, help="Suggest trends for a specific table.")
@@ -2446,21 +2447,48 @@ def dimensions(project_dir, table, output_format, output_path):
     default=None,
     help="Write the trend overview to a file instead of stdout.",
 )
-def trends(project_dir, table, output_format, output_path):
-    """Surface likely trend analyses without using the LLM."""
+def trends(files, project_dir, table, output_format, output_path):
+    """Surface likely trend analyses without using the LLM.
+
+    Optionally pass one or more Parquet, CSV, or DuckDB files directly:
+
+        datasight trends sales.parquet returns.parquet
+    """
     from rich.console import Console
     from datasight.config import load_measure_overrides
 
-    project_dir = str(Path(project_dir).resolve())
-    settings, _ = _resolve_settings(project_dir)
-    resolved_db_path = _resolve_db_path(settings, project_dir)
-    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
-        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
-        sys.exit(1)
-
     async def _run_trends():
-        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
-        measure_overrides = load_measure_overrides(None, project_dir)
+        if files:
+            from datasight.explore import create_ephemeral_session
+            from datasight.schema import introspect_schema
+
+            runner, _ = create_ephemeral_session(list(files))
+            tables = await introspect_schema(runner.run_sql, runner=runner)
+            schema_info = [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "columns": [
+                        {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
+                        for c in t.columns
+                    ],
+                }
+                for t in tables
+            ]
+            sql_runner = runner
+            measure_overrides: list[dict[str, Any]] = []
+        else:
+            resolved_dir = str(Path(project_dir or ".").resolve())
+            settings, _ = _resolve_settings(resolved_dir)
+            resolved_db_path = _resolve_db_path(settings, resolved_dir)
+            if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(
+                resolved_db_path
+            ):
+                click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+                sys.exit(1)
+            sql_runner, schema_info = await _load_schema_info_for_project(resolved_dir, settings)
+            measure_overrides = load_measure_overrides(None, resolved_dir)
+
         if table:
             table_info = find_table_info(schema_info, table)
             if table_info is None:

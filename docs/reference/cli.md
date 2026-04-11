@@ -294,15 +294,20 @@ datasight dimensions [OPTIONS]
 
 Surface likely trend analyses without using the LLM.
 
+Optionally pass one or more Parquet, CSV, or DuckDB files directly:
+
+    datasight trends sales.parquet returns.parquet
+
 ```bash
-datasight trends [OPTIONS]
+datasight trends [OPTIONS] [FILES]...
 ```
 
 **Parameters**
 
 | Name | Details |
 | --- | --- |
-| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `FILES` |   |
+| `--project-dir` | Project directory containing .env and config files. |
 | `--table` | Suggest trends for a specific table. |
 | `--format` | Output format (default: table). Default: `table`. |
 | `--output`, `-o` | Write the trend overview to a file instead of stdout. |
