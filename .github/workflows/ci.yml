@@ -25,7 +25,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python project
-        run: pip install -e ".[dev]"
+        run: |
+          mkdir -p src/datasight/web/static/assets
+          pip install -e ".[dev]"
 
       - name: Install frontend dependencies
         run: npm ci
