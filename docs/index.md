@@ -46,7 +46,7 @@ overview.
     and review SQL.
 
     [:octicons-arrow-right-24: Getting started](end-user/getting-started.md)
-    [:octicons-arrow-right-24: Inspection workflows](end-user/inspection-workflows.md)
+    [:octicons-arrow-right-24: Inspect files](end-user/inspect-files.md)
 
 -   :material-database-cog:{ .lg .middle } **Project developer**
 

@@ -67,16 +67,19 @@ nav:
   - Home: index.md
   - End user:
       - Getting started: end-user/getting-started.md
-      - Try the demo dataset: end-user/demo-dataset.md
-      - Project setup guide: end-user/quickstart.md
-      - Semantic measures: end-user/measures.md
-      - Use the web UI: end-user/web-ui.md
-      - Use the CLI: end-user/cli-usage.md
-      - Inspection workflows: end-user/inspection-workflows.md
-      - Create visualizations: end-user/visualizations.md
-      - Query confidence features: end-user/query-confidence.md
-      - Log and review SQL queries: end-user/query-log.md
-      - Connect to a remote HPC: end-user/remote-hpc.md
+      - Explore files:
+          - Inspect files: end-user/inspect-files.md
+          - Audit data quality: end-user/data-quality.md
+      - Curated projects:
+          - Set up a project: end-user/project-setup.md
+          - Use the web UI: end-user/web-ui.md
+          - Ask questions (CLI): end-user/ask-questions.md
+          - Create visualizations: end-user/visualizations.md
+          - Semantic measures: end-user/measures.md
+      - Try the demo: end-user/demo-dataset.md
+      - Query confidence: end-user/query-confidence.md
+      - SQL query log: end-user/query-log.md
+      - Connect to HPC: end-user/remote-hpc.md
   - Project developer:
       - Database connections: project-developer/database-connections.md
       - Query CSV and Parquet files: project-developer/querying-files.md

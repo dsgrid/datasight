@@ -16,106 +16,66 @@ Models, and Ollama — no extras needed.
     package: `pip install 'datasight[export]'`. The web UI uses interactive
     HTML charts and does not need this.
 
-## Explore your files
+## Choose your path
 
-The fastest way to get started — no project setup required:
+datasight supports three workflows depending on what you need:
 
-```bash
-datasight run
-```
+<div class="grid cards" markdown>
 
-Open <http://localhost:8084>. The landing page shows two options:
+-   **Inspect files**
 
-1. **Guided starters** — choose a concrete first path like **Profile this
-   dataset**, **Find key dimensions**, **Build a trend chart**, or **Audit
-   nulls and outliers**. datasight will run the selected starter immediately
-   after your data loads.
+    ---
 
-2. **Configure your LLM** — if you haven't set environment variables, enter
-   your provider and API key. (If you exported `ANTHROPIC_API_KEY` or similar
-   in your shell, this step is skipped automatically.)
+    Have CSV, Parquet, or DuckDB files? Get a complete overview — profile,
+    measures, dimensions, trends, and suggested prompts — with a single
+    command. No project setup, no LLM, no files written.
 
-3. **Explore Files** — enter the path to a CSV, Parquet, or DuckDB file
-   (or a directory of Parquet files) and click **Explore**.
+    ```bash
+    datasight inspect generation.parquet
+    ```
 
-datasight creates an in-memory database, introspects the schema, and drops
-you into the chat UI. Start with the guided starter output, then continue
-into freeform questions, recipes, or dashboard composition.
+    [:octicons-arrow-right-24: Inspect files](inspect-files.md)
 
-!!! tip "Adding more files"
-    Use the input at the top of the sidebar (below **Tables**) to add more
-    files to your session at any time.
+-   **Audit data quality**
 
-### Save as a project
+    ---
 
-Once you're comfortable with your data, click **Save** in the header to
-persist your session as a project. datasight will:
+    Run a structured quality audit: find nulls, suspicious ranges, date
+    coverage gaps, and dimension breakdowns. Use individual commands for
+    a focused check, or run `datasight inspect` for everything at once.
 
-- Create a project directory with a DuckDB database (views pointing to your
-  original files — no data copying)
-- Auto-generate `schema_description.md` and `queries.yaml` using the LLM
-- Load the project so future sessions remember your schema context
+    ```bash
+    datasight quality --table generation_fuel
+    ```
 
-## Start from the CLI
+    [:octicons-arrow-right-24: Audit data quality](data-quality.md)
 
-### Inspect files without a project
+-   **Full project with AI**
 
-`datasight inspect` runs every deterministic analysis in one shot — profile,
-quality, measures, dimensions, trends, and recipes — directly on your files:
+    ---
 
-```bash
-datasight inspect generation.parquet
-datasight inspect generation.csv plants.csv
-datasight inspect data_dir/
-```
+    Set up a curated project with schema descriptions, example queries, and
+    semantic measures. Use the web UI or CLI to ask questions in natural
+    language, generate visualizations, and build dashboards.
 
-No project setup, no LLM, no files written. Everything prints to the console.
-Use `--format json` or `--format markdown` to change the output, or
-`-o report.md` to save it.
+    ```bash
+    datasight init ./my-project
+    datasight run
+    ```
 
-### Run individual commands from a project
+    [:octicons-arrow-right-24: Set up a project](project-setup.md)
 
-If you have a configured project and want to run one analysis at a time:
-
-```bash
-datasight profile
-datasight quality
-datasight dimensions
-datasight trends
-datasight recipes
-```
-
-These commands inspect the data directly and return structured output without
-opening the web UI.
-
-For a recommended progression from deterministic inspection into reusable
-batch question files, see [Inspection workflows](inspection-workflows.md).
+</div>
 
 ## Try the demo
 
 ```bash
 datasight demo ./my-project
 cd my-project
-# Edit .env with your API key (see above)
+# Edit .env with your API key (see Project setup)
 datasight run
 ```
 
 Open <http://localhost:8084> and start asking questions. See
 [Try the demo dataset](demo-dataset.md) for details about the included
 EIA energy data.
-
-## Use your own database
-
-If you have a DuckDB or SQLite database and want a curated project:
-
-```bash
-datasight init ./my-project
-cd my-project
-# Edit .env with your API key and DB_PATH
-datasight generate   # auto-generate schema docs and example queries
-datasight run
-```
-
-`datasight generate` connects to your database and uses the LLM to draft
-`schema_description.md` and `queries.yaml` so you don't have to write them
-from scratch. See the [Project setup guide](quickstart.md) for a full walkthrough.

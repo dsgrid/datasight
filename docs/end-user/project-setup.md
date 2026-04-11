@@ -1,4 +1,4 @@
-# Project setup guide
+# Set up a project
 
 This guide walks you through creating a datasight project for your database.
 
@@ -183,8 +183,8 @@ datasight dimensions --table generation_fuel
 datasight trends --table generation_fuel
 ```
 
-See [Use the CLI](../end-user/cli-usage.md) for batch mode, deterministic inspection
-commands, and diagnostics.
+See [Ask questions from the CLI](ask-questions.md) for batch mode, export
+options, and diagnostics.
 
 ## What happens at startup
 
