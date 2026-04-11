@@ -67,15 +67,22 @@ datasight supports three workflows depending on what you need:
 
 </div>
 
-## Try the demo
+## Try a demo
+
+datasight includes several demo datasets you can download and explore
+immediately:
 
 ```bash
-datasight demo ./my-project
+# US power plant generation data (EIA, ~50 MB)
+datasight demo eia-generation ./my-project
+
+# EV charging demand projections (NLR TEMPO, ~19 MB)
+datasight demo dsgrid-tempo ./my-project
+
 cd my-project
 # Edit .env with your API key (see Project setup)
 datasight run
 ```
 
 Open <http://localhost:8084> and start asking questions. See
-[Try the demo dataset](demo-dataset.md) for details about the included
-EIA energy data.
+[Try the demo datasets](demo-dataset.md) for details about each dataset.

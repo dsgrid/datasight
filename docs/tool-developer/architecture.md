@@ -154,6 +154,10 @@ sequenceDiagram
 : Downloads cleaned EIA energy data from PUDL's public S3 bucket and creates
   a ready-to-use demo project.
 
+`datasight.demo_dsgrid_tempo`
+: Downloads NLR TEMPO EV charging demand projections from OEDI's public S3
+  bucket and creates a ready-to-use demo project.
+
 ## Schema context injection
 
 The AI receives database context at startup, which is included in every

@@ -53,7 +53,7 @@ Steps:
 ## Step 1: Install GizmoSQL on the HPC
 
 !!! tip
-    **NREL Kestrel users:** A pre-built `gizmosql_server` binary is already
+    **NLR Kestrel users:** A pre-built `gizmosql_server` binary is already
     available at `/scratch/dthom/gizmosql/gizmosql_server`. You can skip the
     installation instructions below and go straight to
     [Step 2](#step-2-create-views-over-parquet-files).

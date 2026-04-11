@@ -99,6 +99,7 @@ datasight demo [OPTIONS] COMMAND [ARGS]...
 **Subcommands**
 
 - `eia-generation`: Download an EIA energy demo dataset and create a ready-to-run project.
+- `dsgrid-tempo`: Download dsgrid TEMPO EV charging demand projections.
 - `time-validation`: Generate a synthetic energy consumption dataset with planted time errors.
 
 #### `datasight demo eia-generation`
@@ -121,6 +122,29 @@ datasight demo eia-generation [OPTIONS] [PROJECT_DIR]
 | --- | --- |
 | `PROJECT_DIR` |   |
 | `--min-year` | Earliest year to include (default: 2020). Default: `2020`. |
+
+#### `datasight demo dsgrid-tempo`
+
+Download dsgrid TEMPO EV charging demand projections.
+
+Downloads hourly and annual EV charging demand data from NLR's TEMPO
+project (published on OEDI). Creates a DuckDB database with charging
+profiles at census-division level, plus annual summaries by state and
+county. Covers three adoption scenarios from 2024 to 2050.
+
+Data source: s3://nrel-pds-dsgrid/tempo/tempo-2022/v1.0.0 (public, no credentials needed).
+
+PROJECT_DIR defaults to the current directory.
+
+```bash
+datasight demo dsgrid-tempo [OPTIONS] [PROJECT_DIR]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `PROJECT_DIR` |   |
 
 #### `datasight demo time-validation`
 

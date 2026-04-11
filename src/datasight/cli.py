@@ -1176,6 +1176,52 @@ def demo_eia_generation(project_dir: str, min_year: int):
     click.echo("  3. datasight run")
 
 
+@demo.command(name="dsgrid-tempo")
+@click.argument("project_dir", default=".")
+def demo_dsgrid_tempo(project_dir: str):
+    """Download dsgrid TEMPO EV charging demand projections.
+
+    Downloads hourly and annual EV charging demand data from NLR's TEMPO
+    project (published on OEDI). Creates a DuckDB database with charging
+    profiles at census-division level, plus annual summaries by state and
+    county. Covers three adoption scenarios from 2024 to 2050.
+
+    Data source: s3://nrel-pds-dsgrid/tempo/tempo-2022/v1.0.0 (public, no credentials needed).
+
+    PROJECT_DIR defaults to the current directory.
+    """
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+
+    dest = Path(project_dir).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    click.echo("datasight demo dsgrid-tempo — downloading TEMPO EV charging data")
+    click.echo(f"  Destination: {dest}")
+    click.echo()
+
+    from datasight.demo_dsgrid_tempo import (
+        download_dsgrid_tempo_dataset,
+        write_dsgrid_tempo_project_files,
+    )
+
+    click.echo("Downloading from OEDI S3 (this may take a minute)...")
+    db_path = download_dsgrid_tempo_dataset(dest)
+    db_size_mb = db_path.stat().st_size / (1024 * 1024)
+    click.echo(f"  Database: {db_path.name} ({db_size_mb:.1f} MB)")
+
+    click.echo("Writing project files...")
+    write_dsgrid_tempo_project_files(dest, db_path)
+
+    click.echo()
+    click.echo("Demo project ready!")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(f"  1. cd {dest}")
+    click.echo("  2. Edit .env — set your ANTHROPIC_API_KEY")
+    click.echo("  3. datasight run")
+
+
 @demo.command(name="time-validation")
 @click.argument("project_dir", default=".")
 def demo_time_validation(project_dir: str):

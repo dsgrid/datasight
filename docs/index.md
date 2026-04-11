@@ -23,8 +23,9 @@ datasight run
 datasight profile
 datasight quality
 
-# Or try the built-in EIA energy demo dataset
-datasight demo ./my-project
+# Or try a built-in demo dataset
+datasight demo eia-generation ./my-project    # US power plants
+datasight demo dsgrid-tempo ./my-project      # EV charging projections
 cd my-project
 # Edit .env with your API key (see Getting Started)
 datasight run
