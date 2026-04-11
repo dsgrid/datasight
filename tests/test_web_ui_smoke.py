@@ -40,20 +40,16 @@ def isolated_web_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     os.environ.update(original_env)
 
 
-def test_index_renders_split_ui_shell(isolated_web_state: None) -> None:
+def test_index_renders_svelte_app(isolated_web_state: None) -> None:
     with TestClient(web_app.app) as client:
         response = client.get("/")
 
     assert response.status_code == 200
     html = response.text
 
-    assert '<div class="landing-page" id="landing-page">' in html
-    assert '<div class="main-layout" id="main-layout"' in html
-    assert 'id="command-palette"' in html
-    assert 'id="settings-panel"' in html
-    assert "/static/app_state.js?v=1" in html
-    assert "/static/app_events.js?v=1" in html
-    assert "/static/app_bootstrap.js?v=1" in html
+    # Vite-built Svelte app mounts into #app and loads compiled assets
+    assert '<div id="app">' in html
+    assert "/static/assets/" in html
 
 
 def test_ui_boot_contract_when_unloaded(isolated_web_state: None) -> None:

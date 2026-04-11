@@ -1,0 +1,352 @@
+@import "tailwindcss";
+
+/* ── Design tokens (theme-aware via CSS variables) ── */
+
+:root {
+  --navy: #023d60;
+  --cream: #e7e1cf;
+  --teal: #15a8a8;
+  --orange: #fe5d26;
+  --magenta: #bf1363;
+  --bg: #f5f3ee;
+  --surface: #ffffff;
+  --surface-alt: #f8f7f4;
+  --text: #1a1a1a;
+  --text-secondary: #5a6370;
+  --border: #e2e0db;
+  --user-bg: var(--navy);
+  --user-text: #ffffff;
+  --assistant-bg: var(--surface);
+  --assistant-text: var(--text);
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --sidebar-width: 300px;
+}
+
+[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-alt: #1c2129;
+  --text: #e6edf3;
+  --text-secondary: #8b949e;
+  --border: #30363d;
+  --user-bg: #1a3a52;
+  --user-text: #e6edf3;
+  --assistant-bg: var(--surface);
+  --assistant-text: var(--text);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Tailwind theme extensions ── */
+
+@theme {
+  --color-navy: #023d60;
+  --color-cream: #e7e1cf;
+  --color-teal: #15a8a8;
+  --color-orange: #fe5d26;
+  --color-magenta: #bf1363;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-border: var(--border);
+  --color-user-bg: var(--user-bg);
+  --color-user-text: var(--user-text);
+  --color-assistant-bg: var(--assistant-bg);
+  --color-assistant-text: var(--assistant-text);
+  --radius-default: 12px;
+  --shadow-default: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --font-family-sans: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  --font-family-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* ── Base styles ── */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-family-sans, "Space Grotesk", system-ui, sans-serif);
+  background: radial-gradient(
+      circle at top left,
+      color-mix(in srgb, var(--teal) 10%, transparent),
+      transparent 36%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg) 92%, var(--cream) 8%),
+      var(--bg)
+    );
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* App mount point must fill body's flex layout */
+#app {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Theme transition — applied broadly like the old UI */
+body,
+header,
+aside,
+form,
+.message-bubble,
+.result-table,
+.tool-indicator {
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+/* ── Animations ── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease;
+}
+
+/* ── Custom scrollbars ── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* ── Table result styling ── */
+
+.result-table th {
+  background: var(--navy) !important;
+  color: var(--cream) !important;
+  padding: 8px 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.result-table th:hover {
+  background: #034b75 !important;
+}
+
+[data-theme="dark"] .result-table th {
+  background: #1a3a52 !important;
+}
+
+[data-theme="dark"] .result-table th:hover {
+  background: #224a66 !important;
+}
+
+.result-table td {
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.result-table tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .result-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.result-table tbody tr:hover {
+  background: rgba(21, 168, 168, 0.06);
+}
+
+/* ── Header icon buttons ── */
+
+.btn-icon {
+  background: transparent;
+  border: 1px solid rgba(231, 225, 207, 0.25);
+  color: var(--cream);
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8rem;
+  transition: all 0.15s;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover {
+  background: rgba(231, 225, 207, 0.12);
+  border-color: rgba(231, 225, 207, 0.4);
+}
+
+.btn-icon.active {
+  background: rgba(21, 168, 168, 0.2);
+  border-color: var(--teal);
+}
+
+/* ── Sidebar interactive elements ── */
+
+.table-header-btn {
+  transition: background 0.1s;
+}
+
+.table-header-btn:hover {
+  background: rgba(21, 168, 168, 0.04);
+}
+
+/* Schema table items — remove bottom border on last item */
+.table-item:last-child { border-bottom: none !important; }
+
+.schema-search-input {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.schema-search-input:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 14%, transparent);
+}
+
+/* Sidebar scrollbar — slightly thinner than global default */
+.sidebar-scroll::-webkit-scrollbar { width: 5px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Landing page ── */
+
+.landing-h1 {
+  color: var(--navy);
+}
+
+[data-theme="dark"] .landing-h1 {
+  color: var(--cream);
+}
+
+/* ── Landing page starter cards ── */
+
+.landing-starter {
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.landing-starter:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--teal) 50%, var(--border)) !important;
+  box-shadow: 0 10px 28px rgba(2, 61, 96, 0.08);
+}
+
+/* ── Floating action buttons on tool results ── */
+
+.tool-action-btn {
+  position: absolute;
+  top: 4px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
+.tool-action-btn:hover {
+  color: var(--teal);
+  border-color: var(--teal);
+  background: rgba(21,168,168,0.08);
+  box-shadow: 0 2px 8px rgba(21,168,168,0.15);
+}
+
+.tool-action-btn-delete:hover {
+  color: #e55;
+  border-color: #e55;
+  background: rgba(238,85,85,0.08);
+  box-shadow: 0 2px 8px rgba(238,85,85,0.15);
+}
+
+/* ── Table toolbar buttons ── */
+
+.page-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.page-btn:hover:not([disabled]) {
+  color: var(--text);
+  border-color: var(--teal);
+}
+
+.page-btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.export-csv-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.export-csv-btn:hover {
+  color: var(--text);
+  border-color: var(--teal);
+}
+
+/* ── Selection color ── */
+
+::selection {
+  background: rgba(21, 168, 168, 0.25);
+}

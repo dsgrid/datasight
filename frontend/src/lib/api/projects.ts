@@ -1,0 +1,107 @@
+/** Project loading, recent projects, and explore API. */
+
+import { fetchJson, postJson } from "./client";
+import { sessionStore } from "$lib/stores/session.svelte";
+import { sidebarStore } from "$lib/stores/sidebar.svelte";
+import type { RecentProject } from "$lib/stores/sidebar.svelte";
+import type { TableInfo } from "$lib/stores/schema.svelte";
+
+export interface ProjectStatus {
+  loaded: boolean;
+  path: string | null;
+  name: string | null;
+  is_ephemeral: boolean;
+  tables?: { name: string; source: string; row_count: number }[];
+}
+
+export interface ExploreResult {
+  success: boolean;
+  tables: { name: string; source: string; row_count: number }[];
+  schema_info: TableInfo[];
+  llm_connected: boolean;
+  error?: string;
+}
+
+export interface ValidateResult {
+  valid: boolean;
+  path: string;
+  name?: string;
+  error?: string;
+}
+
+export async function loadProject(path: string): Promise<void> {
+  await postJson("/api/projects/load", { path });
+}
+
+export async function getProjectStatus(): Promise<ProjectStatus> {
+  return fetchJson<ProjectStatus>("/api/project");
+}
+
+export async function loadRecentProjects(): Promise<RecentProject[]> {
+  const data = await fetchJson<{ projects: RecentProject[] }>(
+    "/api/projects/recent",
+  );
+  sidebarStore.recentProjectsCache = data.projects;
+  return data.projects;
+}
+
+export async function removeRecentProject(projectPath: string): Promise<void> {
+  await fetchJson(`/api/projects/recent/${encodeURIComponent(projectPath)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function validateProject(path: string): Promise<ValidateResult> {
+  return postJson<ValidateResult>("/api/projects/validate", { path });
+}
+
+export async function explore(paths: string[]): Promise<ExploreResult> {
+  const result = await postJson<ExploreResult>("/api/explore", { paths });
+  if (result.success) {
+    sessionStore.isEphemeralSession = true;
+    sessionStore.ephemeralTablesInfo = result.tables;
+  }
+  return result;
+}
+
+export async function getExploreStatus(): Promise<{
+  is_ephemeral: boolean;
+  tables: { name: string; source: string; row_count: number }[];
+  project_loaded: boolean;
+  project_dir: string | null;
+}> {
+  return fetchJson("/api/explore/status");
+}
+
+export async function checkProjectPath(
+  path: string,
+): Promise<{ is_project: boolean; name?: string }> {
+  return postJson("/api/explore/check-project-path", { path });
+}
+
+export async function saveExploreAsProject(
+  path: string,
+  name: string,
+  description?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  return postJson("/api/explore/save-project", { path, name, description });
+}
+
+export async function generateProject(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
+  return postJson("/api/explore/generate-project", {});
+}
+
+export async function addFiles(
+  paths: string[],
+): Promise<{ success: boolean; error?: string }> {
+  return postJson("/api/add-files", { paths });
+}
+
+export async function clearSession(
+  sessionId: string,
+): Promise<{ ok: boolean }> {
+  return postJson("/api/clear", { session_id: sessionId });
+}

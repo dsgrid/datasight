@@ -6,12 +6,6 @@ repos:
         args: [--fix]
       - id: ruff-format
 
-  - repo: https://github.com/eslint/eslint
-    rev: v9.24.0
-    hooks:
-      - id: eslint
-        files: ^src/datasight/web/static/.*\.js$
-
   - repo: local
     hooks:
       - id: ty

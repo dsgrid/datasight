@@ -60,3 +60,6 @@ line-length = 99
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/datasight"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/datasight/web/static/assets" = "datasight/web/static/assets"

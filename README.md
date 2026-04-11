@@ -7,7 +7,7 @@ where you can ask questions in natural language. The agent writes SQL, runs
 queries, and generates interactive Plotly visualizations.
 
 Supports **DuckDB**, **PostgreSQL**, **SQLite**, and **Flight SQL** databases.
-Supports **Anthropic Claude** (default), **GitHub Models** (Copilot subscription),
+Supports **Anthropic Claude** (default), **GitHub Models** (open source),
 and **Ollama** (local) as LLM backends.
 
 ## Quick start
@@ -58,10 +58,9 @@ datasight ask --file questions.txt --output-dir batch-output
 
 ## Architecture
 
-datasight uses the Anthropic SDK directly with a FastAPI backend and a
-lightweight HTML/JS frontend. Swap in GitHub Models or Ollama by setting
-`LLM_PROVIDER` in `.env`. No heavy frameworks — just Python, SQL, and
-Plotly.
+datasight pairs a FastAPI backend with a Svelte 5 + TypeScript + Tailwind CSS
+frontend built with Vite. It supports multiple LLM backends — Anthropic
+(default), GitHub Models, and Ollama — selectable via `LLM_PROVIDER` in `.env`.
 
 ```
 datasight run / datasight ask / datasight profile / datasight quality
@@ -85,12 +84,15 @@ python scripts/generate_cli_reference.py
 ## Development Tests
 
 ```bash
-# Full Python test suite
+# Python test suite
 pytest
 
-# Frontend structure tests for the split vanilla JS modules
-node --test tests/test_web_helpers.js tests/test_web_ui_refactor.js
+# Frontend unit tests (Vitest)
+cd frontend && npm test
 
-# FastAPI-backed web UI smoke tests
-pytest -q tests/test_web_ui_smoke.py
+# Frontend E2E tests (Playwright, requires datasight run)
+cd frontend && npm run test:e2e
+
+# Build frontend for FastAPI serving
+bash scripts/build-frontend.sh
 ```

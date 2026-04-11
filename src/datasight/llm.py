@@ -15,7 +15,7 @@ from typing import Any, Protocol
 import anthropic
 from loguru import logger
 
-from datasight.exceptions import LLMConnectionError, LLMResponseError
+from datasight.exceptions import LLMConnectionError, LLMError, LLMResponseError
 
 # Default timeout for LLM API calls (seconds).
 DEFAULT_LLM_TIMEOUT: float = 120.0
@@ -221,6 +221,12 @@ class AnthropicLLMClient:
             except anthropic.APIStatusError as e:
                 logger.exception("Anthropic API error")
                 raise LLMResponseError(f"Anthropic API error: {e}") from e
+            except TypeError as e:
+                if "api_key" in str(e) or "auth_token" in str(e):
+                    raise LLMError(
+                        "No API key configured. Set ANTHROPIC_API_KEY or configure an LLM connection."
+                    ) from e
+                raise LLMError(f"LLM client error: {e}") from e
         else:
             # All retries exhausted without break
             raise LLMConnectionError(

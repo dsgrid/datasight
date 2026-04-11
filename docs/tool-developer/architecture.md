@@ -225,8 +225,9 @@ database queries.
 
 ## Web UI
 
-The frontend is a single HTML file with vanilla JavaScript — no build step,
-no npm, no React. It features:
+The frontend is built with **Svelte 5 + TypeScript + Tailwind CSS** and uses
+Vite as the build tool. Source lives in `frontend/` and is compiled to static
+assets served by FastAPI. It features:
 
 - **Sidebar** with a table browser (expandable columns) and example queries
   that filter by selected table

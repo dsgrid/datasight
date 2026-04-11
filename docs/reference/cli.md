@@ -1,7 +1,7 @@
 # CLI reference
 
 This page is generated from the Click command tree in `datasight.cli`.
-Update it with `uv run python scripts/generate_cli_reference.py`.
+Update it with `python scripts/generate_cli_reference.py`.
 
 ## Common workflows
 

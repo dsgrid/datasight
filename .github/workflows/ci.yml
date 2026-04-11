@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python project
+        run: pip install -e ".[dev]"
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend and copy to FastAPI dirs
+        run: bash scripts/build-frontend.sh
+
+      - name: Run frontend unit tests
+        run: npm test
+        working-directory: frontend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run Playwright E2E tests
+        run: |
+          datasight run &
+          for i in $(seq 1 30); do curl -s http://localhost:8084 > /dev/null && break; sleep 1; done
+          npm run test:e2e
+        working-directory: frontend
+
+      - name: Run Python tests
+        run: pytest -q
