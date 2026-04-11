@@ -1467,15 +1467,19 @@ async def _ts_detect_gaps(
     partition = f"PARTITION BY {', '.join(q_groups)} " if q_groups else ""
     group_select = (", ".join(q_groups) + ", ") if q_groups else ""
 
+    # Cast to TIMESTAMP so DATE columns (where DATE - DATE → integer) can be
+    # compared with INTERVAL values.  Use additive comparison (ts + interval)
+    # rather than subtractive (next_ts - ts) so that variable-length months
+    # are handled correctly by the database engine.
     sql = (
         f"WITH gaps AS ("
-        f"  SELECT {group_select}{qc} AS ts, "
-        f"    LEAD({qc}) OVER ({partition}ORDER BY {qc}) AS next_ts "
+        f"  SELECT {group_select}{qc}::TIMESTAMP AS ts, "
+        f"    LEAD({qc}::TIMESTAMP) OVER ({partition}ORDER BY {qc}) AS next_ts "
         f"  FROM {qt} WHERE {qc} IS NOT NULL"
         f") "
         f"SELECT {group_select}ts, next_ts "
         f"FROM gaps "
-        f"WHERE next_ts - ts > INTERVAL '{interval_sql}' "
+        f"WHERE next_ts > ts + INTERVAL '{interval_sql}' "
         f"ORDER BY next_ts - ts DESC "
         f"LIMIT 10"
     )

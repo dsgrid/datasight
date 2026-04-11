@@ -153,3 +153,74 @@ def test_ui_boot_contract_when_project_loaded(isolated_web_state: None, project_
     assert reports_response.json() == {"reports": []}
     assert conversations_response.json() == {"conversations": []}
     assert dashboard_response.json() == {"items": [], "columns": 0}
+
+
+def test_timeseries_overview_when_unloaded(isolated_web_state: None) -> None:
+    """Timeseries overview should return an error when no project is loaded."""
+    with TestClient(web_app.app) as client:
+        response = client.get("/api/timeseries-overview")
+
+    assert response.status_code == 200
+    assert response.json() == {"error": "No dataset loaded"}
+
+
+def test_timeseries_overview_no_config(isolated_web_state: None, project_dir: str) -> None:
+    """Timeseries overview should report no config when project has no time_series.yaml."""
+    project_path = str(Path(project_dir).resolve())
+
+    with TestClient(web_app.app) as client:
+        load_response = client.post("/api/projects/load", json={"path": project_path})
+        assert load_response.status_code == 200
+
+        ts_response = client.get("/api/timeseries-overview")
+
+    payload = ts_response.json()
+    assert "overview" in payload
+    assert payload["overview"]["configs"] == []
+    assert payload["overview"]["summaries"] == []
+    assert "No time_series.yaml" in payload["overview"]["notes"][0]
+
+
+def test_timeseries_overview_with_config(isolated_web_state: None, project_dir: str) -> None:
+    """Timeseries overview should return summaries when time_series.yaml exists."""
+    project_path = str(Path(project_dir).resolve())
+    ts_yaml = "- table: orders\n  timestamp_column: order_date\n  frequency: P1D\n"
+    Path(project_path, "time_series.yaml").write_text(ts_yaml, encoding="utf-8")
+
+    with TestClient(web_app.app) as client:
+        load_response = client.post("/api/projects/load", json={"path": project_path})
+        assert load_response.status_code == 200
+
+        project_response = client.get("/api/project")
+        ts_response = client.get("/api/timeseries-overview")
+
+    # Project should report has_time_series=True
+    assert project_response.json()["has_time_series"] is True
+
+    payload = ts_response.json()
+    assert "overview" in payload
+    assert len(payload["overview"]["configs"]) == 1
+    assert len(payload["overview"]["time_series_summaries"]) >= 1
+    assert payload["overview"]["time_series_summaries"][0]["table"] == "orders"
+
+
+def test_timeseries_overview_table_filter(isolated_web_state: None, project_dir: str) -> None:
+    """Timeseries overview should filter by table when ?table= is provided."""
+    project_path = str(Path(project_dir).resolve())
+    ts_yaml = (
+        "- table: orders\n  timestamp_column: order_date\n  frequency: P1D\n"
+        "- table: products\n  timestamp_column: id\n  frequency: P1D\n"
+    )
+    Path(project_path, "time_series.yaml").write_text(ts_yaml, encoding="utf-8")
+
+    with TestClient(web_app.app) as client:
+        client.post("/api/projects/load", json={"path": project_path})
+
+        all_response = client.get("/api/timeseries-overview")
+        filtered_response = client.get("/api/timeseries-overview?table=orders")
+
+    all_configs = all_response.json()["overview"]["configs"]
+    filtered_configs = filtered_response.json()["overview"]["configs"]
+    assert len(all_configs) == 2
+    assert len(filtered_configs) == 1
+    assert filtered_configs[0]["table"] == "orders"

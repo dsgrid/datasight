@@ -2602,3 +2602,93 @@ def test_generate_seeds_time_series(project_dir, monkeypatch):
     assert (project_path / "time_series.yaml").exists()
     ts_text = (project_path / "time_series.yaml").read_text(encoding="utf-8")
     assert "# datasight time series declarations" in ts_text
+
+
+# ---------------------------------------------------------------------------
+# time_series.yaml — config validation edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_load_time_series_config_invalid_yaml(tmp_path):
+    """Invalid YAML syntax should return empty list, not crash."""
+    from datasight.config import load_time_series_config
+
+    (tmp_path / "time_series.yaml").write_text("{{bad yaml: [", encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_load_time_series_config_non_list_root(tmp_path):
+    """A YAML file whose root is a dict (not list) should return empty list."""
+    from datasight.config import load_time_series_config
+
+    yaml_text = "table: gen_hourly\ntimestamp_column: ts\nfrequency: PT1H\n"
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_load_time_series_config_non_dict_entry(tmp_path):
+    """List entries that are strings (not dicts) should be skipped."""
+    from datasight.config import load_time_series_config
+
+    yaml_text = '- "just a string"\n- 42\n'
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_load_time_series_config_case_normalization(tmp_path):
+    """Frequency should be uppercased: 'pt1h' → 'PT1H'."""
+    from datasight.config import load_time_series_config
+
+    yaml_text = "- table: gen_hourly\n  timestamp_column: ts\n  frequency: pt1h\n"
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert len(configs) == 1
+    assert configs[0]["frequency"] == "PT1H"
+
+
+def test_load_time_series_config_whitespace_only_fields(tmp_path):
+    """Fields that are whitespace-only should be treated as missing."""
+    from datasight.config import load_time_series_config
+
+    yaml_text = "- table: '  '\n  timestamp_column: ts\n  frequency: PT1H\n"
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_load_time_series_config_empty_group_columns(tmp_path):
+    """Empty strings in group_columns should be filtered out."""
+    from datasight.config import load_time_series_config
+
+    yaml_text = (
+        "- table: gen_hourly\n"
+        "  timestamp_column: ts\n"
+        "  frequency: PT1H\n"
+        "  group_columns: ['', region, '']\n"
+    )
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert len(configs) == 1
+    assert configs[0]["group_columns"] == ["region"]
+
+
+def test_load_time_series_config_explicit_path(tmp_path):
+    """Passing an explicit path should use that file, not the default location."""
+    from datasight.config import load_time_series_config
+
+    custom = tmp_path / "custom_ts.yaml"
+    custom.write_text("- table: t1\n  timestamp_column: c1\n  frequency: P1D\n", encoding="utf-8")
+    configs = load_time_series_config(str(custom), str(tmp_path))
+    assert len(configs) == 1
+    assert configs[0]["table"] == "t1"
+
+
+def test_load_time_series_config_explicit_path_missing(tmp_path):
+    """Explicit path that does not exist should return empty list."""
+    from datasight.config import load_time_series_config
+
+    configs = load_time_series_config(str(tmp_path / "nope.yaml"), str(tmp_path))
+    assert configs == []

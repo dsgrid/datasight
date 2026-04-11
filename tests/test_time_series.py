@@ -330,3 +330,485 @@ def test_missing_leap_day_detected(missing_leap_runner):
     assert len(gaps) == 1
     assert "2024-02-28 23:00:00" in gaps[0]["detail"]
     assert "2024-03-01 00:00:00" in gaps[0]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Frequency variants: PT15M, PT30M, P1D, P1M
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def fifteen_min_db(tmp_path):
+    """DuckDB with a complete day of 15-minute data (96 intervals)."""
+    db_path = tmp_path / "pt15m.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE readings AS
+        SELECT ts
+        FROM generate_series(
+            TIMESTAMP '2024-06-01 00:00:00',
+            TIMESTAMP '2024-06-01 23:45:00',
+            INTERVAL '15 MINUTE'
+        ) t(ts)
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def fifteen_min_runner(fifteen_min_db):
+    runner = DuckDBRunner(fifteen_min_db)
+    yield runner
+    runner.close()
+
+
+def test_pt15m_complete_no_issues(fifteen_min_runner):
+    """A complete day of 15-minute data should have 96 rows and no issues."""
+    configs = [
+        {
+            "table": "readings",
+            "timestamp_column": "ts",
+            "frequency": "PT15M",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, fifteen_min_runner.run_sql))
+    assert result["time_series_issues"] == []
+    assert result["time_series_summaries"][0]["total_rows"] == 96
+
+
+@pytest.fixture()
+def fifteen_min_gap_db(tmp_path):
+    """DuckDB with a day of 15-minute data, one interval removed."""
+    db_path = tmp_path / "pt15m_gap.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE readings AS
+        SELECT ts
+        FROM generate_series(
+            TIMESTAMP '2024-06-01 00:00:00',
+            TIMESTAMP '2024-06-01 23:45:00',
+            INTERVAL '15 MINUTE'
+        ) t(ts)
+        WHERE ts != TIMESTAMP '2024-06-01 12:00:00'
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def fifteen_min_gap_runner(fifteen_min_gap_db):
+    runner = DuckDBRunner(fifteen_min_gap_db)
+    yield runner
+    runner.close()
+
+
+def test_pt15m_gap_detected(fifteen_min_gap_runner):
+    """Removing a 15-minute interval should detect a gap with PT15M frequency."""
+    configs = [
+        {
+            "table": "readings",
+            "timestamp_column": "ts",
+            "frequency": "PT15M",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, fifteen_min_gap_runner.run_sql))
+    gaps = [i for i in result["time_series_issues"] if i["issue"] == "gap"]
+    assert len(gaps) == 1
+    assert "expected 15-minute" in gaps[0]["detail"]
+
+
+@pytest.fixture()
+def thirty_min_db(tmp_path):
+    """DuckDB with a complete day of 30-minute data (48 intervals)."""
+    db_path = tmp_path / "pt30m.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE readings AS
+        SELECT ts
+        FROM generate_series(
+            TIMESTAMP '2024-06-01 00:00:00',
+            TIMESTAMP '2024-06-01 23:30:00',
+            INTERVAL '30 MINUTE'
+        ) t(ts)
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def thirty_min_runner(thirty_min_db):
+    runner = DuckDBRunner(thirty_min_db)
+    yield runner
+    runner.close()
+
+
+def test_pt30m_complete_no_issues(thirty_min_runner):
+    """A complete day of 30-minute data should have 48 rows and no issues."""
+    configs = [
+        {
+            "table": "readings",
+            "timestamp_column": "ts",
+            "frequency": "PT30M",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, thirty_min_runner.run_sql))
+    assert result["time_series_issues"] == []
+    assert result["time_series_summaries"][0]["total_rows"] == 48
+
+
+@pytest.fixture()
+def daily_db(tmp_path):
+    """DuckDB with a complete January 2024 daily series (31 days)."""
+    db_path = tmp_path / "daily.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE daily_gen AS
+        SELECT ts::DATE AS report_date
+        FROM generate_series(
+            TIMESTAMP '2024-01-01',
+            TIMESTAMP '2024-01-31',
+            INTERVAL '1 DAY'
+        ) t(ts)
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def daily_runner(daily_db):
+    runner = DuckDBRunner(daily_db)
+    yield runner
+    runner.close()
+
+
+def test_p1d_complete_no_issues(daily_runner):
+    """A complete January daily series should have 31 rows and no issues."""
+    configs = [
+        {
+            "table": "daily_gen",
+            "timestamp_column": "report_date",
+            "frequency": "P1D",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, daily_runner.run_sql))
+    assert result["time_series_issues"] == []
+    assert result["time_series_summaries"][0]["total_rows"] == 31
+
+
+@pytest.fixture()
+def daily_gap_db(tmp_path):
+    """DuckDB with January 2024 daily series, Jan 15 removed."""
+    db_path = tmp_path / "daily_gap.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE daily_gen AS
+        SELECT ts::DATE AS report_date
+        FROM generate_series(
+            TIMESTAMP '2024-01-01',
+            TIMESTAMP '2024-01-31',
+            INTERVAL '1 DAY'
+        ) t(ts)
+        WHERE ts::DATE != DATE '2024-01-15'
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def daily_gap_runner(daily_gap_db):
+    runner = DuckDBRunner(daily_gap_db)
+    yield runner
+    runner.close()
+
+
+def test_p1d_gap_detected(daily_gap_runner):
+    """Removing a day from a daily series should detect a gap."""
+    configs = [
+        {
+            "table": "daily_gen",
+            "timestamp_column": "report_date",
+            "frequency": "P1D",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, daily_gap_runner.run_sql))
+    gaps = [i for i in result["time_series_issues"] if i["issue"] == "gap"]
+    assert len(gaps) == 1
+    assert "expected daily" in gaps[0]["detail"]
+
+
+@pytest.fixture()
+def monthly_db(tmp_path):
+    """DuckDB with a complete 2024 monthly series (12 months)."""
+    db_path = tmp_path / "monthly.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE monthly_gen AS
+        SELECT ts::DATE AS report_month
+        FROM generate_series(
+            TIMESTAMP '2024-01-01',
+            TIMESTAMP '2024-12-01',
+            INTERVAL '1 MONTH'
+        ) t(ts)
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def monthly_runner(monthly_db):
+    runner = DuckDBRunner(monthly_db)
+    yield runner
+    runner.close()
+
+
+def test_p1m_complete_no_issues(monthly_runner):
+    """A complete 2024 monthly series should have 12 rows and no issues."""
+    configs = [
+        {
+            "table": "monthly_gen",
+            "timestamp_column": "report_month",
+            "frequency": "P1M",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, monthly_runner.run_sql))
+    assert result["time_series_issues"] == []
+    assert result["time_series_summaries"][0]["total_rows"] == 12
+
+
+@pytest.fixture()
+def monthly_gap_db(tmp_path):
+    """DuckDB with 2024 monthly series, July removed."""
+    db_path = tmp_path / "monthly_gap.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE monthly_gen AS
+        SELECT ts::DATE AS report_month
+        FROM generate_series(
+            TIMESTAMP '2024-01-01',
+            TIMESTAMP '2024-12-01',
+            INTERVAL '1 MONTH'
+        ) t(ts)
+        WHERE ts::DATE != DATE '2024-07-01'
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def monthly_gap_runner(monthly_gap_db):
+    runner = DuckDBRunner(monthly_gap_db)
+    yield runner
+    runner.close()
+
+
+def test_p1m_gap_detected(monthly_gap_runner):
+    """Removing a month from a monthly series should detect a gap."""
+    configs = [
+        {
+            "table": "monthly_gen",
+            "timestamp_column": "report_month",
+            "frequency": "P1M",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, monthly_gap_runner.run_sql))
+    gaps = [i for i in result["time_series_issues"] if i["issue"] == "gap"]
+    assert len(gaps) == 1
+    assert "expected monthly" in gaps[0]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# SQL error handling: non-existent table/column
+# ---------------------------------------------------------------------------
+
+
+def test_nonexistent_table_returns_empty(hourly_runner):
+    """A config pointing to a non-existent table should not crash."""
+    configs = [
+        {
+            "table": "no_such_table",
+            "timestamp_column": "ts",
+            "frequency": "PT1H",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, hourly_runner.run_sql))
+    # Should degrade gracefully: no summary, no issues
+    assert result["time_series_summaries"] == []
+    assert result["time_series_issues"] == []
+
+
+def test_nonexistent_column_returns_empty(hourly_runner):
+    """A config pointing to a non-existent column should not crash."""
+    configs = [
+        {
+            "table": "gen_hourly",
+            "timestamp_column": "no_such_column",
+            "frequency": "PT1H",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, hourly_runner.run_sql))
+    assert result["time_series_summaries"] == []
+    assert result["time_series_issues"] == []
+
+
+# ---------------------------------------------------------------------------
+# NULL timestamp handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def nulls_db(tmp_path):
+    """DuckDB with some NULL timestamps mixed into a short hourly series."""
+    db_path = tmp_path / "nulls.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE readings (ts TIMESTAMP, val DOUBLE)
+    """)
+    conn.execute("""
+        INSERT INTO readings
+        SELECT ts, 42.0
+        FROM generate_series(
+            TIMESTAMP '2024-01-01 00:00:00',
+            TIMESTAMP '2024-01-01 23:00:00',
+            INTERVAL '1 HOUR'
+        ) t(ts)
+    """)
+    # Add 5 NULL-timestamp rows
+    conn.execute("""
+        INSERT INTO readings VALUES (NULL, 1.0), (NULL, 2.0), (NULL, 3.0),
+                                    (NULL, 4.0), (NULL, 5.0)
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def nulls_runner(nulls_db):
+    runner = DuckDBRunner(nulls_db)
+    yield runner
+    runner.close()
+
+
+def test_null_timestamps_excluded_from_checks(nulls_runner):
+    """NULL timestamps should be silently excluded — not cause errors or false gaps."""
+    configs = [
+        {
+            "table": "readings",
+            "timestamp_column": "ts",
+            "frequency": "PT1H",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, nulls_runner.run_sql))
+    # The 24 non-null hours are complete — no issues
+    assert result["time_series_issues"] == []
+    summary = result["time_series_summaries"][0]
+    # COUNT excludes NULLs due to WHERE ts IS NOT NULL
+    assert summary["total_rows"] == 24
+
+
+# ---------------------------------------------------------------------------
+# Duplicates with count > 2
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def triple_dup_db(tmp_path):
+    """DuckDB with a short series where one timestamp appears 3 times."""
+    db_path = tmp_path / "triple_dup.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE readings AS
+        SELECT ts
+        FROM generate_series(
+            TIMESTAMP '2024-06-01 00:00:00',
+            TIMESTAMP '2024-06-01 05:00:00',
+            INTERVAL '1 HOUR'
+        ) t(ts)
+    """)
+    # Add 2 extra copies of 03:00 (total 3)
+    conn.execute("""
+        INSERT INTO readings VALUES
+            (TIMESTAMP '2024-06-01 03:00:00'),
+            (TIMESTAMP '2024-06-01 03:00:00')
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def triple_dup_runner(triple_dup_db):
+    runner = DuckDBRunner(triple_dup_db)
+    yield runner
+    runner.close()
+
+
+def test_triple_duplicate_detected(triple_dup_runner):
+    """Three copies of the same timestamp should be reported with '3 times'."""
+    configs = [
+        {
+            "table": "readings",
+            "timestamp_column": "ts",
+            "frequency": "PT1H",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, triple_dup_runner.run_sql))
+    dups = [i for i in result["time_series_issues"] if i["issue"] == "duplicate"]
+    assert len(dups) == 1
+    assert "3 times" in dups[0]["detail"]
+    assert "2024-06-01 03:00:00" in dups[0]["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Issue count limit (top 20)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def many_gaps_db(tmp_path):
+    """DuckDB with many gaps — keep only every other day in a year of daily data."""
+    db_path = tmp_path / "many_gaps.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE daily_sparse AS
+        SELECT ts::DATE AS report_date
+        FROM generate_series(
+            TIMESTAMP '2024-01-01',
+            TIMESTAMP '2024-12-31',
+            INTERVAL '2 DAY'
+        ) t(ts)
+    """)
+    conn.close()
+    return str(db_path)
+
+
+@pytest.fixture()
+def many_gaps_runner(many_gaps_db):
+    runner = DuckDBRunner(many_gaps_db)
+    yield runner
+    runner.close()
+
+
+def test_issues_capped_at_20(many_gaps_runner):
+    """build_time_series_quality should return at most 20 issues."""
+    configs = [
+        {
+            "table": "daily_sparse",
+            "timestamp_column": "report_date",
+            "frequency": "P1D",
+            "time_zone": "UTC",
+        }
+    ]
+    result = _run(build_time_series_quality(configs, many_gaps_runner.run_sql))
+    # Every-other-day data creates ~183 gaps at P1D, but gap detection LIMITs to 10
+    # and the overall result caps at 20
+    assert len(result["time_series_issues"]) <= 20
