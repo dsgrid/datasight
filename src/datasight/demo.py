@@ -306,7 +306,7 @@ def download_demo_dataset(
     return db_path
 
 
-def write_demo_project_files(dest_dir: Path) -> None:
+def write_demo_project_files(dest_dir: Path, db_path: Path) -> None:
     """Write schema_description.md, queries.yaml, and .env for the demo."""
     schema_path = dest_dir / "schema_description.md"
     schema_path.write_text(SCHEMA_DESCRIPTION, encoding="utf-8")
@@ -317,7 +317,7 @@ def write_demo_project_files(dest_dir: Path) -> None:
     logger.info(f"  Created {queries_path.name}")
 
     env_path = dest_dir / ".env"
-    db_path_line = f"DB_PATH={dest_dir / 'eia_demo.duckdb'}\n"
+    db_path_line = f"DB_PATH={db_path}\n"
     if not env_path.exists():
         env_path.write_text(
             "# datasight demo project\n"
@@ -335,6 +335,5 @@ def write_demo_project_files(dest_dir: Path) -> None:
             logger.info(f"  Updated {env_path.name} — added DB_PATH")
         else:
             logger.warning(
-                f"  {env_path.name} already has DB_PATH set. "
-                f"Make sure it points to: {dest_dir / 'eia_demo.duckdb'}"
+                f"  {env_path.name} already has DB_PATH set. Make sure it points to: {db_path}"
             )

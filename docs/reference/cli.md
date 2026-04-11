@@ -54,7 +54,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 **Subcommands**
 
 - `init`: Create a new datasight project with template files.
-- `demo`: Download an EIA energy demo dataset and create a ready-to-run project.
+- `demo`: Create ready-to-run demo projects with sample datasets.
 - `generate`: Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 - `run`: Start the datasight web UI.
 - `verify`: Verify LLM-generated SQL against expected results.
@@ -90,6 +90,19 @@ datasight init [OPTIONS] [PROJECT_DIR]
 
 ### `datasight demo`
 
+Create ready-to-run demo projects with sample datasets.
+
+```bash
+datasight demo [OPTIONS] COMMAND [ARGS]...
+```
+
+**Subcommands**
+
+- `eia-generation`: Download an EIA energy demo dataset and create a ready-to-run project.
+- `time-validation`: Generate a synthetic energy consumption dataset with planted time errors.
+
+#### `datasight demo eia-generation`
+
 Download an EIA energy demo dataset and create a ready-to-run project.
 
 Downloads cleaned EIA-923 and EIA-860 data from the PUDL project's public
@@ -99,7 +112,7 @@ and plant data, along with pre-written schema descriptions and example queries.
 PROJECT_DIR defaults to the current directory.
 
 ```bash
-datasight demo [OPTIONS] [PROJECT_DIR]
+datasight demo eia-generation [OPTIONS] [PROJECT_DIR]
 ```
 
 **Parameters**
@@ -108,6 +121,29 @@ datasight demo [OPTIONS] [PROJECT_DIR]
 | --- | --- |
 | `PROJECT_DIR` |   |
 | `--min-year` | Earliest year to include (default: 2020). Default: `2020`. |
+
+#### `datasight demo time-validation`
+
+Generate a synthetic energy consumption dataset with planted time errors.
+
+Creates hourly electricity consumption data across sectors, end uses, and
+US states for future projection years (2038, 2039, 2040). The dataset
+contains intentional gaps, duplicates, and DST anomalies that datasight's
+time series quality checks can detect.
+
+Run "datasight quality" or "datasight run" after setup to find the errors.
+
+PROJECT_DIR defaults to the current directory.
+
+```bash
+datasight demo time-validation [OPTIONS] [PROJECT_DIR]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `PROJECT_DIR` |   |
 
 ### `datasight generate`
 

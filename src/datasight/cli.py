@@ -1008,7 +1008,11 @@ click.rich_click.COMMAND_GROUPS = {
         },
         {
             "name": "Project setup",
-            "commands": ["init", "generate", "demo"],
+            "commands": ["init", "generate"],
+        },
+        {
+            "name": "Demo datasets",
+            "commands": ["demo"],
         },
         {
             "name": "Utilities",
@@ -1124,12 +1128,17 @@ def init(project_dir: str, overwrite: bool):
     click.echo("  4. Run: datasight run")
 
 
-@cli.command()
+@cli.group()
+def demo():
+    """Create ready-to-run demo projects with sample datasets."""
+
+
+@demo.command(name="eia-generation")
 @click.argument("project_dir", default=".")
 @click.option(
     "--min-year", type=int, default=2020, help="Earliest year to include (default: 2020)."
 )
-def demo(project_dir: str, min_year: int):
+def demo_eia_generation(project_dir: str, min_year: int):
     """Download an EIA energy demo dataset and create a ready-to-run project.
 
     Downloads cleaned EIA-923 and EIA-860 data from the PUDL project's public
@@ -1144,7 +1153,7 @@ def demo(project_dir: str, min_year: int):
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
 
-    click.echo(f"datasight demo — downloading EIA energy data (>= {min_year})")
+    click.echo(f"datasight demo eia-generation — downloading EIA energy data (>= {min_year})")
     click.echo(f"  Destination: {dest}")
     click.echo()
 
@@ -1156,7 +1165,7 @@ def demo(project_dir: str, min_year: int):
     click.echo(f"  Database: {db_path.name} ({db_size_mb:.1f} MB)")
 
     click.echo("Writing project files...")
-    write_demo_project_files(dest)
+    write_demo_project_files(dest, db_path)
 
     click.echo()
     click.echo("Demo project ready!")
@@ -1165,6 +1174,52 @@ def demo(project_dir: str, min_year: int):
     click.echo(f"  1. cd {dest}")
     click.echo("  2. Edit .env — set your ANTHROPIC_API_KEY")
     click.echo("  3. datasight run")
+
+
+@demo.command(name="time-validation")
+@click.argument("project_dir", default=".")
+def demo_time_validation(project_dir: str):
+    """Generate a synthetic energy consumption dataset with planted time errors.
+
+    Creates hourly electricity consumption data across sectors, end uses, and
+    US states for future projection years (2038, 2039, 2040). The dataset
+    contains intentional gaps, duplicates, and DST anomalies that datasight's
+    time series quality checks can detect.
+
+    Run "datasight quality" or "datasight run" after setup to find the errors.
+
+    PROJECT_DIR defaults to the current directory.
+    """
+    logger.remove()
+    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+
+    dest = Path(project_dir).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    click.echo("datasight demo time-validation — generating synthetic dataset")
+    click.echo(f"  Destination: {dest}")
+    click.echo()
+
+    from datasight.demo_time_validation import (
+        generate_time_validation_dataset,
+        write_time_validation_project_files,
+    )
+
+    click.echo("Generating hourly consumption data with planted errors...")
+    db_path = generate_time_validation_dataset(dest)
+    db_size_mb = db_path.stat().st_size / (1024 * 1024)
+    click.echo(f"  Database: {db_path.name} ({db_size_mb:.1f} MB)")
+
+    click.echo("Writing project files...")
+    write_time_validation_project_files(dest, db_path)
+
+    click.echo()
+    click.echo("Demo project ready!")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(f"  1. cd {dest}")
+    click.echo("  2. datasight quality        # detect the planted errors")
+    click.echo("  3. datasight run            # explore interactively")
 
 
 @cli.command()
