@@ -78,6 +78,7 @@
     }
 
     return {
+      kicker: "Schema overview",
       title: "Dataset profile",
       description: "A deterministic overview of the schema to help you get oriented before asking follow-up questions.",
       metrics: [
@@ -122,6 +123,7 @@
     }
 
     return {
+      kicker: "Measure analysis",
       title: "Key measures",
       description: "An energy-aware pass over likely measures, their default aggregations, and the metrics that need extra care.",
       metrics: [
@@ -165,6 +167,7 @@
     }
 
     return {
+      kicker: "Dimension analysis",
       title: "Key dimensions",
       description: "A deterministic pass over likely grouping fields, common breakdowns, and join hints.",
       metrics: [
@@ -206,6 +209,7 @@
     }
 
     return {
+      kicker: "Quality check",
       title: "Data quality audit",
       description: "A deterministic first pass over null-heavy columns, numeric range anomalies, and date coverage.",
       metrics: [
@@ -242,6 +246,7 @@
     }
 
     return {
+      kicker: "Trend analysis",
       title: "Trend chart ideas",
       description: "A deterministic pass over likely date columns, measures, and chart setups worth trying first.",
       metrics: [
@@ -294,6 +299,7 @@
     const totalRows = summaries.reduce((sum, s) => sum + (Number(s.total_rows) || 0), 0);
 
     return {
+      kicker: "Completeness check",
       title: "Time series completeness",
       description: "Temporal completeness checks for declared time series — gaps, duplicates, and coverage.",
       metrics: [
@@ -359,7 +365,7 @@
       style="margin-bottom: 8px; color: var(--orange); font-size: 0.72rem;
              letter-spacing: 0.05em;"
     >
-      Starter result
+      {config.kicker || "Overview"}
     </span>
     <h3 class="text-text-primary" style="margin: 0 0 6px; font-size: 1.15rem; line-height: 1.2; font-weight: 600;">
       {config.title}
