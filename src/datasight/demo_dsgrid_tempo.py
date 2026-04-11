@@ -115,6 +115,32 @@ trips). This represents a bounding case that maximizes vehicle state of charge.
 - Leap day is included (8,784 hours per year)
 - Daylight savings adjustments are incorporated
 
+## Query defaults
+
+- **Model year**: Unless the user specifies a particular model year, **include all
+  model years** in query results. Do not prompt the user to choose a model year —
+  the data is small enough that aggregating across all years is fast and gives the
+  most useful overview. When all model years are included, always include the
+  model year column in the SELECT and GROUP BY so the user can see trends over
+  time.
+- **Scenario**: If the user does not specify a scenario, **ask which scenario
+  they want** before writing the query. You MUST use exactly this markdown
+  format (bullet + bold + em-dash) so the UI renders clickable buttons:
+
+  ```
+  Which scenario would you like to explore?
+
+  - **Reference** — AEO Reference Case (baseline EV adoption)
+  - **EFS High** — High electrification of light-duty vehicles
+  - **All EV by 2035** — All new light-duty vehicle sales are electric by 2035
+  ```
+
+  Each option line MUST start with `- **` — this is required for the button
+  rendering to work. Do NOT omit the bullet or bold markers.
+
+  Map the user's choice to the column value: Reference → 'reference',
+  EFS High → 'efs_high_ldv', All EV by 2035 → 'ldv_sales_evs_2035'.
+
 ## Tips
 
 - Use charging_profiles for **time-series analysis** (hourly patterns, seasonal trends)

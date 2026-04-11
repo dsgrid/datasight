@@ -33,15 +33,15 @@
   );
 
   // Reset form fields when provider changes
-  let prevProvider = $state(provider);
+  let prevProvider: string | undefined;
   $effect(() => {
-    if (provider !== prevProvider) {
+    if (prevProvider !== undefined && provider !== prevProvider) {
       model = "";
       apiKey = "";
       baseUrl = "";
       error = "";
-      prevProvider = provider;
     }
+    prevProvider = provider;
   });
 
   let showApiKey = $derived(provider === "anthropic" || provider === "github");

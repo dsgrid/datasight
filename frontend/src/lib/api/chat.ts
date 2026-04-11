@@ -340,6 +340,9 @@ export function extractClarifyOptions(text: string): string[] {
   const optionRe = /^[-*]?\s*\*\*(.+?)\*\*\s*[—–-]/;
   const bulletRe = /^[-*]\s+(.+?)\s*[—–-]/;
   const plainRe = /^[-*]\s+(\w[\w\s]*?)\s*[—–]\s+\S/;
+  const bareRe = /^(\w[\w\s_]*?)\s*[—–-]\s+\S/;
+  const numberedRe = /^\d+[.)]\s+\*?\*?(.+?)\*?\*?\s*[—–:\-]\s+\S/;
+  const backtickRe = /^[-*]?\s*`([^`]+)`\s*[—–:\-]\s+\S/;
 
   for (let q = 0; q < lines.length; q++) {
     if (!lines[q].includes("?")) continue;
@@ -347,8 +350,11 @@ export function extractClarifyOptions(text: string): string[] {
     for (let i = q + 1; i < lines.length; i++) {
       const match =
         lines[i].match(optionRe) ||
+        lines[i].match(backtickRe) ||
         lines[i].match(bulletRe) ||
-        lines[i].match(plainRe);
+        lines[i].match(plainRe) ||
+        lines[i].match(bareRe) ||
+        lines[i].match(numberedRe);
       if (match) {
         options.push(match[1].trim());
       }

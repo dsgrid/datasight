@@ -242,12 +242,11 @@
       </div>
     {:else if event.type === "typing"}
       <div class="w-full mb-4 animate-fade-in">
-        <div class="inline-flex px-4 py-3 rounded-xl bg-assistant-bg border border-border shadow-default"
-          style="border-bottom-left-radius: 4px;">
-          <div class="flex gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-text-secondary" style="animation: pulse 1s infinite;"></span>
-            <span class="w-2 h-2 rounded-full bg-text-secondary" style="animation: pulse 1s infinite; animation-delay: 0.15s;"></span>
-            <span class="w-2 h-2 rounded-full bg-text-secondary" style="animation: pulse 1s infinite; animation-delay: 0.3s;"></span>
+        <div class="inline-flex px-4 py-3">
+          <div class="flex items-center" style="gap: 5px; height: 16px;">
+            <span class="rounded-full bg-teal" style="width: 7px; height: 7px; animation: typing-bounce 1.4s ease-in-out infinite;"></span>
+            <span class="rounded-full bg-teal" style="width: 7px; height: 7px; animation: typing-bounce 1.4s ease-in-out 0.2s infinite;"></span>
+            <span class="rounded-full bg-teal" style="width: 7px; height: 7px; animation: typing-bounce 1.4s ease-in-out 0.4s infinite;"></span>
           </div>
         </div>
       </div>
