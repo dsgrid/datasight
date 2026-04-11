@@ -8,6 +8,14 @@
   import { chatStore } from "$lib/stores/chat.svelte";
   import { sendMessage } from "$lib/api/chat";
   import { loadPreview } from "$lib/api/schema";
+  import {
+    loadDatasetOverview,
+    loadMeasureOverview,
+    loadDimensionOverview,
+    loadQualityOverview,
+    loadTrendOverview,
+    loadTimeseriesOverview,
+  } from "$lib/api/starters";
   import { scorePaletteResult, highlightMatch } from "$lib/utils/search";
   import { tick } from "svelte";
 
@@ -42,6 +50,26 @@
       selected?.scrollIntoView({ block: "nearest" });
     }
   });
+
+  /** Run a deterministic starter and push the overview panel into chat. */
+  async function runStarter(
+    kind: string,
+    loader: (table?: string) => Promise<{ overview: Record<string, unknown> }>,
+  ) {
+    const table = schemaStore.selectedTable || undefined;
+    try {
+      const result = await loader(table);
+      if (result.overview) {
+        chatStore.pushMessage({
+          type: "starter_overview",
+          kind,
+          overview: result.overview,
+        });
+      }
+    } catch {
+      // Starter failed silently
+    }
+  }
 
   function buildResults(query: string): PaletteResult[] {
     const results: PaletteResult[] = [];
@@ -87,55 +115,37 @@
         title: "Summarize Dataset",
         subtitle: "Starter",
         score: 780,
-        run: () => {
-          sidebarStore.pendingStarterAction = "profile";
-          sendMessage("Give me a comprehensive overview of this dataset");
-        },
+        run: () => runStarter("profile", loadDatasetOverview),
       },
       {
         title: "Inspect Measures",
         subtitle: "Starter",
         score: 760,
-        run: () => {
-          sidebarStore.pendingStarterAction = "measures";
-          sendMessage("Show me the key measures in this dataset");
-        },
+        run: () => runStarter("measures", loadMeasureOverview),
       },
       {
         title: "Inspect Dimensions",
         subtitle: "Starter",
         score: 740,
-        run: () => {
-          sidebarStore.pendingStarterAction = "dimensions";
-          sendMessage("What dimensions are available for analysis?");
-        },
+        run: () => runStarter("dimensions", loadDimensionOverview),
       },
       {
         title: "Show Trends",
         subtitle: "Starter",
         score: 720,
-        run: () => {
-          sidebarStore.pendingStarterAction = "trend";
-          sendMessage("Show me the key trends in this data");
-        },
+        run: () => runStarter("trend", loadTrendOverview),
       },
       {
         title: "Data Quality Check",
         subtitle: "Starter",
         score: 720,
-        run: () => {
-          sidebarStore.pendingStarterAction = "quality";
-          sendMessage("Check data quality for this dataset");
-        },
+        run: () => runStarter("quality", loadQualityOverview),
       },
       ...(sessionStore.hasTimeSeries ? [{
         title: "Time Series Check",
         subtitle: "Starter",
         score: 710,
-        run: () => {
-          sidebarStore.pendingStarterAction = "timeseries";
-          sendMessage("Check time series completeness for this dataset");
-        },
+        run: () => runStarter("timeseries", loadTimeseriesOverview),
       }] : []),
     ];
 

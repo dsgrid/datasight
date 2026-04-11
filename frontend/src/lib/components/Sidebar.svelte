@@ -3,6 +3,8 @@
   import { sessionStore } from "$lib/stores/session.svelte";
   import { schemaStore } from "$lib/stores/schema.svelte";
   import { queriesStore } from "$lib/stores/queries.svelte";
+  import { chatStore } from "$lib/stores/chat.svelte";
+  import { loadTimeseriesOverview } from "$lib/api/starters";
   import SidebarSection from "./SidebarSection.svelte";
   import SchemaInspector from "./SchemaInspector.svelte";
   import QueriesList from "./QueriesList.svelte";
@@ -21,6 +23,26 @@
 
   let sidebarWidth = $state(300);
   let dragging = $state(false);
+  let tsCheckRunning = $state(false);
+
+  async function runTimeSeriesCheck() {
+    tsCheckRunning = true;
+    try {
+      const table = schemaStore.selectedTable || undefined;
+      const result = await loadTimeseriesOverview(table);
+      if (result.overview) {
+        chatStore.pushMessage({
+          type: "starter_overview",
+          kind: "timeseries",
+          overview: result.overview,
+        });
+      }
+    } catch {
+      // failed silently
+    } finally {
+      tsCheckRunning = false;
+    }
+  }
 
   function startResize(e: MouseEvent) {
     e.preventDefault();
@@ -64,6 +86,23 @@
     >
       <SchemaInspector />
     </SidebarSection>
+
+    {#if sessionStore.hasTimeSeries}
+      <div style="padding: 6px 12px;">
+        <button
+          class="flex items-center w-full cursor-pointer transition-colors duration-100
+            text-text-primary hover:text-teal"
+          style="gap: 8px; padding: 8px 10px; border: 1px solid var(--border);
+                 border-radius: 10px; background: color-mix(in srgb, var(--surface) 80%, var(--bg));
+                 font-family: inherit; font-size: 0.8rem; font-weight: 500;"
+          disabled={tsCheckRunning}
+          onclick={runTimeSeriesCheck}
+        >
+          <span style="font-size: 0.85rem; line-height: 1;">&#9202;</span>
+          {tsCheckRunning ? "Checking…" : "Check time series"}
+        </button>
+      </div>
+    {/if}
 
     <SidebarSection
       title="Queries"
