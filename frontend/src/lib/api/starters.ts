@@ -43,6 +43,12 @@ export async function loadTrendOverview(
   return fetchJson<OverviewResponse>(overviewUrl("trend-overview", table));
 }
 
+export async function loadTimeseriesOverview(
+  table?: string,
+): Promise<OverviewResponse> {
+  return fetchJson<OverviewResponse>(overviewUrl("timeseries-overview", table));
+}
+
 export async function loadQueryLog(
   n: number = 50,
 ): Promise<{ entries: unknown[] }> {

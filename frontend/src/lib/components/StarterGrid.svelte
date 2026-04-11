@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
+  import { sessionStore } from "$lib/stores/session.svelte";
 
   interface StarterConfig {
     id: string;
@@ -8,7 +9,7 @@
     description: string;
   }
 
-  const STARTERS: StarterConfig[] = [
+  const BASE_STARTERS: StarterConfig[] = [
     {
       id: "profile",
       kicker: "Orientation",
@@ -45,6 +46,20 @@
         "Look for missingness, suspicious ranges, and columns that need scrutiny.",
     },
   ];
+
+  const TIMESERIES_STARTER: StarterConfig = {
+    id: "timeseries",
+    kicker: "Completeness",
+    title: "Check time series",
+    description:
+      "Detect gaps, duplicates, and DST issues in declared hourly time arrays.",
+  };
+
+  let STARTERS = $derived(
+    sessionStore.hasTimeSeries
+      ? [...BASE_STARTERS, TIMESERIES_STARTER]
+      : BASE_STARTERS,
+  );
 
   function selectStarter(id: string) {
     sidebarStore.pendingStarterAction = id;

@@ -41,6 +41,8 @@
         return buildQualityConfig(overview);
       case "trend":
         return buildTrendConfig(overview);
+      case "timeseries":
+        return buildTimeseriesConfig(overview);
       default:
         return {
           title: "Overview",
@@ -260,6 +262,67 @@
             return `<strong>${esc(i.table)}.${esc(i.column)}</strong> <span>${esc(stats.join(" · "))}</span>`;
           }),
         ...(notes.length ? [listSection("Quick notes", notes, "", (i: string) => `<span>${esc(i)}</span>`, { note: true })] : []),
+      ],
+      actions,
+    };
+  }
+
+  function buildTimeseriesConfig(o: Record<string, unknown>) {
+    const summaries = (o.time_series_summaries || []) as Array<Record<string, unknown>>;
+    const issues = (o.time_series_issues || []) as Array<Record<string, unknown>>;
+    const configs = (o.configs || []) as Array<Record<string, unknown>>;
+    const notes = (o.notes || []) as string[];
+    const gaps = issues.filter(i => i.issue === "gap");
+    const duplicates = issues.filter(i => i.issue === "duplicate");
+    const actions: OverviewAction[] = [];
+
+    if (gaps.length) {
+      const g = gaps[0];
+      actions.push({
+        label: "Investigate Gaps",
+        prompt: `Investigate the time series gaps in \`${g.table}.${g.timestamp_column}\`. The largest gap is: ${g.detail}. Show which hours are missing and whether this looks like a DST issue or missing data.`,
+      });
+    }
+    if (summaries.length) {
+      const s = summaries[0];
+      actions.push({
+        label: "Visualize Timeline",
+        prompt: `Create a chart showing the hourly record count over time for \`${s.table}.${s.timestamp_column}\`. Highlight any days with fewer records than expected so gaps are visible.`,
+      });
+    }
+
+    const totalRows = summaries.reduce((sum, s) => sum + (Number(s.total_rows) || 0), 0);
+
+    return {
+      title: "Time series completeness",
+      description: "Temporal completeness checks for declared time series — gaps, duplicates, and coverage.",
+      metrics: [
+        { label: "Declared Series", value: String(configs.length) },
+        { label: "Total Rows", value: num(totalRows) },
+        { label: "Issues", value: String(issues.length) },
+      ],
+      sections: [
+        listSection("Time series", summaries, "No time series summaries available.",
+          (i: Record<string, unknown>) => {
+            const groups = ((i.group_columns as string[]) || []).join(", ");
+            return `<strong>${esc(i.table)}.${esc(i.timestamp_column)}</strong> <span>${esc(i.frequency || "")} · ${num(i.total_rows)} rows</span> <span>${esc(i.min_ts || "?")} → ${esc(i.max_ts || "?")}</span>${groups ? ` <span>Groups: ${esc(groups)}</span>` : ""}`;
+          }, { rich: true }),
+        ...(gaps.length ? [listSection("Gaps", gaps, "",
+          (i: Record<string, unknown>) => {
+            const gv = i.group_values as Record<string, string> | undefined;
+            const groupStr = gv && Object.keys(gv).length ? ` [${Object.entries(gv).map(([k, v]) => `${k}=${v}`).join(", ")}]` : "";
+            return `<strong>${esc(i.table)}.${esc(i.timestamp_column)}${esc(groupStr)}</strong> <span>${esc(i.detail || "")}</span>`;
+          }, { rich: true })] : []),
+        ...(duplicates.length ? [listSection("Duplicates", duplicates, "",
+          (i: Record<string, unknown>) => {
+            const gv = i.group_values as Record<string, string> | undefined;
+            const groupStr = gv && Object.keys(gv).length ? ` [${Object.entries(gv).map(([k, v]) => `${k}=${v}`).join(", ")}]` : "";
+            return `<strong>${esc(i.table)}.${esc(i.timestamp_column)}${esc(groupStr)}</strong> <span>${esc(i.detail || "")}</span>`;
+          }, { rich: true })] : []),
+        ...(issues.length === 0 && !notes.length ? [listSection("Quick notes", ["No temporal completeness issues detected."], "",
+          (i: string) => `<span>${esc(i)}</span>`, { note: true })] : []),
+        ...(notes.length ? [listSection("Quick notes", notes, "",
+          (i: string) => `<span>${esc(i)}</span>`, { note: true })] : []),
       ],
       actions,
     };

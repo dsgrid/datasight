@@ -12,6 +12,7 @@ export interface ProjectStatus {
   name: string | null;
   is_ephemeral: boolean;
   tables?: { name: string; source: string; row_count: number }[];
+  has_time_series?: boolean;
 }
 
 export interface ExploreResult {
@@ -30,7 +31,8 @@ export interface ValidateResult {
 }
 
 export async function loadProject(path: string): Promise<void> {
-  await postJson("/api/projects/load", { path });
+  const result = await postJson<{ has_time_series?: boolean }>("/api/projects/load", { path });
+  sessionStore.hasTimeSeries = Boolean(result?.has_time_series);
 }
 
 export async function getProjectStatus(): Promise<ProjectStatus> {

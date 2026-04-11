@@ -3,6 +3,7 @@
   import type { PaletteResult } from "$lib/stores/palette.svelte";
   import { schemaStore } from "$lib/stores/schema.svelte";
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
+  import { sessionStore } from "$lib/stores/session.svelte";
   import { dashboardStore } from "$lib/stores/dashboard.svelte";
   import { chatStore } from "$lib/stores/chat.svelte";
   import { sendMessage } from "$lib/api/chat";
@@ -127,6 +128,15 @@
           sendMessage("Check data quality for this dataset");
         },
       },
+      ...(sessionStore.hasTimeSeries ? [{
+        title: "Time Series Check",
+        subtitle: "Starter",
+        score: 710,
+        run: () => {
+          sidebarStore.pendingStarterAction = "timeseries";
+          sendMessage("Check time series completeness for this dataset");
+        },
+      }] : []),
     ];
 
     for (const a of actions) {

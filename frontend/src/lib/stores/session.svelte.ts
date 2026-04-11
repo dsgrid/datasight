@@ -17,6 +17,7 @@ function createSessionStore() {
   let isEphemeralSession = $state(false);
   let explorePaths = $state<string[]>([]);
   let ephemeralTablesInfo = $state<EphemeralTableInfo[]>([]);
+  let hasTimeSeries = $state(false);
 
   return {
     get sessionId() {
@@ -56,6 +57,12 @@ function createSessionStore() {
     set ephemeralTablesInfo(v: EphemeralTableInfo[]) {
       ephemeralTablesInfo = v;
     },
+    get hasTimeSeries() {
+      return hasTimeSeries;
+    },
+    set hasTimeSeries(v: boolean) {
+      hasTimeSeries = v;
+    },
 
     /** Reset session for a new project or explore. */
     reset() {
@@ -66,6 +73,7 @@ function createSessionStore() {
       isEphemeralSession = false;
       explorePaths = [];
       ephemeralTablesInfo = [];
+      hasTimeSeries = false;
     },
   };
 }

@@ -38,6 +38,7 @@
     loadDimensionOverview,
     loadQualityOverview,
     loadTrendOverview,
+    loadTimeseriesOverview,
   } from "$lib/api/starters";
 
   let theme = $state(
@@ -95,6 +96,7 @@
       dimensions: loadDimensionOverview,
       quality: loadQualityOverview,
       trend: loadTrendOverview,
+      timeseries: loadTimeseriesOverview,
     };
 
     const loader = loaders[starter];
@@ -202,6 +204,7 @@
         sessionStore.projectLoaded = true;
         sessionStore.currentProjectPath = status.path;
         sessionStore.isEphemeralSession = status.is_ephemeral;
+        sessionStore.hasTimeSeries = Boolean(status.has_time_series);
         if (status.tables) {
           sessionStore.ephemeralTablesInfo = status.tables;
         }

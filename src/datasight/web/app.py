@@ -41,6 +41,7 @@ from datasight.data_profile import (
     build_dimension_overview,
     build_measure_overview,
     find_table_info,
+    build_time_series_quality,
     format_measure_overrides_yaml,
     format_measure_prompt_context,
     format_time_series_prompt_context,
@@ -387,6 +388,7 @@ class AppState:
         # Ephemeral explore session state
         self.is_ephemeral: bool = False
         self.ephemeral_tables_info: list[dict[str, Any]] = []
+        self.time_series_configs: list[dict[str, Any]] = []
 
     def clear_project(self) -> None:
         """Clear project-specific state."""
@@ -414,6 +416,7 @@ class AppState:
         self.query_logger = None
         self._response_cache.clear()
         self._insight_cache.clear()
+        self.time_series_configs = []
         # Reset ephemeral state
         self.is_ephemeral = False
         self.ephemeral_tables_info = []
@@ -843,6 +846,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
         state.schema_text += measure_text
 
     time_series_configs = load_time_series_config(None, project_dir)
+    state.time_series_configs = time_series_configs
     ts_text = format_time_series_prompt_context(time_series_configs)
     if ts_text:
         state.schema_text += ts_text
@@ -861,6 +865,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
         "name": get_project_name(project_dir),
         "tables": len(state.schema_info),
         "queries": len(state.example_queries_list),
+        "has_time_series": bool(state.time_series_configs),
     }
 
 
@@ -1375,6 +1380,39 @@ async def get_quality_overview(table: str | None = None, state: AppState = Depen
     return {"overview": overview, "cached": cached}
 
 
+@app.get("/api/timeseries-overview")
+async def get_timeseries_overview(table: str | None = None, state: AppState = Depends(get_state)):
+    """Return temporal completeness checks for declared time series."""
+    if not state.project_loaded or state.sql_runner is None:
+        return {"error": "No dataset loaded"}
+
+    sql_runner = state.sql_runner
+    configs = state.time_series_configs
+    if not configs:
+        return {
+            "overview": {
+                "configs": [],
+                "summaries": [],
+                "issues": [],
+                "notes": ["No time_series.yaml found in the project directory."],
+            },
+            "cached": False,
+        }
+
+    if table:
+        configs = [c for c in configs if c["table"].lower() == table.lower()]
+
+    cache_key = f"timeseries-overview:{table.lower() if table else 'all'}"
+
+    overview, cached = await _get_cached_insight(
+        state,
+        cache_key,
+        lambda: build_time_series_quality(configs, sql_runner.run_sql),
+    )
+    overview["configs"] = configs
+    return {"overview": overview, "cached": cached}
+
+
 @app.get("/api/trend-overview")
 async def get_trend_overview(table: str | None = None, state: AppState = Depends(get_state)):
     """Return a deterministic view of likely time-series analyses."""
@@ -1503,6 +1541,7 @@ async def get_current_project(state: AppState = Depends(get_state)):
         "path": state.project_dir,
         "name": get_project_name(state.project_dir),
         "is_ephemeral": False,
+        "has_time_series": bool(state.time_series_configs),
     }
 
 

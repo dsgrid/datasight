@@ -119,6 +119,7 @@ def test_ui_boot_contract_when_project_loaded(isolated_web_state: None, project_
         "path": project_path,
         "name": Path(project_path).name,
         "is_ephemeral": False,
+        "has_time_series": False,
     }
 
     schema = schema_response.json()["tables"]
