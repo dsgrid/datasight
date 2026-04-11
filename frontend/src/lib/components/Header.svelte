@@ -71,7 +71,7 @@
       title="Switch project"
     >
       <img
-        src="/datasight-icon.svg"
+        src="/static/datasight-icon.svg"
         alt="datasight"
         style="width: 24px; height: 24px; border-radius: 7px;
                box-shadow: 0 2px 10px rgba(2,61,96,0.22);"

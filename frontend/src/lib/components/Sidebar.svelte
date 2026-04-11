@@ -2,7 +2,6 @@
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
   import { sessionStore } from "$lib/stores/session.svelte";
   import { schemaStore } from "$lib/stores/schema.svelte";
-  import { queriesStore } from "$lib/stores/queries.svelte";
   import { chatStore } from "$lib/stores/chat.svelte";
   import { loadTimeseriesOverview } from "$lib/api/starters";
   import SidebarSection from "./SidebarSection.svelte";
@@ -105,9 +104,9 @@
     {/if}
 
     <SidebarSection
-      title="Queries"
+      title="Example Queries"
       id="queries-section"
-      count={queriesStore.sessionQueries.length}
+      count={schemaStore.allQueries.length}
     >
       <QueriesList />
     </SidebarSection>
@@ -116,6 +115,7 @@
       title="Recipes"
       id="recipes-section"
       count={schemaStore.recipesCache.length}
+      defaultCollapsed={true}
     >
       <RecipesList />
     </SidebarSection>
@@ -124,6 +124,7 @@
       title="Measures"
       id="measures-editor-section"
       count={sidebarStore.measureEditorCatalog.length}
+      defaultCollapsed={true}
     >
       <MeasureEditor onOpenModal={onOpenMeasureEditor} />
     </SidebarSection>
@@ -132,6 +133,7 @@
       title="Bookmarks"
       id="bookmarks-section"
       count={sidebarStore.bookmarksCache.length}
+      defaultCollapsed={true}
     >
       <BookmarksList />
     </SidebarSection>
@@ -140,6 +142,7 @@
       title="Reports"
       id="reports-section"
       count={sidebarStore.reportsCache.length}
+      defaultCollapsed={true}
     >
       <ReportsList />
     </SidebarSection>
@@ -148,6 +151,7 @@
       title="Conversations"
       id="conversations-section"
       count={sidebarStore.conversationsCache.length}
+      defaultCollapsed={true}
     >
       <ConversationsList />
     </SidebarSection>

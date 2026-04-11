@@ -12,7 +12,7 @@
   }
 </script>
 
-<div class="flex flex-wrap max-w-[900px] mx-auto w-full animate-fade-in"
+<div class="flex flex-wrap w-full animate-fade-in"
   style="gap: 8px; padding: 4px 0 12px;">
   {#each suggestions as suggestion}
     <button

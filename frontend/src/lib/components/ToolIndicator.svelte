@@ -19,7 +19,7 @@
   );
 </script>
 
-<div class="flex items-center text-text-secondary group max-w-[900px] mx-auto w-full animate-fade-in"
+<div class="flex items-center text-text-secondary group w-full animate-fade-in"
   style="gap: 8px; padding: 8px 14px; margin-bottom: 8px; font-size: 0.82rem;">
   <span
     class="rounded-full shrink-0 bg-teal"

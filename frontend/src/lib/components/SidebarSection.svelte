@@ -5,10 +5,11 @@
     title: string;
     count?: number;
     id: string;
+    defaultCollapsed?: boolean;
     children: Snippet;
   }
 
-  let { title, count, id, children }: Props = $props();
+  let { title, count, id, defaultCollapsed = false, children }: Props = $props();
 
   const STORAGE_KEY = "datasight-collapsed-sections";
 
@@ -22,7 +23,7 @@
     } catch {
       // ignore
     }
-    return false;
+    return defaultCollapsed;
   }
 
   function saveCollapsed(collapsed: boolean) {

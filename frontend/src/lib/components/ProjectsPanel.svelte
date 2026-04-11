@@ -50,95 +50,246 @@
 
 {#if open}
   <!-- Overlay -->
-  <button
-    class="fixed inset-0 bg-black/30 z-40 cursor-default"
-    onclick={onClose}
-    tabindex="-1"
-    aria-label="Close projects"
-  ></button>
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="projects-overlay" onclick={onClose}></div>
 
   <!-- Panel -->
-  <div
-    class="fixed left-0 top-0 bottom-0 bg-surface border-r border-border
-      z-50 flex flex-col"
-    style="width: 360px; max-width: 90vw; box-shadow: 4px 0 20px rgba(0,0,0,0.15);"
-  >
-    <div class="flex items-center justify-between border-b border-border"
-      style="padding: 16px 20px 14px;">
-      <span class="font-semibold" style="font-size: 1rem;">Projects</span>
-      <button
-        onclick={onClose}
-        class="p-1.5 rounded-lg hover:bg-surface-alt transition-colors cursor-pointer text-text-secondary"
-        aria-label="Close"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-          <path d="M4 4l8 8M12 4l-8 8" />
-        </svg>
-      </button>
+  <aside class="projects-panel">
+    <!-- Header -->
+    <div class="projects-header">
+      <span>Switch</span>
+      <button class="projects-close" onclick={onClose} title="Close">&times;</button>
     </div>
 
-    <div class="flex-1 overflow-y-auto" style="padding: 16px 20px;">
-    <div class="space-y-5">
-      <!-- Recent projects -->
-      {#if sidebarStore.recentProjectsCache.length > 0}
-        <div class="space-y-1">
-          <div class="text-xs font-semibold uppercase tracking-wider text-text-secondary mb-2">
-            Recent
-          </div>
+    <!-- Recent Projects -->
+    <div class="projects-list-section">
+      <div class="projects-list-header">Recent Projects</div>
+      <div class="projects-list">
+        {#if sidebarStore.recentProjectsCache.length > 0}
           {#each sidebarStore.recentProjectsCache as project}
-            <button
-              class="w-full text-left px-3 py-2.5 rounded-lg transition-colors cursor-pointer group
-                {project.is_current
-                ? 'bg-teal/5 border border-teal/30'
-                : 'hover:bg-surface-alt'}"
-              onclick={() => handleOpen(project.path)}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="project-item {project.is_current ? 'current' : ''}"
+              onclick={() => { if (!project.is_current) handleOpen(project.path); }}
             >
-              <span class="block text-sm font-medium text-text-primary group-hover:text-teal transition-colors">
-                {project.name}
-                {#if project.is_current}
-                  <span class="text-xs text-teal ml-1">(current)</span>
-                {/if}
-              </span>
-              <span class="block text-xs text-text-secondary truncate">
-                {project.path}
-              </span>
-            </button>
+              <div class="project-item-info">
+                <div class="project-item-name">
+                  {project.name}
+                  {#if project.is_current}
+                    <span class="project-item-current-tag">current</span>
+                  {/if}
+                </div>
+                <div class="project-item-path">{project.path}</div>
+              </div>
+            </div>
           {/each}
-        </div>
-      {:else}
-        <p class="text-xs text-text-secondary">No recent projects</p>
-      {/if}
-
-      <!-- Open by path -->
-      <div class="space-y-2">
-        <div class="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-          Open by path
-        </div>
-        <div class="flex" style="gap: 8px;">
-          <input
-            type="text"
-            bind:value={path}
-            onkeydown={handleKeydown}
-            placeholder="Project directory..."
-            class="flex-1 border border-border bg-bg text-text-primary
-              focus:outline-none focus:border-teal"
-            style="padding: 8px 10px; border-radius: 6px; font-family: inherit; font-size: 0.85rem;"
-          />
-          <button
-            onclick={() => handleOpen()}
-            disabled={loading}
-            class="bg-teal text-white font-medium cursor-pointer
-              hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-            style="padding: 10px 20px; border: none; border-radius: 8px; font-family: inherit; font-size: 0.85rem;"
-          >
-            {loading ? "..." : "Open"}
-          </button>
-        </div>
-        {#if error}
-          <p style="font-size: 0.75rem; color: #e55; margin-top: 8px;">{error}</p>
+        {:else}
+          <div class="projects-empty">No recent projects</div>
         {/if}
       </div>
     </div>
+
+    <!-- Open by path -->
+    <div class="projects-add-section">
+      <div class="projects-add-header">Open Project</div>
+      <div class="projects-add-input-wrap">
+        <input
+          type="text"
+          bind:value={path}
+          onkeydown={handleKeydown}
+          placeholder="Enter project path..."
+        />
+        <button
+          onclick={() => handleOpen()}
+          disabled={loading}
+        >
+          {loading ? "..." : "Open"}
+        </button>
+      </div>
+      {#if error}
+        <div class="projects-add-error">{error}</div>
+      {/if}
     </div>
-  </div>
+  </aside>
 {/if}
+
+<style>
+  .projects-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 99;
+  }
+
+  .projects-panel {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 360px;
+    max-width: 90vw;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+    box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+  }
+
+  .projects-header {
+    padding: 16px 20px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--text);
+  }
+
+  .projects-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.4rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 4px;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+  .projects-close:hover { opacity: 1; }
+
+  .projects-list-section {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 0;
+  }
+
+  .projects-list-header {
+    padding: 8px 20px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+  }
+
+  .projects-list {
+    padding: 0 12px;
+  }
+
+  .projects-empty {
+    padding: 8px 12px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    font-style: italic;
+  }
+
+  .project-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    gap: 10px;
+  }
+  .project-item:hover { background: var(--bg); }
+  .project-item.current {
+    background: rgba(21,168,168,0.1);
+    cursor: default;
+  }
+
+  .project-item-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .project-item-name {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .project-item.current .project-item-name { color: var(--teal); }
+
+  .project-item-current-tag {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--teal);
+    margin-left: 6px;
+  }
+
+  .project-item-path {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .projects-add-section {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .projects-add-header {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+  }
+
+  .projects-add-input-wrap {
+    display: flex;
+    gap: 8px;
+  }
+
+  .projects-add-input-wrap input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+  }
+  .projects-add-input-wrap input:focus {
+    outline: none;
+    border-color: var(--teal);
+  }
+
+  .projects-add-input-wrap button {
+    padding: 8px 16px;
+    background: var(--teal);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .projects-add-input-wrap button:hover { opacity: 0.9; }
+  .projects-add-input-wrap button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .projects-add-error {
+    font-size: 0.75rem;
+    color: #e55;
+    margin-top: 8px;
+  }
+</style>

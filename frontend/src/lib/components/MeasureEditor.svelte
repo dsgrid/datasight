@@ -23,59 +23,60 @@
   );
 </script>
 
-<div class="space-y-2">
-  <!-- Summary -->
-  <div class="flex items-center justify-between">
-    <div class="text-xs text-text-secondary">
-      {filteredMeasures.length} measures
-      <span class="text-text-secondary/60">({scope})</span>
-    </div>
-    <button
-      class="text-[10px] px-2 py-0.5 rounded bg-teal/10 text-teal
-        hover:bg-teal/20 transition-colors cursor-pointer"
-      onclick={onOpenModal}
-    >
-      Open Editor
-    </button>
+<!-- Summary bar -->
+<div
+  class="flex items-center justify-between"
+  style="padding: 8px 16px;"
+>
+  <div class="text-xs text-text-secondary">
+    {filteredMeasures.length} measures
+    <span class="text-text-secondary/60">({scope})</span>
   </div>
-
-  <!-- Measure list -->
-  <div class="space-y-0.5">
-    {#each filteredMeasures as measure, idx (idx)}
-      <div
-        class="py-1.5 border-b border-border/30 hover:bg-teal/[0.04] transition-colors duration-100"
-      >
-        <div class="flex items-center gap-1">
-          <span class="font-medium text-text-primary" style="font-size: 0.82rem;">{measure.name}</span>
-          {#if measure.is_override}
-            <span
-              class="text-[9px] px-1 py-px rounded bg-teal/10 text-teal"
-            >
-              custom
-            </span>
-          {/if}
-          {#if measure.is_calculated}
-            <span
-              class="text-[9px] px-1 py-px rounded bg-orange/10 text-orange"
-            >
-              calc
-            </span>
-          {/if}
-        </div>
-        <div class="text-[10px] text-text-secondary flex gap-2">
-          <span>{measure.table}</span>
-          <span>{measure.aggregation}</span>
-          {#if measure.display_name}
-            <span class="italic">{measure.display_name}</span>
-          {/if}
-        </div>
-      </div>
-    {/each}
-
-    {#if filteredMeasures.length === 0}
-      <div class="text-[11px] text-text-secondary py-2 text-center">
-        No measures found
-      </div>
-    {/if}
-  </div>
+  <button
+    class="text-[10px] px-2 py-0.5 rounded bg-teal/10 text-teal
+      hover:bg-teal/20 transition-colors cursor-pointer"
+    style="border: none; font-family: inherit;"
+    onclick={onOpenModal}
+  >
+    Open Editor
+  </button>
 </div>
+
+<!-- Measure list -->
+{#each filteredMeasures as measure, idx (idx)}
+  <div
+    class="hover:bg-teal/[0.04] transition-colors duration-100"
+    style="padding: 6px 16px; border-bottom: 1px solid color-mix(in srgb, var(--border) 30%, transparent);"
+  >
+    <div class="flex items-center gap-1.5">
+      <span class="font-medium text-text-primary" style="font-size: 0.82rem; line-height: 1.4;">{measure.name}</span>
+      {#if measure.is_override}
+        <span
+          class="text-[9px] px-1.5 py-0.5 rounded bg-teal/10 text-teal"
+        >
+          custom
+        </span>
+      {/if}
+      {#if measure.is_calculated}
+        <span
+          class="text-[9px] px-1.5 py-0.5 rounded bg-orange/10 text-orange"
+        >
+          calc
+        </span>
+      {/if}
+    </div>
+    <div class="text-text-secondary flex gap-2" style="font-size: 0.7rem; margin-top: 3px;">
+      <span>{measure.table}</span>
+      <span>{measure.aggregation}</span>
+      {#if measure.display_name}
+        <span class="italic">{measure.display_name}</span>
+      {/if}
+    </div>
+  </div>
+{/each}
+
+{#if filteredMeasures.length === 0}
+  <div class="text-[11px] text-text-secondary py-2 text-center">
+    No measures found
+  </div>
+{/if}

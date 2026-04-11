@@ -40,7 +40,7 @@
   }
 </script>
 
-<div class="tool-result group max-w-[900px] mx-auto w-full animate-fade-in" style="position: relative; margin-bottom: 16px;">
+<div class="tool-result group w-full animate-fade-in" style="position: relative; margin-bottom: 16px;">
   <!-- Floating action buttons (visible on hover) -->
   {#if onBookmark}
     <button

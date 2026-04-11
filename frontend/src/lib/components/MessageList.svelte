@@ -236,12 +236,12 @@
     {:else if event.type === "starter_overview"}
       <StarterOverview kind={event.kind} overview={event.overview} />
     {:else if event.type === "error"}
-      <div class="px-4 py-3 rounded-lg border mb-4 max-w-[900px] mx-auto w-full animate-fade-in"
+      <div class="px-4 py-3 rounded-lg border mb-4 w-full animate-fade-in"
         style="color: var(--orange); background: rgba(254,93,38,0.06); border-color: rgba(254,93,38,0.2); font-size: 0.85rem;">
         {event.error}
       </div>
     {:else if event.type === "typing"}
-      <div class="max-w-[900px] mx-auto w-full mb-4 animate-fade-in">
+      <div class="w-full mb-4 animate-fade-in">
         <div class="inline-flex px-4 py-3 rounded-xl bg-assistant-bg border border-border shadow-default"
           style="border-bottom-left-radius: 4px;">
           <div class="flex gap-1.5">

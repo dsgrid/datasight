@@ -26,7 +26,7 @@
 </script>
 
 <div
-  class="bg-surface max-w-[900px] mx-auto w-full animate-fade-in"
+  class="bg-surface w-full animate-fade-in"
   style="border: 1px solid var(--yellow, #e8a317); border-radius: var(--radius);
          padding: 12px 16px; margin: 8px auto;"
 >

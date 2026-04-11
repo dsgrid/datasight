@@ -54,8 +54,26 @@
     ),
   );
 
+  let scope = $derived(selectedTable || "dataset");
+  let catalogCount = $derived(
+    selectedTable
+      ? sidebarStore.measureEditorCatalog.filter((m) => m.table === selectedTable).length
+      : sidebarStore.measureEditorCatalog.length,
+  );
+
   const AGGREGATIONS = ["sum", "avg", "count", "min", "max", "count_distinct"];
-  const CHART_TYPES = ["bar", "line", "scatter", "pie", "heatmap", "histogram"];
+  const FORMATS = [
+    { value: "", label: "format (optional)" },
+    { value: "currency", label: "currency" },
+    { value: "percent", label: "percent" },
+    { value: "integer", label: "integer" },
+    { value: "float", label: "float" },
+    { value: "decimal", label: "decimal" },
+    { value: "mw", label: "mw" },
+    { value: "mwh", label: "mwh" },
+    { value: "kwh", label: "kwh" },
+  ];
+  const CHART_TYPES = ["line", "area", "bar", "scatter", "heatmap"];
 
   // Load YAML on open
   $effect(() => {
@@ -72,7 +90,7 @@
       yamlPath = data.path;
       yamlStatus = data.generated ? "Generated from schema" : "";
       yamlError = false;
-    } catch (e) {
+    } catch {
       yamlStatus = "Failed to load";
       yamlError = true;
     } finally {
@@ -154,87 +172,76 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-    onkeydown={handleKeydown}
-  >
+  <div class="fixed inset-0 z-50" onkeydown={handleKeydown}>
+    <!-- Overlay -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="absolute inset-0" onclick={onClose}></div>
+    <div class="absolute inset-0" style="background: rgba(0,0,0,0.5);" onclick={onClose}></div>
 
+    <!-- Modal -->
     <div
-      class="relative bg-surface rounded-xl shadow-xl border border-border
-        w-full max-w-2xl max-h-[80vh] flex flex-col"
+      class="measure-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Measure override editor"
     >
       <!-- Header -->
-      <div
-        class="flex items-center justify-between px-4 py-3 border-b border-border"
-      >
-        <h2 class="text-sm font-semibold text-text-primary">Measure Editor</h2>
+      <div class="measure-modal-header">
+        <div class="measure-header-copy">
+          <h3>Measure Overrides</h3>
+          <p>Work with inferred measures in a form first, then drop to raw <code>measures.yaml</code> only when needed.</p>
+        </div>
         <button
-          class="text-text-secondary hover:text-text-primary cursor-pointer"
+          class="measure-close-btn"
           onclick={onClose}
-        >
-          &times;
-        </button>
-      </div>
-
-      <!-- Tabs -->
-      <div class="flex border-b border-border">
-        <button
-          class="px-4 py-2 text-xs font-medium cursor-pointer transition-colors
-            {activeTab === 'structured'
-            ? 'text-teal border-b-2 border-teal'
-            : 'text-text-secondary hover:text-text-primary'}"
-          onclick={() => (activeTab = "structured")}
-        >
-          Structured
-        </button>
-        <button
-          class="px-4 py-2 text-xs font-medium cursor-pointer transition-colors
-            {activeTab === 'yaml'
-            ? 'text-teal border-b-2 border-teal'
-            : 'text-text-secondary hover:text-text-primary'}"
-          onclick={() => (activeTab = "yaml")}
-        >
-          YAML
-        </button>
+          title="Close"
+        >&times;</button>
       </div>
 
       <!-- Content -->
-      <div class="flex-1 overflow-y-auto p-4">
-        {#if activeTab === "structured"}
-          <div class="space-y-3">
-            <!-- Mode toggle -->
-            <div class="flex gap-2">
-              <button
-                class="px-3 py-1 text-xs rounded-md cursor-pointer transition-colors
-                  {mode === 'physical'
-                  ? 'bg-teal text-white'
-                  : 'bg-surface-alt text-text-secondary border border-border'}"
-                onclick={() => (mode = "physical")}
-              >
-                Physical
-              </button>
-              <button
-                class="px-3 py-1 text-xs rounded-md cursor-pointer transition-colors
-                  {mode === 'calculated'
-                  ? 'bg-teal text-white'
-                  : 'bg-surface-alt text-text-secondary border border-border'}"
-                onclick={() => (mode = "calculated")}
-              >
-                Calculated
-              </button>
-            </div>
+      <div class="measure-modal-content">
+        <!-- Intro cards -->
+        <div class="measure-intro">
+          <div class="measure-intro-card">
+            <span class="measure-intro-label">Catalog</span>
+            <strong>{catalogCount} inferred measures</strong>
+          </div>
+          <div class="measure-intro-card">
+            <span class="measure-intro-label">Current scope</span>
+            <strong>{scope}</strong>
+          </div>
+        </div>
 
-            <!-- Table select -->
-            <label class="block">
-              <span class="text-xs text-text-secondary">Table</span>
-              <select
-                bind:value={selectedTable}
-                class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                  bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-              >
+        <!-- Tabs -->
+        <div class="measure-tabs" role="tablist" aria-label="Measure editor mode">
+          <button
+            class="measure-tab {activeTab === 'structured' ? 'active' : ''}"
+            role="tab"
+            aria-selected={activeTab === "structured"}
+            onclick={() => (activeTab = "structured")}
+          >Structured</button>
+          <button
+            class="measure-tab {activeTab === 'yaml' ? 'active' : ''}"
+            role="tab"
+            aria-selected={activeTab === "yaml"}
+            onclick={() => (activeTab = "yaml")}
+          >Raw YAML</button>
+        </div>
+
+        {#if activeTab === "structured"}
+          <!-- Structured panel -->
+          <div class="measure-form-grid">
+            <label class="measure-field">
+              <span>Mode</span>
+              <select bind:value={mode} title="Measure type">
+                <option value="physical">physical measure</option>
+                <option value="calculated">calculated measure</option>
+              </select>
+            </label>
+
+            <label class="measure-field">
+              <span>Target table</span>
+              <select bind:value={selectedTable} title="Target table">
                 <option value="">Select table...</option>
                 {#each tables as t}
                   <option value={t}>{t}</option>
@@ -243,192 +250,441 @@
             </label>
 
             {#if mode === "physical"}
-              <!-- Column select -->
-              <label class="block">
-                <span class="text-xs text-text-secondary">Column</span>
-                <select
-                  bind:value={selectedColumn}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                  disabled={!selectedTable}
-                >
-                  <option value="">Select column...</option>
-                  {#each columns as col}
-                    <option value={col.name}>{col.name} ({col.dtype})</option>
+              <label class="measure-field measure-field-wide">
+                <span>Inferred measure</span>
+                <select bind:value={selectedColumn} title="Select inferred measure" disabled={!selectedTable}>
+                  <option value="">Select inferred measure...</option>
+                  {#each physicalMeasures as m}
+                    <option value={m.column || m.name}>{m.table}.{m.column || m.name} ({m.aggregation})</option>
                   {/each}
                 </select>
               </label>
             {:else}
-              <!-- Calculated: name + expression -->
-              <label class="block">
-                <span class="text-xs text-text-secondary">Name</span>
-                <input
-                  type="text"
-                  bind:value={measureName}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                  placeholder="e.g. revenue_per_user"
-                />
+              <label class="measure-field">
+                <span>Calculated name</span>
+                <input type="text" bind:value={measureName} placeholder="net_load_mw" />
               </label>
-              <label class="block">
-                <span class="text-xs text-text-secondary">Expression</span>
-                <input
-                  type="text"
-                  bind:value={expression}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs font-mono rounded-md border
-                    border-border bg-bg text-text-primary
-                    focus:outline-none focus:ring-1 focus:ring-teal/40"
-                  placeholder="e.g. revenue / user_count"
-                />
+              <label class="measure-field measure-field-wide">
+                <span>Expression</span>
+                <input type="text" bind:value={expression} placeholder="load_mw - renewable_generation_mw" />
               </label>
             {/if}
 
-            <!-- Options -->
-            <div class="grid grid-cols-2 gap-3">
-              <label class="block">
-                <span class="text-xs text-text-secondary">Aggregation</span>
-                <select
-                  bind:value={aggregation}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                >
-                  {#each AGGREGATIONS as agg}
-                    <option value={agg}>{agg}</option>
-                  {/each}
-                </select>
-              </label>
-
-              <label class="block">
-                <span class="text-xs text-text-secondary">Average Strategy</span>
-                <select
-                  bind:value={averageStrategy}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                >
-                  <option value="">None</option>
-                  <option value="simple">Simple</option>
-                  <option value="weighted">Weighted</option>
-                </select>
-              </label>
-            </div>
-
-            {#if averageStrategy === "weighted"}
-              <label class="block">
-                <span class="text-xs text-text-secondary">Weight Column</span>
-                <select
-                  bind:value={weightColumn}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                  disabled={!selectedTable}
-                >
-                  <option value="">Select column...</option>
-                  {#each columns as col}
-                    <option value={col.name}>{col.name}</option>
-                  {/each}
-                </select>
-              </label>
-            {/if}
-
-            <div class="grid grid-cols-2 gap-3">
-              <label class="block">
-                <span class="text-xs text-text-secondary">Display Name</span>
-                <input
-                  type="text"
-                  bind:value={displayName}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                  placeholder="e.g. Total Revenue"
-                />
-              </label>
-              <label class="block">
-                <span class="text-xs text-text-secondary">Format</span>
-                <input
-                  type="text"
-                  bind:value={format}
-                  class="mt-0.5 w-full px-2 py-1.5 text-xs rounded-md border border-border
-                    bg-bg text-text-primary focus:outline-none focus:ring-1 focus:ring-teal/40"
-                  placeholder="e.g. $,.2f"
-                />
-              </label>
-            </div>
-
-            <!-- Chart types -->
-            <div>
-              <span class="text-xs text-text-secondary">Chart Types</span>
-              <div class="flex flex-wrap gap-1 mt-1">
-                {#each CHART_TYPES as ct}
-                  <button
-                    class="px-2 py-0.5 text-[10px] rounded-md cursor-pointer transition-colors
-                      {chartTypes.includes(ct)
-                      ? 'bg-teal text-white'
-                      : 'bg-surface-alt text-text-secondary border border-border'}"
-                    onclick={() => toggleChartType(ct)}
-                  >
-                    {ct}
-                  </button>
+            <label class="measure-field">
+              <span>Default aggregation</span>
+              <select bind:value={aggregation} title="Default aggregation">
+                {#each AGGREGATIONS as agg}
+                  <option value={agg}>{agg}</option>
                 {/each}
-              </div>
-            </div>
+              </select>
+            </label>
 
-            <!-- Insert button -->
-            <button
-              class="px-4 py-1.5 rounded-lg bg-teal text-white text-sm font-medium
-                hover:opacity-90 transition-opacity cursor-pointer"
-              onclick={handleInsert}
-            >
-              Insert into YAML
-            </button>
+            <label class="measure-field">
+              <span>Average strategy</span>
+              <select bind:value={averageStrategy} title="Average strategy">
+                <option value="">avg</option>
+                <option value="weighted_avg">weighted_avg</option>
+              </select>
+            </label>
+
+            <label class="measure-field">
+              <span>Weight column</span>
+              <select bind:value={weightColumn} title="Weight column (optional)" disabled={!selectedTable}>
+                <option value="">weight column (optional)</option>
+                {#each columns as col}
+                  <option value={col.name}>{col.name}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label class="measure-field">
+              <span>Display name</span>
+              <input type="text" bind:value={displayName} placeholder="Net load" />
+            </label>
+
+            <label class="measure-field">
+              <span>Format</span>
+              <select bind:value={format} title="Format">
+                {#each FORMATS as f}
+                  <option value={f.value}>{f.label}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label class="measure-field measure-field-wide">
+              <span>Preferred chart types</span>
+              <select
+                multiple
+                size="4"
+                title="Preferred chart types"
+                onchange={(e) => {
+                  const sel = e.currentTarget as HTMLSelectElement;
+                  chartTypes = Array.from(sel.selectedOptions, (o) => o.value);
+                }}
+              >
+                {#each CHART_TYPES as ct}
+                  <option value={ct} selected={chartTypes.includes(ct)}>{ct}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+
+          <div class="measure-actions">
+            <button class="measure-btn secondary" onclick={handleInsert}>Insert override</button>
+            <button class="measure-btn secondary" onclick={handleValidate}>Validate YAML</button>
+            <button class="measure-btn secondary" onclick={loadYaml}>Reload</button>
           </div>
         {:else}
-          <!-- YAML tab -->
-          <div class="space-y-2">
-            {#if yamlPath}
-              <div class="text-[10px] text-text-secondary font-mono truncate">
-                {yamlPath}
-              </div>
-            {/if}
-
+          <!-- YAML panel -->
+          <div class="measure-yaml-panel">
+            <div class="measure-yaml-head">
+              <span class="measure-yaml-title">Raw <code>measures.yaml</code></span>
+              <span class="measure-yaml-hint">Edit directly when the structured form is too limiting.</span>
+            </div>
             {#if yamlLoading}
-              <div class="text-xs text-text-secondary py-4 text-center">
+              <div style="text-align: center; padding: 24px; font-size: 0.8rem; color: var(--text-secondary);">
                 Loading...
               </div>
             {:else}
               <textarea
                 bind:value={yamlText}
                 spellcheck="false"
-                class="w-full h-64 px-3 py-2 rounded-lg bg-bg border border-border
-                  text-text-primary text-xs font-mono resize-y
-                  focus:outline-none focus:ring-2 focus:ring-teal/40"
+                rows="16"
+                placeholder="# measures.yaml will load here"
               ></textarea>
             {/if}
-
-            {#if yamlStatus}
-              <div
-                class="text-xs {yamlError ? 'text-red-500' : 'text-teal'}"
-              >
-                {yamlStatus}
-              </div>
-            {/if}
-
-            <div class="flex gap-2">
-              <button
-                class="px-3 py-1.5 rounded-lg bg-surface-alt text-text-primary text-sm
-                  border border-border hover:bg-teal/5 transition-colors cursor-pointer"
-                onclick={handleValidate}
-              >
-                Validate
-              </button>
-              <button
-                class="px-3 py-1.5 rounded-lg bg-teal text-white text-sm font-medium
-                  hover:opacity-90 transition-opacity cursor-pointer"
-                onclick={handleSave}
-              >
-                Save
-              </button>
-            </div>
           </div>
+
+          {#if yamlStatus}
+            <div class="measure-status {yamlError ? 'error' : 'success'}">
+              {yamlStatus}
+            </div>
+          {/if}
         {/if}
+      </div>
+
+      <!-- Footer -->
+      <div class="measure-modal-footer">
+        <button class="measure-btn secondary" onclick={onClose}>Close</button>
+        <button class="measure-btn primary" onclick={handleSave}>Save overrides</button>
       </div>
     </div>
   </div>
 {/if}
+
+<style>
+  .measure-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(900px, 92vw);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid color-mix(in srgb, var(--teal) 16%, var(--border));
+    border-radius: 20px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--orange) 10%, transparent), transparent 34%),
+      radial-gradient(circle at top right, color-mix(in srgb, var(--teal) 12%, transparent), transparent 36%),
+      var(--surface);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.28);
+    z-index: 60;
+  }
+
+  .measure-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--teal) 8%, var(--surface)), color-mix(in srgb, var(--surface) 96%, var(--bg)));
+  }
+
+  .measure-header-copy {
+    display: grid;
+    gap: 4px;
+  }
+
+  .measure-header-copy h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text);
+  }
+
+  .measure-header-copy p {
+    margin: 0;
+    max-width: 58ch;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+
+  .measure-header-copy code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+  }
+
+  .measure-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px;
+    transition: color 0.15s;
+  }
+  .measure-close-btn:hover {
+    color: var(--text);
+  }
+
+  .measure-modal-content {
+    flex: 1;
+    overflow-y: auto;
+    display: grid;
+    gap: 16px;
+    padding: 18px 20px;
+  }
+
+  /* Intro cards */
+  .measure-intro {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .measure-intro-card {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--border));
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--teal) 7%, var(--surface)), color-mix(in srgb, var(--bg) 92%, var(--surface)));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  }
+
+  .measure-intro-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+  }
+
+  .measure-intro-card strong {
+    font-size: 0.9rem;
+    color: var(--text);
+  }
+
+  /* Tabs */
+  .measure-tabs {
+    display: inline-grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid color-mix(in srgb, var(--teal) 14%, var(--border));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--bg) 88%, var(--surface));
+  }
+
+  .measure-tab {
+    padding: 10px 14px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  }
+
+  .measure-tab.active {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 82%, #1f8f88), color-mix(in srgb, var(--orange) 18%, var(--teal)));
+    color: white;
+    box-shadow: 0 8px 16px color-mix(in srgb, var(--teal) 20%, transparent);
+  }
+
+  /* Form grid */
+  .measure-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--teal) 14%, var(--border));
+    border-radius: 16px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, white), color-mix(in srgb, var(--bg) 94%, var(--surface)));
+  }
+
+  .measure-field {
+    display: grid;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+  }
+
+  .measure-field > span {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: color-mix(in srgb, var(--teal) 58%, var(--text-secondary));
+  }
+
+  .measure-field-wide {
+    grid-column: 1 / -1;
+  }
+
+  .measure-field input,
+  .measure-field select {
+    width: 100%;
+    min-width: 0;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg) 94%, white);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.86rem;
+    box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  }
+
+  .measure-field select[multiple] {
+    min-height: 124px;
+    padding: 8px;
+  }
+
+  .measure-field input:focus,
+  .measure-field select:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--teal) 55%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 16%, transparent);
+  }
+
+  .measure-field input:disabled,
+  .measure-field select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Actions */
+  .measure-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .measure-btn {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 12px;
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, box-shadow 0.15s;
+    min-width: 132px;
+  }
+
+  .measure-btn.secondary {
+    background: color-mix(in srgb, var(--surface) 85%, var(--bg));
+    border: 1px solid color-mix(in srgb, var(--teal) 18%, var(--border));
+    color: var(--text);
+  }
+  .measure-btn.secondary:hover {
+    background: color-mix(in srgb, var(--teal) 6%, var(--surface));
+  }
+
+  .measure-btn.primary {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 82%, #1f8f88), color-mix(in srgb, var(--orange) 26%, var(--teal)));
+    color: white;
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--teal) 22%, transparent);
+  }
+  .measure-btn.primary:hover {
+    opacity: 0.92;
+  }
+
+  /* YAML panel */
+  .measure-yaml-panel {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--orange) 18%, var(--border));
+    border-radius: 16px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--orange) 7%, var(--surface)), color-mix(in srgb, var(--bg) 95%, var(--surface)));
+  }
+
+  .measure-yaml-head {
+    display: grid;
+    gap: 4px;
+  }
+
+  .measure-yaml-title {
+    font-size: 0.86rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .measure-yaml-title code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+  }
+
+  .measure-yaml-hint {
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
+  }
+
+  .measure-yaml-panel textarea {
+    min-height: 320px;
+    width: 100%;
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--orange) 18%, var(--border));
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--bg) 96%, black);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.55;
+    box-sizing: border-box;
+    resize: vertical;
+  }
+
+  .measure-yaml-panel textarea:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--orange) 42%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 14%, transparent);
+  }
+
+  .measure-status {
+    font-size: 0.78rem;
+    padding: 8px 12px;
+    border-radius: 8px;
+  }
+  .measure-status.success {
+    color: var(--teal);
+  }
+  .measure-status.error {
+    color: #ef4444;
+  }
+
+  /* Footer */
+  .measure-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 40%, var(--surface));
+  }
+</style>

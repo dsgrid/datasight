@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { escapeHtml } from "$lib/utils/search";
-
   interface HealthCheck {
     name: string;
     ok: boolean;
@@ -29,62 +27,134 @@
   let hints = $derived(
     checks.filter((c) => !c.ok && c.remediation),
   );
+  let healthy = $derived((summary.fail_count || 0) === 0);
 </script>
 
 {#if !data}
-  <p class="text-xs text-text-secondary">Checking project health...</p>
+  <p class="health-empty">Checking project health...</p>
 {:else if checks.length === 0}
-  <p class="text-xs text-text-secondary">No health data available.</p>
+  <p class="health-empty">No health data available.</p>
 {:else}
-  <div class="space-y-3">
+  <div class="health-grid">
     <!-- Summary -->
-    <div
-      class="px-3 py-2 rounded-lg text-sm
-        {(summary.fail_count || 0) > 0
-        ? 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300'
-        : 'bg-teal/5 text-teal'}"
-    >
-      <strong class="block text-xs">{projectDir}</strong>
-      <span class="text-xs">
-        {summary.ok_count || 0} OK &bull; {summary.fail_count || 0} failing
-      </span>
+    <div class="health-summary {healthy ? 'healthy' : 'has-failures'}">
+      <strong>{projectDir}</strong>
+      <span>{summary.ok_count || 0} OK &bull; {summary.fail_count || 0} failing</span>
     </div>
 
     <!-- Remediation hints -->
     {#if hints.length > 0}
-      <div class="space-y-1">
+      <div class="health-hints">
         {#each hints as hint}
-          <div class="text-xs px-3 py-1.5 rounded bg-orange/5 text-orange">
-            <strong>{hint.name}:</strong>
-            {hint.remediation}
+          <div class="health-hint">
+            <strong>{hint.name}:</strong> {hint.remediation}
           </div>
         {/each}
       </div>
     {/if}
 
     <!-- Check rows -->
-    <div class="space-y-1">
-      {#each checks as check}
-        <div
-          class="flex items-center gap-2 px-2 py-1.5 rounded text-xs
-            {check.ok ? '' : 'bg-red-50/50 dark:bg-red-900/10'}"
-        >
-          <span
-            class="w-8 text-center font-semibold rounded px-1
-              {check.ok
-              ? 'text-teal bg-teal/10'
-              : 'text-red-600 bg-red-100 dark:bg-red-900/30'}"
-          >
-            {check.ok ? "OK" : "FAIL"}
-          </span>
-          <span class="font-medium text-text-primary flex-1 truncate">
-            {check.name}
-          </span>
-          <span class="text-text-secondary truncate max-w-32">
-            {check.detail || check.category}
-          </span>
-        </div>
-      {/each}
-    </div>
+    {#each checks as check}
+      <div class="health-row {check.ok ? '' : 'fail'}">
+        <span class="health-name">{check.name}</span>
+        <span class="health-status {check.ok ? 'ok' : 'fail'}">
+          {check.ok ? "OK" : "FAIL"}
+        </span>
+        {#if check.detail}
+          <span class="health-detail">{check.detail}</span>
+        {:else}
+          <span class="health-detail">{check.category}</span>
+        {/if}
+      </div>
+    {/each}
   </div>
 {/if}
+
+<style>
+  .health-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .health-empty {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+  }
+
+  .health-summary {
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.78rem;
+    word-break: break-word;
+    display: grid;
+    gap: 4px;
+  }
+
+  .health-summary.healthy {
+    border-color: color-mix(in srgb, var(--teal) 32%, var(--border));
+    background: color-mix(in srgb, var(--teal) 6%, var(--bg));
+  }
+
+  .health-summary.has-failures {
+    border-color: color-mix(in srgb, var(--orange) 34%, var(--border));
+    background: color-mix(in srgb, var(--orange) 6%, var(--bg));
+  }
+
+  .health-hints {
+    display: grid;
+    gap: 8px;
+  }
+
+  .health-hint {
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--orange) 28%, var(--border));
+    background: color-mix(in srgb, var(--orange) 6%, var(--bg));
+    color: var(--text);
+    font-size: 0.74rem;
+  }
+
+  .health-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 84%, var(--surface));
+  }
+
+  .health-row.fail {
+    border-color: color-mix(in srgb, var(--orange) 24%, var(--border));
+  }
+
+  .health-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .health-status {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .health-status.ok {
+    color: var(--teal);
+  }
+
+  .health-status.fail {
+    color: var(--orange);
+  }
+
+  .health-detail {
+    grid-column: 1 / -1;
+    color: var(--text-secondary);
+    font-size: 0.74rem;
+    word-break: break-word;
+  }
+</style>

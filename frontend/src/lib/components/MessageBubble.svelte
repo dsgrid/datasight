@@ -81,7 +81,7 @@
   }
 </script>
 
-<div class="message-row flex min-w-0 max-w-[900px] mx-auto w-full animate-fade-in {role === 'user' ? 'justify-end' : ''} group"
+<div class="message-row flex min-w-0 w-full animate-fade-in {role === 'user' ? 'justify-end' : ''} group"
   style="margin-bottom: 18px;">
   {#if role === "user"}
     <!-- User actions -->

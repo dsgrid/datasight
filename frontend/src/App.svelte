@@ -48,7 +48,7 @@
   let projectsPanelOpen = $state(false);
   let measureEditorOpen = $state(false);
   let shortcutsOpen = $state(false);
-  let sqlPanelOpen = $state(false);
+  let sqlPanelOpen = $state(true);
   let exportMode = $state(false);
   let exportExcludeIndices = $state(new Set<number>());
   let booting = $state(true);

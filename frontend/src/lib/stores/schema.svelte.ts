@@ -13,8 +13,8 @@ export interface TableInfo {
 }
 
 export interface ExampleQuery {
-  query: string;
-  description?: string;
+  question: string;
+  sql: string;
   tags?: string[];
 }
 

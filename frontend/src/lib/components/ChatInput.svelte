@@ -42,7 +42,7 @@
 
 <div class="shrink-0" style="padding: 12px 16px 16px; background: var(--bg); border-top: 1px solid var(--border);">
   <form
-    class="flex items-end max-w-[900px] mx-auto w-full transition-[border-color,box-shadow] duration-150
+    class="flex items-end w-full transition-[border-color,box-shadow] duration-150
       focus-within:border-teal focus-within:shadow-[0_0_0_2px_rgba(21,168,168,0.15)]"
     style="gap: 8px; padding: 10px 10px 10px 16px; border-radius: 16px;
            background: color-mix(in srgb, var(--surface) 96%, var(--bg) 4%);
