@@ -233,6 +233,7 @@ Use:
 - `schema_description.md` for narrative domain context
 - `queries.yaml` for example questions and correct SQL
 - `measures.yaml` for metric semantics and calculated measures
+- [`time_series.yaml`](time-series.md) for temporal structure and completeness expectations
 
 ## Suggested Workflow
 

@@ -33,6 +33,7 @@ from datasight.config import (
     load_example_queries,
     load_measure_overrides,
     load_schema_description,
+    load_time_series_config,
 )
 import yaml
 from datasight.data_profile import (
@@ -42,6 +43,7 @@ from datasight.data_profile import (
     find_table_info,
     format_measure_overrides_yaml,
     format_measure_prompt_context,
+    format_time_series_prompt_context,
     build_prompt_recipes,
     build_quality_overview,
     build_trend_overview,
@@ -839,6 +841,11 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     )
     if measure_text:
         state.schema_text += measure_text
+
+    time_series_configs = load_time_series_config(None, project_dir)
+    ts_text = format_time_series_prompt_context(time_series_configs)
+    if ts_text:
+        state.schema_text += ts_text
 
     example_queries = load_example_queries(os.environ.get("EXAMPLE_QUERIES_PATH"), project_dir)
     state.example_queries_list = example_queries

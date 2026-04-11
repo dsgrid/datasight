@@ -98,8 +98,10 @@ async def _run_ask_pipeline(
         load_example_queries,
         load_measure_overrides,
         load_schema_description,
+        load_time_series_config,
     )
     from datasight.cost import build_cost_data, log_query_cost
+    from datasight.data_profile import format_time_series_prompt_context
     from datasight.prompts import build_system_prompt
     from datasight.query_log import QueryLogger
     from datasight.schema import format_schema_context, introspect_schema
@@ -116,6 +118,7 @@ async def _run_ask_pipeline(
     user_desc = load_schema_description(None, project_dir)
     example_queries = load_example_queries(None, project_dir)
     measure_overrides = load_measure_overrides(None, project_dir)
+    time_series_configs = load_time_series_config(None, project_dir)
     measure_rules = build_measure_rule_map(measure_overrides)
     schema_text = format_schema_context(tables, user_desc)
     if example_queries:
@@ -140,6 +143,10 @@ async def _run_ask_pipeline(
     )
     if measure_text:
         schema_text += measure_text
+
+    ts_text = format_time_series_prompt_context(time_series_configs)
+    if ts_text:
+        schema_text += ts_text
 
     schema_info = [
         {
@@ -382,6 +389,19 @@ def _render_quality_markdown(quality_data: dict[str, Any]) -> str:
         for item in quality_data["date_columns"]:
             lines.append(
                 f"- `{item['table']}.{item['column']}`: {item.get('min') or '?'} -> {item.get('max') or '?'}"
+            )
+    if quality_data.get("time_series_summaries"):
+        lines.extend(["", "## Time Series"])
+        for s in quality_data["time_series_summaries"]:
+            lines.append(
+                f"- `{s['table']}.{s['timestamp_column']}`: {s.get('frequency', '')} — "
+                f"{s.get('total_rows', '')} rows, {s.get('min_ts', '')} to {s.get('max_ts', '')}"
+            )
+    if quality_data.get("time_series_issues"):
+        lines.extend(["", "## Temporal Completeness"])
+        for item in quality_data["time_series_issues"]:
+            lines.append(
+                f"- `{item['table']}.{item['timestamp_column']}` [{item['issue']}]: {item['detail']}"
             )
     if quality_data["notes"]:
         lines.extend(["", "## Notes"])
@@ -979,16 +999,16 @@ click.rich_click.COMMAND_GROUPS = {
             "commands": ["inspect", "run"],
         },
         {
+            "name": "AI-powered",
+            "commands": ["ask", "verify"],
+        },
+        {
             "name": "Data analysis (no LLM)",
             "commands": ["profile", "quality", "measures", "dimensions", "trends", "recipes"],
         },
         {
             "name": "Project setup",
             "commands": ["init", "generate", "demo"],
-        },
-        {
-            "name": "AI-powered",
-            "commands": ["ask", "verify"],
         },
         {
             "name": "Utilities",
@@ -1073,6 +1093,7 @@ def init(project_dir: str, overwrite: bool):
         "env.template": ".env",
         "schema_description.md": "schema_description.md",
         "queries.yaml": "queries.yaml",
+        "time_series.yaml": "time_series.yaml",
     }
 
     created = []
@@ -1164,7 +1185,7 @@ def demo(project_dir: str, min_year: int):
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def generate(files, project_dir, model, overwrite, table, verbose):
-    """Generate schema_description.md, queries.yaml, and measures.yaml from your database.
+    """Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 
     Connects to the database, inspects tables and columns, samples
     code/enum columns, and asks the LLM to produce documentation
@@ -1182,6 +1203,7 @@ def generate(files, project_dir, model, overwrite, table, verbose):
     schema_path = Path(project_dir) / "schema_description.md"
     queries_path = Path(project_dir) / "queries.yaml"
     measures_path = Path(project_dir) / "measures.yaml"
+    time_series_path = Path(project_dir) / "time_series.yaml"
     if not overwrite:
         existing = []
         if schema_path.exists():
@@ -1190,6 +1212,8 @@ def generate(files, project_dir, model, overwrite, table, verbose):
             existing.append("queries.yaml")
         if measures_path.exists():
             existing.append("measures.yaml")
+        if time_series_path.exists():
+            existing.append("time_series.yaml")
         if existing:
             click.echo(
                 f"Error: {', '.join(existing)} already exist. Use --overwrite to replace.",
@@ -1328,6 +1352,31 @@ def generate(files, project_dir, model, overwrite, table, verbose):
 
     measures_path.write_text(asyncio.run(_build_measure_scaffold()), encoding="utf-8")
     written.append("measures.yaml")
+
+    async def _build_time_series_scaffold() -> str:
+        from datasight.data_profile import format_time_series_yaml
+
+        if use_files:
+            from datasight.schema import introspect_schema
+
+            tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+            schema_info = [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "columns": [
+                        {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
+                        for c in t.columns
+                    ],
+                }
+                for t in tables
+            ]
+        else:
+            _, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        return format_time_series_yaml(schema_info)
+
+    time_series_path.write_text(asyncio.run(_build_time_series_scaffold()), encoding="utf-8")
+    written.append("time_series.yaml")
 
     click.echo()
     if written:
@@ -2306,6 +2355,11 @@ def quality(project_dir, table, output_format, output_path):
         click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
         sys.exit(1)
 
+    from datasight.config import load_time_series_config
+    from datasight.data_profile import build_time_series_quality
+
+    time_series_configs = load_time_series_config(None, project_dir)
+
     async def _run_quality():
         sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
         if table:
@@ -2313,7 +2367,15 @@ def quality(project_dir, table, output_format, output_path):
             if table_info is None:
                 raise click.ClickException(f"Table not found: {table}")
             schema_info = [table_info]
-        return await build_quality_overview(schema_info, sql_runner.run_sql)
+        base = await build_quality_overview(schema_info, sql_runner.run_sql)
+        ts_configs = time_series_configs
+        if table and ts_configs:
+            ts_configs = [c for c in ts_configs if c["table"].lower() == table.lower()]
+        if ts_configs:
+            ts_data = await build_time_series_quality(ts_configs, sql_runner.run_sql)
+            base["time_series_issues"] = ts_data.get("time_series_issues", [])
+            base["time_series_summaries"] = ts_data.get("time_series_summaries", [])
+        return base
 
     quality_data = asyncio.run(_run_quality())
 
@@ -2370,6 +2432,37 @@ def quality(project_dir, table, output_format, output_path):
                         _format_profile_value(item.get("max")),
                     ]
                     for item in quality_data["date_columns"]
+                ],
+            )
+        )
+    if quality_data.get("time_series_summaries"):
+        console.print(
+            _build_profile_detail_table(
+                "Time Series",
+                [("Column", "left"), ("Frequency", "left"), ("Rows", "right"), ("Range", "left")],
+                [
+                    [
+                        f"{s['table']}.{s['timestamp_column']}",
+                        s.get("frequency", ""),
+                        str(s.get("total_rows", "")),
+                        f"{s.get('min_ts', '')} — {s.get('max_ts', '')}",
+                    ]
+                    for s in quality_data["time_series_summaries"]
+                ],
+            )
+        )
+    if quality_data.get("time_series_issues"):
+        console.print(
+            _build_profile_detail_table(
+                "Temporal Completeness",
+                [("Column", "left"), ("Issue", "left"), ("Detail", "left")],
+                [
+                    [
+                        f"{item['table']}.{item['timestamp_column']}",
+                        item["issue"],
+                        item["detail"],
+                    ]
+                    for item in quality_data["time_series_issues"]
                 ],
             )
         )

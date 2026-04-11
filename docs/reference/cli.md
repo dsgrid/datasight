@@ -55,7 +55,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 
 - `init`: Create a new datasight project with template files.
 - `demo`: Download an EIA energy demo dataset and create a ready-to-run project.
-- `generate`: Generate schema_description.md, queries.yaml, and measures.yaml from your database.
+- `generate`: Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 - `run`: Start the datasight web UI.
 - `verify`: Verify LLM-generated SQL against expected results.
 - `ask`: Ask a question about your data from the command line.
@@ -111,7 +111,7 @@ datasight demo [OPTIONS] [PROJECT_DIR]
 
 ### `datasight generate`
 
-Generate schema_description.md, queries.yaml, and measures.yaml from your database.
+Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 
 Connects to the database, inspects tables and columns, samples
 code/enum columns, and asks the LLM to produce documentation

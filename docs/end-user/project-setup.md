@@ -24,7 +24,7 @@ mkdir my-project && cd my-project
 datasight init
 ```
 
-This creates three template files:
+This creates four template files:
 
 `.env`
 : API key and database connection settings.
@@ -34,6 +34,9 @@ This creates three template files:
 
 `queries.yaml`
 : Example question/SQL pairs.
+
+`time_series.yaml`
+: Declare temporal structure for completeness checks. See [Time series](time-series.md).
 
 ## Configure
 
@@ -118,8 +121,9 @@ their meanings, and produces draft versions of both files. Review and edit
 the results — the AI gets you a solid starting point but you know your data
 best.
 
-If datasight detects likely measures and aggregation rules, it can also
-seed a `measures.yaml` file for project-specific semantic overrides.
+It also seeds a `measures.yaml` file for project-specific semantic
+overrides and a `time_series.yaml` file for temporal completeness
+declarations (see [Time series](time-series.md)).
 
 To regenerate after making database changes:
 

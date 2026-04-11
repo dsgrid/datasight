@@ -1,0 +1,19 @@
+# datasight time series declarations
+# Declare the temporal structure of tables so datasight can check completeness.
+#
+# Required fields:
+#   table            — table name
+#   timestamp_column — the column defining the time axis
+#   frequency        — expected interval as ISO 8601 duration:
+#                      PT1H (hourly), PT15M (15-min), PT30M (30-min),
+#                      P1D (daily), P1M (monthly)
+#
+# Optional fields:
+#   group_columns    — dimensions that define independent time arrays
+#   time_zone        — IANA time zone (default: UTC)
+
+# - table: generation_hourly
+#   timestamp_column: datetime_utc
+#   frequency: PT1H
+#   group_columns: [region, energy_source_code]
+#   time_zone: UTC

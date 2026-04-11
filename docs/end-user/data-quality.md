@@ -61,6 +61,7 @@ Use it to spot:
 - suspicious numeric ranges (constant values, averages at boundaries)
 - date coverage gaps
 - quick notes worth turning into follow-up questions
+- temporal completeness issues when [`time_series.yaml`](time-series.md) is present
 
 ## Find measures
 

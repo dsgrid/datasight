@@ -1341,3 +1341,301 @@ async def _get_sample_values(run_sql: RunSql, table: str, column: str) -> list[s
     if df.empty or "value" not in df.columns:
         return []
     return [str(value) for value in df["value"].tolist() if value is not None]
+
+
+# ---------------------------------------------------------------------------
+# Time series quality checks
+# ---------------------------------------------------------------------------
+
+_FREQUENCY_TO_INTERVAL: dict[str, str] = {
+    "PT1H": "1 HOUR",
+    "PT15M": "15 MINUTE",
+    "PT30M": "30 MINUTE",
+    "P1D": "1 DAY",
+    "P1M": "1 MONTH",
+}
+
+_FREQUENCY_LABELS: dict[str, str] = {
+    "PT1H": "hourly",
+    "PT15M": "15-minute",
+    "PT30M": "30-minute",
+    "P1D": "daily",
+    "P1M": "monthly",
+}
+
+
+async def build_time_series_quality(
+    time_series_configs: list[dict[str, Any]],
+    run_sql: RunSql,
+) -> dict[str, Any]:
+    """Check temporal completeness for declared time series.
+
+    Returns a dict with ``time_series_issues`` (list of findings) and
+    ``time_series_summaries`` (one per declared entry with row counts).
+    """
+    issues: list[dict[str, Any]] = []
+    summaries: list[dict[str, Any]] = []
+
+    for ts in time_series_configs:
+        table = ts["table"]
+        ts_col = ts["timestamp_column"]
+        frequency = ts["frequency"]
+        group_cols = ts.get("group_columns") or []
+        time_zone = ts.get("time_zone", "UTC")
+        interval_sql = _FREQUENCY_TO_INTERVAL.get(frequency)
+        if not interval_sql:
+            continue
+
+        qt = _quote_identifier(table)
+        qc = _quote_identifier(ts_col)
+        q_groups = [_quote_identifier(g) for g in group_cols]
+
+        # --- Summary: row count + date range ---
+        summary = await _ts_summary(run_sql, qt, qc, q_groups, table, ts_col, group_cols)
+        if summary:
+            summary["frequency"] = frequency
+            summary["time_zone"] = time_zone
+            summaries.append(summary)
+
+        # --- Gap detection ---
+        gap_issues = await _ts_detect_gaps(
+            run_sql, qt, qc, q_groups, interval_sql, table, ts_col, group_cols, frequency
+        )
+        issues.extend(gap_issues)
+
+        # --- Duplicate detection ---
+        dup_issues = await _ts_detect_duplicates(
+            run_sql, qt, qc, q_groups, table, ts_col, group_cols
+        )
+        issues.extend(dup_issues)
+
+    return {
+        "time_series_issues": issues[:20],
+        "time_series_summaries": summaries,
+    }
+
+
+async def _ts_summary(
+    run_sql: RunSql,
+    qt: str,
+    qc: str,
+    q_groups: list[str],
+    table: str,
+    ts_col: str,
+    group_cols: list[str],
+) -> dict[str, Any] | None:
+    """Get summary stats for a time series declaration."""
+    sql = f"SELECT COUNT(*) AS total_rows, MIN({qc}) AS min_ts, MAX({qc}) AS max_ts"
+    if q_groups:
+        sql += f", COUNT(DISTINCT ({', '.join(q_groups)})) AS group_count"
+    sql += f" FROM {qt} WHERE {qc} IS NOT NULL"
+
+    try:
+        df = await run_sql(sql)
+    except Exception as exc:
+        logger.debug(f"Time series summary failed for {table}.{ts_col}: {exc}")
+        return None
+    if df.empty:
+        return None
+
+    row = df.iloc[0]
+    result: dict[str, Any] = {
+        "table": table,
+        "timestamp_column": ts_col,
+        "group_columns": group_cols,
+        "total_rows": int(row.get("total_rows") or 0),
+        "min_ts": str(row.get("min_ts") or ""),
+        "max_ts": str(row.get("max_ts") or ""),
+    }
+    if q_groups:
+        result["group_count"] = int(row.get("group_count") or 0)
+    return result
+
+
+async def _ts_detect_gaps(
+    run_sql: RunSql,
+    qt: str,
+    qc: str,
+    q_groups: list[str],
+    interval_sql: str,
+    table: str,
+    ts_col: str,
+    group_cols: list[str],
+    frequency: str,
+) -> list[dict[str, Any]]:
+    """Detect gaps larger than the declared frequency."""
+    partition = f"PARTITION BY {', '.join(q_groups)} " if q_groups else ""
+    group_select = (", ".join(q_groups) + ", ") if q_groups else ""
+
+    sql = (
+        f"WITH gaps AS ("
+        f"  SELECT {group_select}{qc} AS ts, "
+        f"    LEAD({qc}) OVER ({partition}ORDER BY {qc}) AS next_ts "
+        f"  FROM {qt} WHERE {qc} IS NOT NULL"
+        f") "
+        f"SELECT {group_select}ts, next_ts "
+        f"FROM gaps "
+        f"WHERE next_ts - ts > INTERVAL '{interval_sql}' "
+        f"ORDER BY next_ts - ts DESC "
+        f"LIMIT 10"
+    )
+
+    try:
+        df = await run_sql(sql)
+    except Exception as exc:
+        logger.debug(f"Gap detection failed for {table}.{ts_col}: {exc}")
+        return []
+
+    if df.empty:
+        return []
+
+    label = _FREQUENCY_LABELS.get(frequency, frequency)
+    results: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        group_values = {g: str(row.get(g, "")) for g in group_cols} if group_cols else {}
+        results.append(
+            {
+                "table": table,
+                "timestamp_column": ts_col,
+                "issue": "gap",
+                "detail": f"Gap from {row['ts']} to {row['next_ts']} (expected {label})",
+                "group_values": group_values,
+            }
+        )
+    return results
+
+
+async def _ts_detect_duplicates(
+    run_sql: RunSql,
+    qt: str,
+    qc: str,
+    q_groups: list[str],
+    table: str,
+    ts_col: str,
+    group_cols: list[str],
+) -> list[dict[str, Any]]:
+    """Detect duplicate timestamps within each group."""
+    group_by_cols = [qc] + q_groups
+    group_select = ", ".join(group_by_cols)
+
+    sql = (
+        f"SELECT {group_select}, COUNT(*) AS n "
+        f"FROM {qt} WHERE {qc} IS NOT NULL "
+        f"GROUP BY {group_select} "
+        f"HAVING COUNT(*) > 1 "
+        f"ORDER BY COUNT(*) DESC "
+        f"LIMIT 10"
+    )
+
+    try:
+        df = await run_sql(sql)
+    except Exception as exc:
+        logger.debug(f"Duplicate detection failed for {table}.{ts_col}: {exc}")
+        return []
+
+    if df.empty:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        group_values = {g: str(row.get(g, "")) for g in group_cols} if group_cols else {}
+        results.append(
+            {
+                "table": table,
+                "timestamp_column": ts_col,
+                "issue": "duplicate",
+                "detail": f"Timestamp {row[ts_col]} appears {int(row['n'])} times",
+                "group_values": group_values,
+            }
+        )
+    return results
+
+
+def format_time_series_prompt_context(
+    time_series_configs: list[dict[str, Any]],
+) -> str:
+    """Render time series declarations as prompt guidance for the LLM."""
+    if not time_series_configs:
+        return ""
+
+    lines = [
+        "\n## Time Series Structure",
+        "The following tables contain declared time series with known temporal structure.",
+        "Use the timestamp column and group columns below when analyzing temporal patterns,",
+        "detecting gaps, or aggregating over time.",
+    ]
+    for ts in time_series_configs:
+        parts = [
+            f"frequency={ts['frequency']}",
+        ]
+        if ts.get("group_columns"):
+            parts.append(f"groups=[{', '.join(ts['group_columns'])}]")
+        parts.append(f"time_zone={ts.get('time_zone', 'UTC')}")
+        lines.append(f"- {ts['table']}.{ts['timestamp_column']}: {', '.join(parts)}")
+    return "\n".join(lines) + "\n"
+
+
+def format_time_series_yaml(
+    schema_info: list[dict[str, Any]],
+) -> str:
+    """Generate a time_series.yaml scaffold from schema introspection.
+
+    Detects tables with timestamp/datetime columns and high row counts
+    as likely time series candidates.
+    """
+    candidates: list[dict[str, Any]] = []
+    for table in schema_info:
+        table_name = table["name"]
+        row_count = table.get("row_count") or 0
+        if row_count < 100:
+            continue
+        for column in table.get("columns", []):
+            if _is_date_dtype(column.get("dtype", "")):
+                candidates.append(
+                    {
+                        "table": table_name,
+                        "timestamp_column": column["name"],
+                    }
+                )
+                break  # one timestamp column per table for the scaffold
+
+    header = [
+        "# datasight time series declarations",
+        "# Declare the temporal structure of tables so datasight can check completeness.",
+        "#",
+        "# Required fields:",
+        "#   table            — table name",
+        "#   timestamp_column — the column defining the time axis",
+        "#   frequency        — expected interval as ISO 8601 duration:",
+        "#                      PT1H (hourly), PT15M (15-min), PT30M (30-min),",
+        "#                      P1D (daily), P1M (monthly)",
+        "#",
+        "# Optional fields:",
+        "#   group_columns    — dimensions that define independent time arrays",
+        "#   time_zone        — IANA time zone (default: UTC)",
+        "",
+    ]
+    if not candidates:
+        header.append("# No timestamp columns detected. Add entries manually:")
+        header.append("# - table: my_table")
+        header.append("#   timestamp_column: datetime_utc")
+        header.append("#   frequency: PT1H")
+        header.append("#   group_columns: [region, fuel_type]")
+        header.append("#   time_zone: UTC")
+        header.append("")
+        return "\n".join(header)
+
+    entries: list[dict[str, Any]] = []
+    for c in candidates:
+        entries.append(
+            {
+                "table": c["table"],
+                "timestamp_column": c["timestamp_column"],
+                "frequency": "PT1H",
+                "group_columns": [],
+                "time_zone": "UTC",
+            }
+        )
+
+    body = yaml.safe_dump(entries, sort_keys=False, allow_unicode=False).strip()
+    return "\n".join(header) + body + "\n"

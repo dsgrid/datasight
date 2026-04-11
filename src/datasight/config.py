@@ -275,6 +275,64 @@ def load_measure_overrides(path: str | None, project_dir: str) -> list[dict[str,
     return valid
 
 
+_VALID_FREQUENCIES = {"PT1H", "PT15M", "PT30M", "P1D", "P1M"}
+
+
+def load_time_series_config(path: str | None, project_dir: str) -> list[dict[str, Any]]:
+    """Load time series declarations from YAML.
+
+    Expected format is a list of mappings with at least ``table``,
+    ``timestamp_column``, and ``frequency`` (ISO 8601 duration).
+    Optional: ``group_columns`` (list of column names) and
+    ``time_zone`` (IANA time zone string, default ``UTC``).
+    """
+    if not path:
+        default = os.path.join(project_dir, "time_series.yaml")
+        if os.path.exists(default):
+            path = default
+        else:
+            return []
+    if not os.path.exists(path):
+        logger.warning(f"Time series config not found: {path}")
+        return []
+    with open(path, encoding="utf-8") as f:
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse {path}: {e}")
+            return []
+    if not isinstance(data, list):
+        logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
+        return []
+
+    valid: list[dict[str, Any]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        table = str(entry.get("table") or "").strip()
+        timestamp_column = str(entry.get("timestamp_column") or "").strip()
+        frequency = str(entry.get("frequency") or "").strip().upper()
+        if not table or not timestamp_column or not frequency:
+            continue
+        if frequency not in _VALID_FREQUENCIES:
+            logger.warning(
+                f"Unsupported frequency '{frequency}' for {table}.{timestamp_column} "
+                f"(expected one of {', '.join(sorted(_VALID_FREQUENCIES))})"
+            )
+            continue
+        item: dict[str, Any] = {
+            "table": table,
+            "timestamp_column": timestamp_column,
+            "frequency": frequency,
+        }
+        group_columns = entry.get("group_columns")
+        if isinstance(group_columns, list):
+            item["group_columns"] = [str(v).strip() for v in group_columns if v]
+        item["time_zone"] = str(entry.get("time_zone") or "UTC").strip()
+        valid.append(item)
+    return valid
+
+
 def format_example_queries(queries: list[dict[str, str]]) -> str:
     """Format example queries as a system prompt section.
 

@@ -76,6 +76,7 @@ nav:
           - Ask questions (CLI): end-user/ask-questions.md
           - Create visualizations: end-user/visualizations.md
           - Semantic measures: end-user/measures.md
+          - Time series: end-user/time-series.md
       - Try the demo: end-user/demo-dataset.md
       - Query confidence: end-user/query-confidence.md
       - SQL query log: end-user/query-log.md

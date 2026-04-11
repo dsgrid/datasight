@@ -2365,3 +2365,240 @@ def test_run_ask_pipeline_session_ids_unique_within_second(monkeypatch, project_
     cost_entries = [e for e in entries if e.get("type") == "cost"]
     assert len(cost_entries) == 2
     assert cost_entries[0]["session_id"] != cost_entries[1]["session_id"]
+
+
+# ---------------------------------------------------------------------------
+# time_series.yaml — config loading, quality checks, prompt formatting
+# ---------------------------------------------------------------------------
+
+
+def test_load_time_series_config_valid(tmp_path):
+    from datasight.config import load_time_series_config
+
+    yaml_text = (
+        "- table: gen_hourly\n"
+        "  timestamp_column: ts\n"
+        "  frequency: PT1H\n"
+        "  group_columns: [region, fuel]\n"
+        "  time_zone: America/New_York\n"
+    )
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert len(configs) == 1
+    assert configs[0]["table"] == "gen_hourly"
+    assert configs[0]["timestamp_column"] == "ts"
+    assert configs[0]["frequency"] == "PT1H"
+    assert configs[0]["group_columns"] == ["region", "fuel"]
+    assert configs[0]["time_zone"] == "America/New_York"
+
+
+def test_load_time_series_config_missing_fields(tmp_path):
+    from datasight.config import load_time_series_config
+
+    yaml_text = "- table: gen_hourly\n  timestamp_column: ts\n  # no frequency\n"
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_load_time_series_config_bad_frequency(tmp_path):
+    from datasight.config import load_time_series_config
+
+    yaml_text = "- table: gen_hourly\n  timestamp_column: ts\n  frequency: 1h\n"
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_load_time_series_config_defaults(tmp_path):
+    from datasight.config import load_time_series_config
+
+    yaml_text = "- table: gen_hourly\n  timestamp_column: ts\n  frequency: P1D\n"
+    (tmp_path / "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    configs = load_time_series_config(None, str(tmp_path))
+    assert len(configs) == 1
+    assert configs[0]["time_zone"] == "UTC"
+    assert "group_columns" not in configs[0]
+
+
+def test_load_time_series_config_no_file(tmp_path):
+    from datasight.config import load_time_series_config
+
+    configs = load_time_series_config(None, str(tmp_path))
+    assert configs == []
+
+
+def test_format_time_series_prompt_context():
+    from datasight.data_profile import format_time_series_prompt_context
+
+    configs = [
+        {
+            "table": "gen_hourly",
+            "timestamp_column": "datetime_utc",
+            "frequency": "PT1H",
+            "group_columns": ["region", "fuel"],
+            "time_zone": "UTC",
+        }
+    ]
+    text = format_time_series_prompt_context(configs)
+    assert "## Time Series Structure" in text
+    assert "gen_hourly.datetime_utc" in text
+    assert "frequency=PT1H" in text
+    assert "groups=[region, fuel]" in text
+    assert "time_zone=UTC" in text
+
+
+def test_format_time_series_prompt_context_empty():
+    from datasight.data_profile import format_time_series_prompt_context
+
+    assert format_time_series_prompt_context([]) == ""
+
+
+def test_format_time_series_yaml_scaffold():
+    from datasight.data_profile import format_time_series_yaml
+
+    schema_info = [
+        {
+            "name": "gen_hourly",
+            "row_count": 8760,
+            "columns": [
+                {"name": "datetime_utc", "dtype": "TIMESTAMP"},
+                {"name": "region", "dtype": "VARCHAR"},
+                {"name": "mwh", "dtype": "DOUBLE"},
+            ],
+        },
+        {
+            "name": "plants",
+            "row_count": 50,
+            "columns": [
+                {"name": "id", "dtype": "INTEGER"},
+                {"name": "name", "dtype": "VARCHAR"},
+            ],
+        },
+    ]
+    text = format_time_series_yaml(schema_info)
+    assert "gen_hourly" in text
+    assert "datetime_utc" in text
+    assert "PT1H" in text
+    # plants has <100 rows, should not appear
+    assert "plants" not in text
+
+
+def test_format_time_series_yaml_no_candidates():
+    from datasight.data_profile import format_time_series_yaml
+
+    schema_info = [
+        {
+            "name": "products",
+            "row_count": 5,
+            "columns": [
+                {"name": "id", "dtype": "INTEGER"},
+                {"name": "name", "dtype": "VARCHAR"},
+            ],
+        }
+    ]
+    text = format_time_series_yaml(schema_info)
+    assert "No timestamp columns detected" in text
+
+
+def test_build_time_series_quality_detects_gaps():
+    import asyncio
+
+    from datasight.data_profile import build_time_series_quality
+
+    async def mock_run_sql(sql):
+        if "MIN" in sql:
+            return pd.DataFrame(
+                [{"total_rows": 100, "min_ts": "2024-01-01 00:00", "max_ts": "2024-01-05 00:00"}]
+            )
+        if "LEAD" in sql:
+            return pd.DataFrame([{"ts": "2024-01-02 03:00", "next_ts": "2024-01-02 06:00"}])
+        if "HAVING" in sql:
+            return pd.DataFrame()
+        return pd.DataFrame()
+
+    configs = [
+        {
+            "table": "gen_hourly",
+            "timestamp_column": "ts",
+            "frequency": "PT1H",
+            "time_zone": "UTC",
+        }
+    ]
+    result = asyncio.run(build_time_series_quality(configs, mock_run_sql))
+    assert len(result["time_series_issues"]) >= 1
+    gap = result["time_series_issues"][0]
+    assert gap["issue"] == "gap"
+    assert "2024-01-02 03:00" in gap["detail"]
+
+
+def test_build_time_series_quality_detects_duplicates():
+    import asyncio
+
+    from datasight.data_profile import build_time_series_quality
+
+    async def mock_run_sql(sql):
+        if "MIN" in sql:
+            return pd.DataFrame(
+                [{"total_rows": 100, "min_ts": "2024-01-01 00:00", "max_ts": "2024-01-05 00:00"}]
+            )
+        if "LEAD" in sql:
+            return pd.DataFrame()
+        if "HAVING" in sql:
+            return pd.DataFrame([{"ts": "2024-01-02 02:00", "n": 2}])
+        return pd.DataFrame()
+
+    configs = [
+        {
+            "table": "gen_hourly",
+            "timestamp_column": "ts",
+            "frequency": "PT1H",
+            "time_zone": "UTC",
+        }
+    ]
+    result = asyncio.run(build_time_series_quality(configs, mock_run_sql))
+    dups = [i for i in result["time_series_issues"] if i["issue"] == "duplicate"]
+    assert len(dups) >= 1
+    assert "2 times" in dups[0]["detail"]
+
+
+def test_quality_with_time_series_config(project_dir):
+    yaml_text = (
+        "- table: orders\n  timestamp_column: order_date\n  frequency: P1D\n  time_zone: UTC\n"
+    )
+    Path(project_dir, "time_series.yaml").write_text(yaml_text, encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["quality", "--project-dir", project_dir])
+    assert result.exit_code == 0
+    assert "Time Series" in result.output
+
+
+def test_generate_seeds_time_series(project_dir, monkeypatch):
+    class StubClient:
+        async def create_message(self, **kwargs):  # noqa: ARG002
+            return SimpleNamespace(
+                content=[
+                    TextBlock(
+                        "--- schema_description.md ---\n"
+                        "# Generated schema\n\n"
+                        "--- queries.yaml ---\n"
+                        "- question: Example\n"
+                        "  sql: SELECT 1\n"
+                    )
+                ]
+            )
+
+    monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: StubClient())
+
+    project_path = Path(project_dir)
+    (project_path / "schema_description.md").unlink()
+    (project_path / "queries.yaml").unlink()
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["generate", "--project-dir", project_dir, "--overwrite"])
+
+    assert result.exit_code == 0
+    assert "time_series.yaml" in result.output
+    assert (project_path / "time_series.yaml").exists()
+    ts_text = (project_path / "time_series.yaml").read_text(encoding="utf-8")
+    assert "# datasight time series declarations" in ts_text
