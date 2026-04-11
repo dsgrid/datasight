@@ -6,6 +6,9 @@ export interface LlmConfig {
   base_url: string;
   has_api_key: boolean;
   connected: boolean;
+  error?: string;
+  env_keys?: Record<string, boolean>;
+  env_models?: Record<string, string>;
 }
 
 function createSettingsStore() {

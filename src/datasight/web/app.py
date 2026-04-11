@@ -2664,6 +2664,17 @@ async def get_llm_settings(state: AppState = Depends(get_state)):
         or "",
         "has_api_key": has_key,
         "connected": connected,
+        # Per-provider env availability so UI can show "Set from environment"
+        "env_keys": {
+            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+            "github": bool(os.environ.get("GITHUB_TOKEN", "").strip()),
+            "ollama": True,
+        },
+        "env_models": {
+            "anthropic": os.environ.get("ANTHROPIC_MODEL", ""),
+            "github": os.environ.get("GITHUB_MODELS_MODEL", ""),
+            "ollama": os.environ.get("OLLAMA_MODEL", ""),
+        },
     }
 
 
@@ -2727,8 +2738,23 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
             state.rebuild_system_prompt()
 
         connected = state.llm_client is not None
-    if connected:
-        logger.info(f"LLM configured: provider={provider}, model={state.model}")
+
+    # Validate the connection with a lightweight test request
+    error_msg = ""
+    if connected and state.llm_client is not None:
+        try:
+            await state.llm_client.create_message(
+                model=state.model,
+                max_tokens=1,
+                system="Reply with OK.",
+                messages=[{"role": "user", "content": "ping"}],
+                tools=[],
+            )
+            logger.info(f"LLM configured: provider={provider}, model={state.model}")
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"LLM validation failed for provider={provider}: {e}")
+            connected = False
     else:
         logger.warning(f"LLM configuration failed for provider={provider}")
 
@@ -2736,6 +2762,19 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
         "connected": connected,
         "provider": provider,
         "model": state.model or "",
+        "has_api_key": _has_llm_api_key(),
+        "base_url": "",
+        "error": error_msg if not connected else "",
+        "env_keys": {
+            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+            "github": bool(os.environ.get("GITHUB_TOKEN", "").strip()),
+            "ollama": True,
+        },
+        "env_models": {
+            "anthropic": os.environ.get("ANTHROPIC_MODEL", ""),
+            "github": os.environ.get("GITHUB_MODELS_MODEL", ""),
+            "ollama": os.environ.get("OLLAMA_MODEL", ""),
+        },
     }
 
 

@@ -47,7 +47,7 @@
     <span class="history-title">SQL History</span>
     <div class="history-header-right">
       {#if queriesStore.sessionTotalCost > 0}
-        <span class="history-cost">${formatCost(queriesStore.sessionTotalCost)} total</span>
+        <span class="history-cost">{'$'}{formatCost(queriesStore.sessionTotalCost)} total</span>
       {/if}
       <button class="history-close" onclick={onClose} title="Close">&times;</button>
     </div>
@@ -72,7 +72,7 @@
               <span class="query-card-meta">{query.row_count} rows</span>
             {/if}
             {#if query.turn_cost}
-              <span class="query-card-meta">${formatCost(query.turn_cost)}</span>
+              <span class="query-card-meta">{'$'}{formatCost(query.turn_cost)}</span>
             {/if}
             {#if query.error}
               <span class="query-card-meta error">error</span>

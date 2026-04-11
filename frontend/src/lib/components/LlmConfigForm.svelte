@@ -22,9 +22,27 @@
   let error = $state("");
   let saving = $state(false);
 
+  let envKeys = $derived(settingsStore.llmConfig?.env_keys || {});
+  let envModels = $derived(settingsStore.llmConfig?.env_models || {});
+
+  let providerHasEnvKey = $derived(envKeys[provider] || false);
+  let providerEnvModel = $derived(envModels[provider] || "");
+
   let modelPlaceholder = $derived(
-    MODEL_DEFAULTS[provider] || "Model name",
+    providerEnvModel || MODEL_DEFAULTS[provider] || "Model name",
   );
+
+  // Reset form fields when provider changes
+  let prevProvider = $state(provider);
+  $effect(() => {
+    if (provider !== prevProvider) {
+      model = "";
+      apiKey = "";
+      baseUrl = "";
+      error = "";
+      prevProvider = provider;
+    }
+  });
 
   let showApiKey = $derived(provider === "anthropic" || provider === "github");
   let showBaseUrl = $derived(provider === "ollama");
@@ -37,7 +55,7 @@
       const data = await saveLlmConfig({
         provider,
         api_key: apiKey || undefined,
-        model: model || MODEL_DEFAULTS[provider] || "",
+        model: model || providerEnvModel || MODEL_DEFAULTS[provider] || "",
         base_url: baseUrl || undefined,
       });
 
@@ -45,7 +63,7 @@
         apiKey = "";
         onConnected?.();
       } else {
-        error = "Failed to connect. Check your API key and settings.";
+        error = data.error || "Failed to connect. Check your API key and settings.";
       }
     } catch {
       error = "Connection failed";
@@ -76,7 +94,7 @@
       <input
         type="password"
         bind:value={apiKey}
-        placeholder={settingsStore.llmConfig?.has_api_key
+        placeholder={providerHasEnvKey
           ? "Set from environment"
           : "Enter API key..."}
         class="w-full border border-border bg-bg text-text-primary focus:outline-none focus:border-teal"
