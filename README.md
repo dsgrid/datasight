@@ -51,7 +51,7 @@ datasight ask --file questions.txt --output-dir batch-output
 - **Domain context** — describe your data in Markdown for better AI understanding
 - **Example queries** — seed the AI with question/SQL pairs
 - **Reusable prompt recipes** — project-specific analysis prompts derived from the schema
-- **Multi-chart dashboard** — pin results to a dashboard with configurable layouts
+- **Multi-chart dashboard** — pin results, filter cards, and configure layouts
 - **Session export** — export conversations as shareable HTML pages
 - **Keyboard shortcuts** — `?` to see all shortcuts, `/` to focus input
 - **Streaming responses** — real-time SSE streaming from the LLM

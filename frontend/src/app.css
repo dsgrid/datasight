@@ -225,6 +225,18 @@ form,
   border-color: var(--teal);
 }
 
+.btn-group .btn-icon {
+  border-color: transparent;
+}
+
+.btn-group .btn-icon:hover {
+  border-color: rgba(231, 225, 207, 0.25);
+}
+
+.btn-group .btn-icon.active {
+  border-color: var(--teal);
+}
+
 /* ── Sidebar interactive elements ── */
 
 .table-header-btn {
@@ -275,19 +287,33 @@ form,
 
 /* ── Floating action buttons on tool results ── */
 
-.tool-action-btn {
+.tool-action-bar {
   position: absolute;
   top: 4px;
+  right: 4px;
   z-index: 5;
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 8px);
+  transition: opacity 0.2s;
+}
+
+.tool-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 4px 10px;
+  min-height: 26px;
+  padding: 4px 9px;
   font-family: inherit;
   font-size: 0.72rem;
+  line-height: 1;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s;

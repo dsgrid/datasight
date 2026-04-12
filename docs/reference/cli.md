@@ -62,6 +62,10 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `profile`: Profile your dataset — row counts, date coverage, and column statistics.
 - `measures`: Surface likely measures and default aggregations.
 - `quality`: Audit data quality — nulls, suspicious ranges, and date coverage.
+- `integrity`: Audit cross-table referential integrity — keys, orphans, and join risks.
+- `distribution`: Profile value distributions — percentiles, outliers, and energy flags.
+- `validate`: Run declarative validation rules against the database.
+- `audit-report`: Generate a comprehensive audit report combining all checks.
 - `dimensions`: Surface likely grouping dimensions and category breakdowns.
 - `trends`: Surface likely trend analyses and chart recommendations.
 - `inspect`: Run all analyses on Parquet, CSV, or DuckDB files and print results.
@@ -338,6 +342,78 @@ datasight quality [OPTIONS]
 | `--table` | Audit a specific table. |
 | `--format` | Output format (default: table). Default: `table`. |
 | `--output`, `-o` | Write the quality audit to a file instead of stdout. |
+
+### `datasight integrity`
+
+Audit cross-table referential integrity — keys, orphans, and join risks.
+
+```bash
+datasight integrity [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Focus integrity checks on a specific table. |
+| `--format` | Output format (default: table). Default: `table`. |
+| `--output`, `-o` | Write the integrity audit to a file instead of stdout. |
+
+### `datasight distribution`
+
+Profile value distributions — percentiles, outliers, and energy flags.
+
+```bash
+datasight distribution [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Profile distributions for a specific table. |
+| `--column` | Focus on a specific column as table.column. |
+| `--format` | Output format (default: table). Default: `table`. |
+| `--output`, `-o` | Write the distribution profile to a file instead of stdout. |
+
+### `datasight validate`
+
+Run declarative validation rules against the database.
+
+```bash
+datasight validate [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Run rules for a specific table only. |
+| `--config` | Path to validation.yaml (default: project_dir/validation.yaml). |
+| `--format` | Output format (default: table). Default: `table`. |
+| `--output`, `-o` | Write the validation report to a file instead of stdout. |
+| `--scaffold` | Write an example validation.yaml to the project directory and exit. |
+| `--overwrite` | Overwrite an existing validation.yaml. |
+
+### `datasight audit-report`
+
+Generate a comprehensive audit report combining all checks.
+
+```bash
+datasight audit-report [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Scope the audit to a specific table. |
+| `--output`, `-o` | Output path (.html, .md, or .json). Default: `report.html`. |
+| `--format` | Output format (default: inferred from file extension). |
 
 ### `datasight dimensions`
 

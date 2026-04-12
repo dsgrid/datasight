@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 
 import datasight.web.app as web_app
 
+from tests._env_helpers import scrub_datasight_env
+
 
 @pytest.fixture()
 def isolated_web_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -23,6 +25,8 @@ def isolated_web_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "clarify_sql": web_app._state.clarify_sql,
         "show_cost": web_app._state.show_cost,
     }
+
+    scrub_datasight_env()
 
     web_app._state.clear_project()
     monkeypatch.setattr(web_app, "add_recent_project", lambda project_path: None)
@@ -77,7 +81,7 @@ def test_ui_boot_contract_when_unloaded(isolated_web_state: None) -> None:
     assert bookmarks_response.json() == {"bookmarks": []}
     assert reports_response.json() == {"reports": []}
     assert conversations_response.json() == {"conversations": []}
-    assert dashboard_response.json() == {"items": [], "columns": 0}
+    assert dashboard_response.json() == {"items": [], "columns": 0, "filters": []}
 
     settings = settings_response.json()
     assert settings == {
@@ -152,7 +156,103 @@ def test_ui_boot_contract_when_project_loaded(isolated_web_state: None, project_
     assert bookmarks_response.json() == {"bookmarks": []}
     assert reports_response.json() == {"reports": []}
     assert conversations_response.json() == {"conversations": []}
-    assert dashboard_response.json() == {"items": [], "columns": 0}
+    assert dashboard_response.json() == {"items": [], "columns": 0, "filters": []}
+
+
+def test_dashboard_run_card_applies_result_filter(
+    isolated_web_state: None, project_dir: str
+) -> None:
+    project_path = str(Path(project_dir).resolve())
+
+    with TestClient(web_app.app) as client:
+        load_response = client.post("/api/projects/load", json={"path": project_path})
+        assert load_response.status_code == 200
+
+        response = client.post(
+            "/api/dashboard/run-card",
+            json={
+                "sql": "SELECT customer_state, SUM(quantity) AS total_qty FROM orders GROUP BY customer_state",
+                "tool": "run_sql",
+                "filters": [{"column": "customer_state", "operator": "eq", "value": "CA"}],
+            },
+        )
+
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "CA" in payload["html"]
+    assert "NY" not in payload["html"]
+    assert 'WHERE "customer_state" = ' in payload["sql"]
+
+
+def test_dashboard_run_card_rejects_unsafe_filter_column(
+    isolated_web_state: None, project_dir: str
+) -> None:
+    project_path = str(Path(project_dir).resolve())
+
+    with TestClient(web_app.app) as client:
+        load_response = client.post("/api/projects/load", json={"path": project_path})
+        assert load_response.status_code == 200
+
+        response = client.post(
+            "/api/dashboard/run-card",
+            json={
+                "sql": "SELECT customer_state, SUM(quantity) AS total_qty FROM orders GROUP BY customer_state",
+                "tool": "run_sql",
+                "filters": [{"column": "customer_state; DROP TABLE orders", "value": "CA"}],
+            },
+        )
+
+    payload = response.json()
+    assert payload["ok"] is False
+    assert "Invalid dashboard filter column" in payload["error"]
+
+
+def test_dashboard_filter_values_returns_distinct_card_values(
+    isolated_web_state: None, project_dir: str
+) -> None:
+    project_path = str(Path(project_dir).resolve())
+
+    with TestClient(web_app.app) as client:
+        load_response = client.post("/api/projects/load", json={"path": project_path})
+        assert load_response.status_code == 200
+
+        response = client.post(
+            "/api/dashboard/filter-values",
+            json={
+                "column": "customer_state",
+                "allowed_columns": ["customer_state", "total_qty"],
+                "items": [
+                    {
+                        "type": "table",
+                        "sql": (
+                            "SELECT customer_state, SUM(quantity) AS total_qty "
+                            "FROM orders GROUP BY customer_state"
+                        ),
+                    }
+                ],
+                "limit": 100,
+            },
+        )
+
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "CA" in payload["values"]
+    assert "NY" in payload["values"]
+    assert len(payload["values"]) <= 100
+
+
+def test_github_provider_uses_shorter_chat_history(isolated_web_state: None) -> None:
+    state = web_app.AppState()
+    state.llm_provider = "github"
+
+    messages = [
+        {"role": "user", "content": f"question {idx}"}
+        if idx % 2 == 0
+        else {"role": "assistant", "content": "answer"}
+        for idx in range(12)
+    ]
+
+    assert state.trim_messages_for_provider(messages) == messages[4:]
 
 
 def test_timeseries_overview_when_unloaded(isolated_web_state: None) -> None:

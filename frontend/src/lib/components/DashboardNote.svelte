@@ -31,6 +31,7 @@
   function handleTitleChange(e: Event) {
     const target = e.target as HTMLInputElement;
     dashboardStore.updateItem(item.id, { title: target.value });
+    saveDashboard();
   }
 
   function removeCard() {

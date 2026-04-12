@@ -147,10 +147,56 @@
     margin-top: 24px; padding-top: 16px; border-top: 1px solid #dee2e6;
     font-size: 0.8rem; color: #999; text-align: center;
   }
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: -8px 0 16px;
+    padding: 10px 12px;
+    background: #f1f7f7;
+    border: 1px solid #d7e8e8;
+    border-radius: 10px;
+    font-size: 0.8rem;
+    color: #315164;
+  }
+  .filter-bar-label {
+    font-weight: 600;
+    color: #023d60;
+    margin-right: 2px;
+  }
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: white;
+    border: 1px solid #bcd6d6;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+  }
+  .filter-chip .op { color: #15a8a8; font-weight: 600; }
+  .filter-chip .scope { color: #6b7b88; font-weight: 400; }
+  .filter-bar-note {
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: #6b7b88;
+    font-style: italic;
+  }
 </style>
 </head>
 <body>
 <h1>{{title}}</h1>
+{{#has_filters}}
+<div class="filter-bar">
+  <span class="filter-bar-label">Filters:</span>
+  {{#filter_chips}}
+  <span class="filter-chip">{{column}} <span class="op">{{operator}}</span> {{value}}{{#has_scope}} <span class="scope">· {{scope}}</span>{{/has_scope}}</span>
+  {{/filter_chips}}
+  <span class="filter-bar-note">Applied post-aggregation</span>
+</div>
+{{/has_filters}}
 <div class="dashboard-grid">
 {{#cards}}
 <div class="dashboard-card">

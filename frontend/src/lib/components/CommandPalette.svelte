@@ -22,9 +22,10 @@
   interface Props {
     onToggleSettings: () => void;
     onToggleSidebar: () => void;
+    onNewChat: () => void;
   }
 
-  let { onToggleSettings, onToggleSidebar }: Props = $props();
+  let { onToggleSettings, onToggleSidebar, onNewChat }: Props = $props();
 
   let inputEl = $state<HTMLInputElement | null>(null);
   let resultsEl = $state<HTMLElement | null>(null);
@@ -109,7 +110,7 @@
         title: "New Conversation",
         subtitle: "Action",
         score: 760,
-        run: () => chatStore.clear(),
+        run: onNewChat,
       },
       {
         title: "Summarize Dataset",

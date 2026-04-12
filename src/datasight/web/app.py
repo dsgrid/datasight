@@ -305,12 +305,14 @@ class DashboardStore:
         self._path = path
         self._items: list[dict[str, Any]] = []
         self._columns: int = 0
+        self._filters: list[dict[str, Any]] = []
         self._next_id = 1
         if self._path.exists():
             try:
                 data = json.loads(self._path.read_text(encoding="utf-8"))
                 self._items = data.get("items", [])
                 self._columns = data.get("columns", 0)
+                self._filters = data.get("filters", [])
                 if self._items:
                     self._next_id = max(item.get("id", 0) for item in self._items) + 1
             except (json.JSONDecodeError, OSError):
@@ -319,14 +321,26 @@ class DashboardStore:
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
-            json.dumps({"items": self._items, "columns": self._columns}, indent=2),
+            json.dumps(
+                {"items": self._items, "columns": self._columns, "filters": self._filters},
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
     def get_all(self) -> dict[str, Any]:
-        return {"items": list(self._items), "columns": self._columns}
+        return {
+            "items": list(self._items),
+            "columns": self._columns,
+            "filters": list(self._filters),
+        }
 
-    def save_all(self, items: list[dict[str, Any]], columns: int | None = None) -> dict[str, Any]:
+    def save_all(
+        self,
+        items: list[dict[str, Any]],
+        columns: int | None = None,
+        filters: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         for item in items:
             if "id" not in item:
                 item["id"] = self._next_id
@@ -334,6 +348,8 @@ class DashboardStore:
         self._items = items
         if columns is not None:
             self._columns = columns
+        if filters is not None:
+            self._filters = filters
         if self._items:
             self._next_id = max(item.get("id", 0) for item in self._items) + 1
         self._save()
@@ -342,8 +358,115 @@ class DashboardStore:
     def clear(self) -> None:
         self._items = []
         self._columns = 0
+        self._filters = []
         self._next_id = 1
         self._save()
+
+
+def _empty_dashboard() -> dict[str, Any]:
+    return {"items": [], "columns": 0, "filters": []}
+
+
+_DASHBOARD_FILTER_COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DASHBOARD_FILTER_OPS = {"eq", "neq", "gt", "gte", "lt", "lte", "contains", "in"}
+
+
+def _quote_dashboard_filter_identifier(identifier: str) -> str:
+    """Quote a dashboard result-column filter identifier.
+
+    Dashboard filters are applied to a wrapped query result, so we intentionally
+    support only simple result column names here.
+    """
+    if not _DASHBOARD_FILTER_COLUMN_RE.match(identifier):
+        raise ValueError(f"Invalid dashboard filter column: {identifier!r}")
+    return f'"{identifier}"'
+
+
+def _dashboard_filter_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int | float):
+        return str(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _build_dashboard_filter_condition(filter_data: dict[str, Any]) -> str | None:
+    if filter_data.get("enabled") is False:
+        return None
+    column = str(filter_data.get("column") or "").strip()
+    if not column:
+        return None
+    op = str(filter_data.get("operator") or "eq").strip().lower()
+    if op not in _DASHBOARD_FILTER_OPS:
+        raise ValueError(f"Unsupported dashboard filter operator: {op}")
+
+    quoted_column = _quote_dashboard_filter_identifier(column)
+    value = filter_data.get("value")
+
+    if op == "in":
+        values = value if isinstance(value, list) else [value]
+        values = [v for v in values if v is not None and str(v) != ""]
+        if not values:
+            return None
+        return f"{quoted_column} IN ({', '.join(_dashboard_filter_literal(v) for v in values)})"
+    if value is None or str(value) == "":
+        return None
+    if op == "contains":
+        escaped = str(value).lower().replace("'", "''")
+        return f"LOWER(CAST({quoted_column} AS TEXT)) LIKE '%{escaped}%'"
+
+    sql_op = {
+        "eq": "=",
+        "neq": "!=",
+        "gt": ">",
+        "gte": ">=",
+        "lt": "<",
+        "lte": "<=",
+    }[op]
+    return f"{quoted_column} {sql_op} {_dashboard_filter_literal(value)}"
+
+
+def _apply_dashboard_filters(sql: str, filters: list[dict[str, Any]]) -> str:
+    conditions = [
+        condition
+        for item in filters
+        if (condition := _build_dashboard_filter_condition(item)) is not None
+    ]
+    if not conditions:
+        return sql
+    return (
+        "SELECT *\n"
+        "FROM (\n"
+        f"{sql}\n"
+        ") AS datasight_dashboard_source\n"
+        f"WHERE {' AND '.join(conditions)}"
+    )
+
+
+def _normalize_dashboard_filter_values(values: list[Any], limit: int) -> list[Any]:
+    result: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        if value is None:
+            continue
+        try:
+            if pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            pass
+        if hasattr(value, "item"):
+            value = value.item()
+        key = str(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+        if len(result) >= limit:
+            break
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +482,7 @@ class AppState:
         self.sql_runner: SqlRunner | None = None
         self.system_prompt: str = ""
         self.model: str = "claude-haiku-4-5-20251001"
+        self.llm_provider: str = "anthropic"
         self.conversations: ConversationStore | None = None
         self.bookmarks: BookmarkStore | None = None
         self.dashboard: DashboardStore | None = None
@@ -409,6 +533,7 @@ class AppState:
         # Reset LLM state to force reinitialization on next project load
         self.llm_client = None
         self.model = ""
+        self.llm_provider = ""
         self.conversations = None
         self.bookmarks = None
         self.dashboard = None
@@ -486,18 +611,29 @@ class AppState:
         if self.conversations is not None:
             await asyncio.to_thread(self.conversations.save, session_id)
 
-    def trim_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def trim_messages(
+        self,
+        messages: list[dict[str, Any]],
+        max_history_pairs: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Keep only recent messages to bound input token growth."""
+        limit = max_history_pairs if max_history_pairs is not None else self._max_history_pairs
         exchange_starts: list[int] = []
         for i, msg in enumerate(messages):
             if msg["role"] == "user" and isinstance(msg["content"], str):
                 exchange_starts.append(i)
 
-        if len(exchange_starts) <= self._max_history_pairs:
+        if len(exchange_starts) <= limit:
             return messages
 
-        cut = exchange_starts[-self._max_history_pairs]
+        cut = exchange_starts[-limit]
         return messages[cut:]
+
+    def trim_messages_for_provider(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep provider-specific chat history within request-size limits."""
+        if self.llm_provider == "github":
+            return self.trim_messages(messages, max_history_pairs=4)
+        return self.trim_messages(messages)
 
 
 # Global state instance
@@ -527,11 +663,13 @@ def init_llm_client(state: AppState) -> None:
         # Only update state after successful creation
         state.llm_client = client
         state.model = settings.llm.model
+        state.llm_provider = settings.llm.provider
     except LLMError as e:
         logger.warning(f"Failed to initialize LLM client: {e}")
         # Clear client on failure to prevent stale state
         state.llm_client = None
         state.model = ""
+        state.llm_provider = ""
 
 
 async def _build_project_health(state: AppState) -> dict[str, Any]:
@@ -1003,7 +1141,7 @@ async def generate_chat_response(
             )
             return
 
-        trimmed = state.trim_messages(messages)
+        trimmed = state.trim_messages_for_provider(messages)
         try:
             response = await state.llm_client.create_message(
                 model=state.model,
@@ -2447,10 +2585,23 @@ async def clear_bookmarks(state: AppState = Depends(get_state)):
 
 
 @app.get("/api/dashboard")
-async def get_dashboard(state: AppState = Depends(get_state)):
+async def get_dashboard(request: Request, state: AppState = Depends(get_state)):
     """Return all dashboard items and layout settings."""
+    session_id = request.query_params.get("session_id")
+    if session_id and state.conversations is not None:
+        try:
+            conv = state.conversations.get(validate_session_id(session_id))
+        except InvalidSessionIdError:
+            return _empty_dashboard()
+        dashboard = conv.get("dashboard")
+        if isinstance(dashboard, dict):
+            return {
+                "items": dashboard.get("items", []),
+                "columns": dashboard.get("columns", 0),
+                "filters": dashboard.get("filters", []),
+            }
     if state.dashboard is None:
-        return {"items": [], "columns": 0}
+        return _empty_dashboard()
     return state.dashboard.get_all()
 
 
@@ -2458,11 +2609,20 @@ async def get_dashboard(state: AppState = Depends(get_state)):
 async def save_dashboard(request: Request, state: AppState = Depends(get_state)):
     """Save dashboard items and layout settings."""
     if state.dashboard is None:
-        return {"items": [], "columns": 0}
+        return {"items": [], "columns": 0, "filters": []}
     body = await request.json()
     items = body.get("items", [])
     columns = body.get("columns")
-    result = state.dashboard.save_all(items, columns)
+    filters = body.get("filters")
+    result = state.dashboard.save_all(items, columns, filters)
+    session_id = body.get("session_id")
+    if session_id and state.conversations is not None:
+        try:
+            conv = state.conversations.get(validate_session_id(str(session_id)))
+            conv["dashboard"] = result
+            await state.save_session(str(session_id))
+        except InvalidSessionIdError:
+            pass
     return result
 
 
@@ -2473,6 +2633,164 @@ async def clear_dashboard(state: AppState = Depends(get_state)):
         return {"ok": True}
     state.dashboard.clear()
     return {"ok": True}
+
+
+@app.post("/api/dashboard/run-card")
+async def run_dashboard_card(request: Request, state: AppState = Depends(get_state)):
+    """Re-execute a dashboard card with post-aggregation result filters."""
+    if state.sql_runner is None:
+        return {"ok": False, "error": "SQL runner not initialized"}
+
+    body = await request.json()
+    sql = str(body.get("sql") or "").strip()
+    if not sql:
+        return {"ok": False, "error": "sql is required"}
+
+    tool = str(body.get("tool") or "run_sql")
+    if tool not in {"run_sql", "visualize_data"}:
+        return {"ok": False, "error": f"Unsupported dashboard card tool: {tool}"}
+
+    filters = body.get("filters") or []
+    if not isinstance(filters, list):
+        return {"ok": False, "error": "filters must be a list"}
+    allowed_columns = body.get("allowed_columns") or []
+    if allowed_columns:
+        if not isinstance(allowed_columns, list):
+            return {"ok": False, "error": "allowed_columns must be a list"}
+        allowed_column_set = {str(column) for column in allowed_columns}
+        disallowed = [
+            str(filter_data.get("column"))
+            for filter_data in filters
+            if isinstance(filter_data, dict)
+            and filter_data.get("column")
+            and str(filter_data.get("column")) not in allowed_column_set
+        ]
+        if disallowed:
+            return {
+                "ok": False,
+                "error": (
+                    "Dashboard filter column is not shared across runnable cards: "
+                    + ", ".join(disallowed)
+                ),
+            }
+
+    try:
+        filtered_sql = _apply_dashboard_filters(sql, filters)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    tool_input: dict[str, Any] = {
+        "sql": filtered_sql,
+        "title": body.get("title") or "Dashboard card",
+    }
+    if tool == "visualize_data":
+        tool_input["plotly_spec"] = body.get("plotly_spec") or {}
+
+    result = await execute_tool(
+        tool,
+        tool_input,
+        run_sql=state.sql_runner.run_sql,
+        schema_map=state.schema_map or None,
+        dialect=state.sql_dialect,
+        measure_rules=state.measure_rules or None,
+        query_logger=state.query_logger,
+        session_id=str(body.get("session_id") or ""),
+        user_question="[Dashboard filter]",
+    )
+
+    is_chart = tool == "visualize_data" and result.result_html and "<script" in result.result_html
+    return {
+        "ok": not bool(result.meta.get("error")),
+        "html": result.result_html,
+        "type": "chart" if is_chart else "table",
+        "title": body.get("title") or "",
+        "meta": result.meta,
+        "sql": filtered_sql,
+        "plotly_spec": result.plotly_spec,
+        "error": result.meta.get("error"),
+    }
+
+
+@app.post("/api/dashboard/filter-values")
+async def get_dashboard_filter_values(request: Request, state: AppState = Depends(get_state)):
+    """Return distinct post-aggregation values for a dashboard filter column."""
+    if state.sql_runner is None:
+        return {"ok": False, "error": "SQL runner not initialized", "values": []}
+
+    body = await request.json()
+    column = str(body.get("column") or "").strip()
+    if not column:
+        return {"ok": False, "error": "column is required", "values": []}
+    try:
+        quoted_column = _quote_dashboard_filter_identifier(column)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "values": []}
+
+    allowed_columns = body.get("allowed_columns") or []
+    if allowed_columns:
+        if not isinstance(allowed_columns, list):
+            return {"ok": False, "error": "allowed_columns must be a list", "values": []}
+        allowed_column_set = {str(item) for item in allowed_columns}
+        if column not in allowed_column_set:
+            return {
+                "ok": False,
+                "error": f"Dashboard filter column is not shared across runnable cards: {column}",
+                "values": [],
+            }
+
+    items = body.get("items") or []
+    if not isinstance(items, list):
+        return {"ok": False, "error": "items must be a list", "values": []}
+    filters = body.get("filters") or []
+    if not isinstance(filters, list):
+        return {"ok": False, "error": "filters must be a list", "values": []}
+
+    try:
+        limit = int(body.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    limit = max(1, min(limit, 100))
+
+    values: list[Any] = []
+    comparison_filters = [
+        item
+        for item in filters
+        if isinstance(item, dict) and str(item.get("column") or "").strip() != column
+    ]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") not in {"chart", "table"}:
+            continue
+        sql = str(item.get("sql") or "").strip().rstrip(";")
+        if not sql:
+            continue
+
+        try:
+            filtered_sql = _apply_dashboard_filters(sql, comparison_filters)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "values": []}
+
+        distinct_sql = (
+            f"SELECT DISTINCT {quoted_column} AS value\n"
+            "FROM (\n"
+            f"{filtered_sql}\n"
+            ") AS datasight_dashboard_values\n"
+            f"WHERE {quoted_column} IS NOT NULL\n"
+            f"ORDER BY {quoted_column}\n"
+            f"LIMIT {limit}"
+        )
+        try:
+            df = await state.sql_runner.run_sql(distinct_sql)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "values": []}
+        if "value" in df.columns:
+            values.extend(df["value"].tolist())
+        values = _normalize_dashboard_filter_values(values, limit)
+        if len(values) >= limit:
+            break
+
+    return {"ok": True, "values": values, "limit": limit}
 
 
 @app.get("/api/reports")
@@ -2640,6 +2958,8 @@ def _has_llm_api_key() -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
     if provider == "github":
         return bool(os.environ.get("GITHUB_TOKEN", "").strip())
+    if provider == "openai":
+        return bool(os.environ.get("OPENAI_API_KEY", "").strip())
     return False
 
 
@@ -2658,6 +2978,7 @@ async def get_llm_settings(state: AppState = Depends(get_state)):
             {
                 "ollama": "OLLAMA_BASE_URL",
                 "github": "GITHUB_MODELS_BASE_URL",
+                "openai": "OPENAI_BASE_URL",
             }.get(provider, "ANTHROPIC_BASE_URL"),
             "",
         )
@@ -2669,11 +2990,13 @@ async def get_llm_settings(state: AppState = Depends(get_state)):
             "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
             "github": bool(os.environ.get("GITHUB_TOKEN", "").strip()),
             "ollama": True,
+            "openai": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
         },
         "env_models": {
             "anthropic": os.environ.get("ANTHROPIC_MODEL", ""),
             "github": os.environ.get("GITHUB_MODELS_MODEL", ""),
             "ollama": os.environ.get("OLLAMA_MODEL", ""),
+            "openai": os.environ.get("OPENAI_MODEL", ""),
         },
     }
 
@@ -2694,7 +3017,7 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
     """Update LLM configuration and reinitialize the client.
 
     Request body:
-        provider: "anthropic" | "ollama" | "github"
+        provider: "anthropic" | "ollama" | "github" | "openai"
         api_key: API key (optional for ollama)
         model: model name
         base_url: custom base URL (optional)
@@ -2728,6 +3051,13 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
                 os.environ["GITHUB_MODELS_MODEL"] = model
             if base_url:
                 os.environ["GITHUB_MODELS_BASE_URL"] = base_url
+        elif provider == "openai":
+            if api_key:
+                os.environ["OPENAI_API_KEY"] = api_key
+            if model:
+                os.environ["OPENAI_MODEL"] = model
+            if base_url:
+                os.environ["OPENAI_BASE_URL"] = base_url
 
         # Reinitialize LLM client
         init_llm_client(state)
@@ -2769,11 +3099,13 @@ async def update_llm_settings(request: Request, state: AppState = Depends(get_st
             "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
             "github": bool(os.environ.get("GITHUB_TOKEN", "").strip()),
             "ollama": True,
+            "openai": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
         },
         "env_models": {
             "anthropic": os.environ.get("ANTHROPIC_MODEL", ""),
             "github": os.environ.get("GITHUB_MODELS_MODEL", ""),
             "ollama": os.environ.get("OLLAMA_MODEL", ""),
+            "openai": os.environ.get("OPENAI_MODEL", ""),
         },
     }
 
@@ -2817,9 +3149,16 @@ async def list_conversations(state: AppState = Depends(get_state)):
 async def get_conversation(session_id: str, state: AppState = Depends(get_state)):
     """Return the event log for a conversation (for replay)."""
     if state.conversations is None:
-        return {"events": [], "title": "Untitled"}
+        return {"events": [], "title": "Untitled", "dashboard": _empty_dashboard()}
     data = state.conversations.get(session_id)
-    return {"events": data["events"], "title": data.get("title", "Untitled")}
+    dashboard = data.get("dashboard")
+    if not isinstance(dashboard, dict):
+        dashboard = _empty_dashboard()
+    return {
+        "events": data["events"],
+        "title": data.get("title", "Untitled"),
+        "dashboard": dashboard,
+    }
 
 
 @app.post("/api/chat")
@@ -2907,8 +3246,9 @@ async def export_dashboard(request: Request):
     items = body.get("items", [])
     title = body.get("title", "datasight dashboard")
     columns = body.get("columns", 2)
+    filters = body.get("filters", [])
 
-    html = export_dashboard_html(items, title=title, columns=columns)
+    html = export_dashboard_html(items, title=title, columns=columns, filters=filters)
     return HTMLResponse(
         content=html,
         headers={

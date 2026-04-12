@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ViewMode } from "$lib/stores/dashboard.svelte";
+  import { dashboardStore } from "$lib/stores/dashboard.svelte";
   import { queriesStore } from "$lib/stores/queries.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { formatCost } from "$lib/utils/format";
@@ -12,6 +13,7 @@
     onToggleSidebar?: () => void;
     onToggleSqlPanel?: () => void;
     onToggleExport?: () => void;
+    onNewChat?: () => void;
     projectLoaded?: boolean;
     currentView?: ViewMode;
     onSwitchView?: (view: ViewMode) => void;
@@ -29,6 +31,7 @@
     onToggleSidebar,
     onToggleSqlPanel,
     onToggleExport,
+    onNewChat,
     projectLoaded = false,
     currentView = "chat",
     onSwitchView,
@@ -146,6 +149,17 @@
         onclick={() => onSwitchView?.("dashboard")}
       >
         Dashboard
+        {#if dashboardStore.pinnedItems.length > 0}
+          <span
+            class="inline-flex items-center justify-center"
+            style="margin-left: 6px; min-width: 18px; height: 18px; padding: 0 5px;
+                   border-radius: 6px; font-size: 0.68rem; line-height: 1;
+                   background: {currentView === 'dashboard' ? 'var(--teal)' : 'rgba(231,225,207,0.16)'};
+                   color: {currentView === 'dashboard' ? 'var(--navy)' : 'var(--cream)'};"
+          >
+            {dashboardStore.pinnedItems.length}
+          </span>
+        {/if}
       </button>
     </div>
   {/if}
@@ -159,7 +173,7 @@
     {/if}
 
     {#if projectLoaded}
-      <div class="inline-flex items-center"
+      <div class="btn-group inline-flex items-center"
         style="gap: 8px; padding: 4px; border-radius: 12px;
                background: rgba(255,255,255,0.08);
                box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);">
@@ -177,10 +191,17 @@
         >
           Export
         </button>
+        <button
+          class="btn-icon"
+          title="Clear conversation"
+          onclick={onNewChat}
+        >
+          New Chat
+        </button>
       </div>
     {/if}
 
-    <div class="inline-flex items-center"
+    <div class="btn-group inline-flex items-center"
       style="gap: 8px; padding: 4px; border-radius: 12px;
              background: rgba(255,255,255,0.03);">
       <button

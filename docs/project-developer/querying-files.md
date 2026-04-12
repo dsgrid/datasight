@@ -14,7 +14,7 @@ questions immediately.
 You can add more files at any time from the sidebar. When you're ready to
 save your work, click **Save** in the header to create a project.
 
-See [Getting started](../end-user/getting-started.md) for a walkthrough.
+See the [EIA generation tutorial](../end-user/tutorials/getting-started.md) for a walkthrough.
 
 ## Manual setup
 

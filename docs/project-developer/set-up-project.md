@@ -4,9 +4,9 @@ This guide walks you through creating a datasight project for your database.
 
 ## Prerequisites
 
-- Python 3.13+
+- Python 3.11+
 - A database: DuckDB file, SQLite file, PostgreSQL server, or CSV/Parquet files
-- An LLM provider: Anthropic API key, GitHub Copilot subscription, or Ollama (free, local)
+- An LLM provider: Anthropic API key, OpenAI API key, GitHub account (free, public), or Ollama (free, local). Not sure which? See [Choosing an LLM](../concepts/choosing-an-llm.md).
 
 ## Install datasight
 
@@ -36,11 +36,13 @@ This creates four template files:
 : Example question/SQL pairs.
 
 `time_series.yaml`
-: Declare temporal structure for completeness checks. See [Time series](time-series.md).
+: Declare temporal structure for completeness checks. See [Declare time series](../end-user/how-to/declare-time-series.md).
 
 ## Configure
 
-Edit `.env` with your database path and LLM settings.
+Edit `.env` with your database path and LLM settings. For guidance on
+picking a provider — data sensitivity, cost tiers, local vs hosted —
+see [Choosing an LLM](../concepts/choosing-an-llm.md).
 
 **Option A — Anthropic (cloud API):**
 
@@ -50,7 +52,17 @@ DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
 
-**Option B — GitHub Models (Copilot subscription):**
+**Option B — OpenAI (cloud API):**
+
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+DB_MODE=duckdb
+DB_PATH=./my_database.duckdb
+```
+
+**Option C — GitHub Models (free, public):**
 
 ```bash
 LLM_PROVIDER=github
@@ -60,7 +72,7 @@ DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
 
-**Option C — Ollama (local, no API key):**
+**Option D — Ollama (local, no API key):**
 
 First, install and start [Ollama](https://ollama.com/), then pull a model
 with tool-calling support:
@@ -123,7 +135,7 @@ best.
 
 It also seeds a `measures.yaml` file for project-specific semantic
 overrides and a `time_series.yaml` file for temporal completeness
-declarations (see [Time series](time-series.md)).
+declarations (see [Declare time series](../end-user/how-to/declare-time-series.md)).
 
 To regenerate after making database changes:
 
@@ -137,10 +149,10 @@ You can also write these files by hand, or refine the generated versions.
 
 Edit `schema_description.md` to explain your data — domain concepts, column
 meanings, code lookups, and query tips. The AI uses this context to write
-better SQL. See [Write a schema description](../project-developer/schema-description.md) for guidance.
+better SQL. See [Write a schema description](schema-description.md) for guidance.
 
 Edit `queries.yaml` with example questions and their correct SQL. See
-[Create example queries](../project-developer/example-queries.md) for guidance.
+[Create example queries](example-queries.md) for guidance.
 
 If your project contains energy metrics, rates, or project-specific formulas,
 edit `measures.yaml` to lock in semantic behavior such as:
@@ -151,7 +163,7 @@ edit `measures.yaml` to lock in semantic behavior such as:
 - preferred chart types
 - calculated measures such as `net_load_mw`
 
-See [Semantic measures](measures.md) for the full `measures.yaml` workflow.
+See [Configure semantic measures](../end-user/how-to/configure-measures.md) for the full `measures.yaml` workflow.
 
 ## Run
 
@@ -187,7 +199,7 @@ datasight dimensions --table generation_fuel
 datasight trends --table generation_fuel
 ```
 
-See [Ask questions from the CLI](ask-questions.md) for batch mode, export
+See [Ask questions from the CLI](../end-user/how-to/ask-from-cli.md) for batch mode, export
 options, and diagnostics.
 
 ## What happens at startup

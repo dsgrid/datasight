@@ -486,6 +486,34 @@ class GitHubModelsLLMClient(_OpenAICompatibleClient):
 
 
 # ---------------------------------------------------------------------------
+# OpenAI implementation
+# ---------------------------------------------------------------------------
+
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+
+
+class OpenAILLMClient(_OpenAICompatibleClient):
+    """LLM client backed by the OpenAI API."""
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = OPENAI_BASE_URL,
+    ):
+        """Initialize the OpenAI client.
+
+        Parameters
+        ----------
+        api_key:
+            OpenAI API key.
+        base_url:
+            API base URL. Override for OpenAI-compatible gateways (Azure
+            OpenAI, corporate proxies).
+        """
+        super().__init__(base_url=base_url, api_key=api_key)
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -500,7 +528,7 @@ def create_llm_client(
     Parameters
     ----------
     provider:
-        Provider name: "anthropic", "ollama", or "github".
+        Provider name: "anthropic", "openai", "ollama", or "github".
     api_key:
         API key for the provider.
     base_url:
@@ -526,6 +554,10 @@ def create_llm_client(
             url = base_url or GITHUB_MODELS_BASE_URL
             logger.info(f"Using GitHub Models LLM backend: {url}")
             return GitHubModelsLLMClient(api_key=api_key, base_url=url)
+        case "openai":
+            url = base_url or OPENAI_BASE_URL
+            logger.info(f"Using OpenAI LLM backend: {url}")
+            return OpenAILLMClient(api_key=api_key, base_url=url)
         case "anthropic":
             if base_url:
                 logger.info(f"Using Anthropic LLM backend: {base_url}")

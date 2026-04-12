@@ -9,7 +9,9 @@ in the project directory. CLI flags override `.env` values.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic`, `github`, or `ollama` |
+| `LLM_PROVIDER` | `anthropic` | LLM backend: `anthropic`, `openai`, `github`, or `ollama` |
+
+For help picking a provider, see [Choosing an LLM](../concepts/choosing-an-llm.md).
 
 ### Anthropic settings (when `LLM_PROVIDER=anthropic`)
 
@@ -17,7 +19,15 @@ in the project directory. CLI flags override `.env` values.
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
 | `ANTHROPIC_MODEL` | `claude-haiku-4-5-20251001` | Model name. Haiku is recommended for most use cases; it handles SQL generation well at a fraction of the cost of larger models. |
-| `ANTHROPIC_BASE_URL` | — | Custom API endpoint (e.g. Azure AI Foundry) |
+| `ANTHROPIC_BASE_URL` | — | Custom API endpoint (e.g. Azure AI Foundry, AWS Bedrock gateway) |
+
+### OpenAI settings (when `LLM_PROVIDER=openai`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | *(required)* | OpenAI API key |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Model name. `gpt-4o-mini` handles most SQL generation well; step up to `gpt-4o` for harder schemas. |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Custom API endpoint (e.g. Azure OpenAI, corporate gateway) |
 
 ### GitHub Models settings (when `LLM_PROVIDER=github`)
 
@@ -72,11 +82,11 @@ For production, use `POSTGRES_SSLMODE=verify-full` and consider using a
 | `SCHEMA_DESCRIPTION_PATH` | `./schema_description.md` | Schema description file |
 | `EXAMPLE_QUERIES_PATH` | `./queries.yaml` | Example queries file |
 | `PORT` | `8084` | Web UI port |
-| `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../end-user/query-log.md)) |
+| `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../end-user/how-to/review-query-log.md)) |
 | `QUERY_LOG_PATH` | `./query_log.jsonl` | Path to query log file |
-| `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries ([guide](../end-user/query-confidence.md)) |
-| `CONFIRM_SQL` | `false` | Require user approval before executing SQL ([guide](../end-user/query-confidence.md)) |
-| `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations ([guide](../end-user/query-confidence.md)) |
+| `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries ([guide](../end-user/reference/query-confidence-toggles.md)) |
+| `CONFIRM_SQL` | `false` | Require user approval before executing SQL ([guide](../end-user/reference/query-confidence-toggles.md)) |
+| `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations ([guide](../end-user/reference/query-confidence-toggles.md)) |
 
 ## Project files
 
@@ -87,7 +97,7 @@ A datasight project directory contains:
 | `.env` | Yes | API key and connection settings |
 | `schema_description.md` | No | Domain context for the AI ([guide](../project-developer/schema-description.md)). Always a local file, even when using Flight SQL. |
 | `queries.yaml` | No | Example question/SQL pairs ([guide](../project-developer/example-queries.md)). Always a local file, even when using Flight SQL. |
-| `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../end-user/query-log.md)) |
+| `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../end-user/how-to/review-query-log.md)) |
 | `.datasight/` | No | Auto-created directory for app state (see below) |
 
 ### `.datasight/` directory

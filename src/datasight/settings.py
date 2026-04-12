@@ -54,6 +54,9 @@ _PROJECT_ENV_VARS = [
     "GITHUB_TOKEN",
     "GITHUB_MODELS_MODEL",
     "GITHUB_MODELS_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "OPENAI_BASE_URL",
     # App settings
     "PORT",
     "LOG_QUERIES",
@@ -97,7 +100,7 @@ def restore_original_env() -> None:
             os.environ.pop(var, None)
 
 
-LLMProvider = Literal["anthropic", "ollama", "github"]
+LLMProvider = Literal["anthropic", "ollama", "github", "openai"]
 DBMode = Literal["duckdb", "sqlite", "postgres", "flightsql"]
 
 # Mapping from database mode to SQL dialect for query generation
@@ -129,6 +132,11 @@ class LLMSettings:
     github_models_model: str = "gpt-4o"
     github_models_base_url: str = "https://models.inference.ai.azure.com"
 
+    # OpenAI settings
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
     @property
     def model(self) -> str:
         """Get the model name for the current provider."""
@@ -137,6 +145,8 @@ class LLMSettings:
                 return self.ollama_model
             case "github":
                 return self.github_models_model
+            case "openai":
+                return self.openai_model
             case _:
                 return self.anthropic_model
 
@@ -148,6 +158,8 @@ class LLMSettings:
                 return "ollama"
             case "github":
                 return self.github_token
+            case "openai":
+                return self.openai_api_key
             case _:
                 return self.anthropic_api_key
 
@@ -159,6 +171,8 @@ class LLMSettings:
                 return self.ollama_base_url
             case "github":
                 return self.github_models_base_url
+            case "openai":
+                return self.openai_base_url
             case _:
                 return self.anthropic_base_url
 
@@ -241,6 +255,8 @@ class Settings:
                 llm_provider: LLMProvider = "ollama"
             case "github":
                 llm_provider = "github"
+            case "openai":
+                llm_provider = "openai"
             case _:
                 llm_provider = "anthropic"
 
@@ -274,6 +290,9 @@ class Settings:
                 github_models_base_url=os.environ.get(
                     "GITHUB_MODELS_BASE_URL", "https://models.inference.ai.azure.com"
                 ),
+                openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+                openai_model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                openai_base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             ),
             database=DatabaseSettings(
                 mode=db_mode,
@@ -307,6 +326,8 @@ class Settings:
             errors.append("ANTHROPIC_API_KEY is not set")
         elif self.llm.provider == "github" and not self.llm.github_token:
             errors.append("GITHUB_TOKEN is not set")
+        elif self.llm.provider == "openai" and not self.llm.openai_api_key:
+            errors.append("OPENAI_API_KEY is not set")
 
         # Check database path for file-based databases
         if self.database.mode in ("duckdb", "sqlite"):

@@ -13,6 +13,7 @@
     anthropic: "claude-haiku-4-5-20251001",
     ollama: "qwen3.5:35b-a3b",
     github: "gpt-4o",
+    openai: "gpt-4o-mini",
   };
 
   let provider = $state(settingsStore.llmConfig?.provider || "anthropic");
@@ -44,8 +45,10 @@
     prevProvider = provider;
   });
 
-  let showApiKey = $derived(provider === "anthropic" || provider === "github");
-  let showBaseUrl = $derived(provider === "ollama");
+  let showApiKey = $derived(
+    provider === "anthropic" || provider === "github" || provider === "openai",
+  );
+  let showBaseUrl = $derived(provider === "ollama" || provider === "openai");
 
   async function handleConnect() {
     error = "";
@@ -83,6 +86,7 @@
              font-family: inherit; font-size: 0.85rem;"
     >
       <option value="anthropic">Anthropic</option>
+      <option value="openai">OpenAI</option>
       <option value="ollama">Ollama</option>
       <option value="github">GitHub Models</option>
     </select>
@@ -122,7 +126,9 @@
       <input
         type="text"
         bind:value={baseUrl}
-        placeholder="http://localhost:11434/v1"
+        placeholder={provider === "openai"
+          ? "https://api.openai.com/v1"
+          : "http://localhost:11434/v1"}
         class="w-full border border-border bg-bg text-text-primary focus:outline-none focus:border-teal"
         style="display: block; margin-top: 4px; padding: 8px 10px; border-radius: 6px;
                font-family: inherit; font-size: 0.85rem;"

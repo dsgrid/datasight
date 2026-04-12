@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from hashlib import blake2b
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,133 @@ from datasight.templating import escape_html
 # ---------------------------------------------------------------------------
 # Data helpers (shared with web app)
 # ---------------------------------------------------------------------------
+
+
+_CATEGORY_COLOR_PALETTE = [
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
+    "#4e79a7",
+    "#f28e2b",
+    "#59a14f",
+    "#e15759",
+    "#76b7b2",
+    "#edc948",
+    "#b07aa1",
+    "#ff9da7",
+    "#9c755f",
+    "#bab0ac",
+]
+
+_ENERGY_CATEGORY_COLORS = {
+    "coal": "#4b5563",
+    "col": "#4b5563",
+    "naturalgas": "#f28e2b",
+    "naturalgasfired": "#f28e2b",
+    "gas": "#f28e2b",
+    "ng": "#f28e2b",
+    "nuclear": "#9467bd",
+    "nuc": "#9467bd",
+    "hydro": "#1f77b4",
+    "hydroelectric": "#1f77b4",
+    "water": "#1f77b4",
+    "wind": "#17becf",
+    "wnd": "#17becf",
+    "solar": "#edc948",
+    "sun": "#edc948",
+    "petroleum": "#8c564b",
+    "oil": "#8c564b",
+    "pet": "#8c564b",
+    "biomass": "#59a14f",
+    "bio": "#59a14f",
+    "geothermal": "#d62728",
+    "geo": "#d62728",
+    "other": "#7f7f7f",
+    "oth": "#7f7f7f",
+    "unknown": "#bab0ac",
+}
+
+
+def _normalize_category_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+
+def _stable_category_color(value: Any) -> str:
+    key = _normalize_category_key(value)
+    if key in _ENERGY_CATEGORY_COLORS:
+        return _ENERGY_CATEGORY_COLORS[key]
+    digest = blake2b(key.encode("utf-8"), digest_size=2).digest()
+    idx = int.from_bytes(digest, "big") % len(_CATEGORY_COLOR_PALETTE)
+    return _CATEGORY_COLOR_PALETTE[idx]
+
+
+def _is_numeric_or_date_like(value: Any) -> bool:
+    text = str(value).strip()
+    if not text:
+        return False
+    if re.fullmatch(r"-?\d+(\.\d+)?", text):
+        return True
+    return re.fullmatch(r"\d{4}([-/]\d{1,2}([-/]\d{1,2})?)?", text) is not None
+
+
+def _has_color(container: Any, key: str = "color") -> bool:
+    return isinstance(container, dict) and key in container and container[key] not in (None, "")
+
+
+def apply_consistent_category_colors(spec: dict[str, Any]) -> dict[str, Any]:
+    """Add deterministic colors to Plotly traces where no color is explicit."""
+    for trace in spec.get("data", []):
+        if not isinstance(trace, dict):
+            continue
+
+        trace_type = str(trace.get("type") or "").lower()
+        marker = trace.get("marker")
+        if not isinstance(marker, dict):
+            marker = {}
+
+        name = trace.get("name")
+        if name not in (None, ""):
+            color = _stable_category_color(name)
+            if trace_type in {"scatter", "line"}:
+                line = trace.get("line")
+                if not isinstance(line, dict):
+                    line = {}
+                if not _has_color(line):
+                    line["color"] = color
+                    trace["line"] = line
+                if not _has_color(marker):
+                    marker["color"] = color
+                    trace["marker"] = marker
+            elif trace_type != "pie" and not _has_color(marker):
+                marker["color"] = color
+                trace["marker"] = marker
+
+        labels = trace.get("labels")
+        if trace_type == "pie" and isinstance(labels, list):
+            if not _has_color(marker, "colors"):
+                marker["colors"] = [_stable_category_color(label) for label in labels]
+                trace["marker"] = marker
+
+        x_values = trace.get("x")
+        if (
+            trace_type == "bar"
+            and name in (None, "")
+            and isinstance(x_values, list)
+            and x_values
+            and not all(_is_numeric_or_date_like(value) for value in x_values)
+            and not _has_color(marker)
+        ):
+            marker["color"] = [_stable_category_color(value) for value in x_values]
+            trace["marker"] = marker
+
+    return spec
 
 
 def coerce_dates(df: pd.DataFrame) -> pd.DataFrame:
@@ -117,7 +245,7 @@ def resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, Any
         resolved["data"].append(resolved_trace)
     if "layout" in spec:
         resolved["layout"] = spec["layout"]
-    return resolved
+    return apply_consistent_category_colors(resolved)
 
 
 def sql_error_hint(error_msg: str, dialect: str = "duckdb") -> str:
@@ -324,6 +452,7 @@ def _build_tool_meta(
     if execution_result.df is not None:
         meta["row_count"] = len(execution_result.df)
         meta["column_count"] = len(execution_result.df.columns)
+        meta["columns"] = list(execution_result.df.columns)
     return meta
 
 

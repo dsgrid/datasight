@@ -2,10 +2,14 @@
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
   import { chatStore } from "$lib/stores/chat.svelte";
   import { sessionStore } from "$lib/stores/session.svelte";
+  import { queriesStore } from "$lib/stores/queries.svelte";
+  import { dashboardStore } from "$lib/stores/dashboard.svelte";
   import {
     loadConversation,
     clearConversations,
   } from "$lib/api/saved";
+  import { applyDashboardData } from "$lib/api/dashboard";
+  import { replayConversationEvents } from "$lib/utils/conversation";
 
   let loadingId = $state<string | null>(null);
 
@@ -13,54 +17,16 @@
     loadingId = sessionId;
     try {
       const data = await loadConversation(sessionId);
+      const replay = replayConversationEvents(data.events);
       chatStore.clear();
+      queriesStore.clear();
+      chatStore.messages = replay.messages;
+      queriesStore.sessionQueries = replay.queries;
+      queriesStore.sessionTotalCost = replay.totalCost;
 
-      // Replay events into chat store
-      for (const event of data.events) {
-        const ev = event as Record<string, unknown>;
-        const type = ev.type as string;
-
-        if (type === "user_message") {
-          chatStore.pushMessage({
-            type: "user_message",
-            content: ev.content as string,
-          });
-        } else if (type === "assistant_message") {
-          chatStore.pushMessage({
-            type: "assistant_message",
-            content: ev.content as string,
-          });
-        } else if (type === "tool_start") {
-          chatStore.pushMessage({
-            type: "tool_start",
-            tool: ev.tool as string,
-            sql: (ev.sql as string) || "",
-          });
-        } else if (type === "tool_result") {
-          chatStore.pushMessage({
-            type: "tool_result",
-            html: ev.html as string,
-            title: (ev.title as string) || "",
-            resultType: ((ev.result_type as string) || "table") as "chart" | "table",
-          });
-        } else if (type === "tool_done") {
-          chatStore.pushMessage({
-            type: "tool_done",
-            meta: (ev.meta as { sql: string; tool: string }) || {
-              sql: "",
-              tool: "",
-            },
-          });
-        } else if (type === "suggestions") {
-          chatStore.pushMessage({
-            type: "suggestions",
-            suggestions: ev.suggestions as string[],
-          });
-        }
-      }
-
-      // Update session ID to loaded conversation
       sessionStore.sessionId = sessionId;
+      applyDashboardData(data.dashboard || { items: [], columns: 0, filters: [] });
+      dashboardStore.currentView = "chat";
     } finally {
       loadingId = null;
     }

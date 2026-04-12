@@ -1,0 +1,41 @@
+# datasight validation rules
+# Define declarative checks that run against your database tables.
+# Each entry targets a table and lists one or more rules.
+#
+# Supported rule types:
+#   required_columns  — columns that must exist in the schema
+#   max_null_rate     — maximum allowed fraction of NULL values (0.0–1.0)
+#   numeric_range     — min and/or max for a numeric column
+#   allowed_values    — whitelist of accepted category values
+#   regex             — regular expression that all non-null values must match
+#   uniqueness        — composite key that must be unique across rows
+#   monotonic         — column must be monotonically increasing or non_decreasing
+#   row_count         — table row count must fall within min/max bounds
+#   freshness         — most recent date must be within max_age_days of today
+
+- table: generation_fuel
+  rules:
+    - type: required_columns
+      columns: [plant_id, report_date, energy_source_code, net_generation_mwh]
+
+    - type: max_null_rate
+      column: net_generation_mwh
+      threshold: 0.05
+
+    - type: numeric_range
+      column: net_generation_mwh
+      min: 0
+
+    - type: allowed_values
+      column: energy_source_code
+      values: [NG, COL, NUC, SUN, WND, WAT, OTH, PET, GEO, BIO, WDS, OOG]
+
+    - type: uniqueness
+      columns: [plant_id, report_date, energy_source_code]
+
+    - type: row_count
+      min: 100
+
+    - type: freshness
+      column: report_date
+      max_age_days: 90

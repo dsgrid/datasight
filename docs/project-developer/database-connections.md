@@ -30,8 +30,8 @@ databases, data warehouses, or managed services like RDS or Cloud SQL.
 
 **Flight SQL** is for remote query engines that speak the Arrow Flight SQL
 protocol, such as [GizmoSQL](https://github.com/gizmodata/gizmosql) on an
-HPC cluster. See [Connect to a remote HPC](../end-user/remote-hpc.md) for a
-full walkthrough.
+HPC cluster. See [Connect to a remote Flight SQL backend](../end-user/how-to/connect-flight-sql.md)
+for a full walkthrough.
 
 ## DuckDB
 
@@ -163,8 +163,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO datasight;
 ## Flight SQL
 
 Flight SQL connects to remote query engines over gRPC. See
-[Connect to a remote HPC](../end-user/remote-hpc.md) for a detailed guide
-using GizmoSQL.
+[Connect to a remote Flight SQL backend](../end-user/how-to/connect-flight-sql.md) for a detailed
+guide using GizmoSQL.
 
 ```bash
 DB_MODE=flightsql

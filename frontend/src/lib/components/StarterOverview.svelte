@@ -45,6 +45,7 @@
         return buildTimeseriesConfig(overview);
       default:
         return {
+          kicker: "Overview",
           title: "Overview",
           description: "",
           metrics: [],

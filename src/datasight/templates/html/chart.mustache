@@ -144,6 +144,24 @@
     displaylogo: false
   });
 
+  document.getElementById('chart').on('plotly_click', function(evt) {
+    if (!evt || !evt.points || !evt.points.length) return;
+    var pt = evt.points[0];
+    try {
+      window.parent.postMessage({
+        type: 'datasight-plotly-click',
+        point: {
+          curveNumber: pt.curveNumber,
+          pointNumber: pt.pointNumber,
+          x: pt.x,
+          y: pt.y,
+          label: pt.label,
+          value: pt.value
+        }
+      }, '*');
+    } catch(e) {}
+  });
+
   // Populate controls with current values
   var typeSelect = document.getElementById('chart-type');
   var mapped = currentType === 'scatter' && data[0] && data[0].mode === 'lines' ? 'line' : currentType;
@@ -196,8 +214,8 @@
         // Map pie keys to cartesian keys if needed
         if (!d.x && d.labels) { d.x = d.labels; }
         if (!d.y && d.values) { d.y = d.values; }
-        // Give each bar a distinct color (like pie slices)
-        if (newType === 'bar' && d.x) {
+        // Give each bar a distinct color only when the server did not assign stable colors.
+        if (newType === 'bar' && d.x && !(d.marker && d.marker.color)) {
           var colors = ['#636efa','#ef553b','#00cc96','#ab63fa','#ffa15a','#19d3f3','#ff6692','#b6e880','#ff97ff','#fecb52'];
           d.marker = { color: d.x.map(function(_, i) { return colors[i % colors.length]; }) };
         }

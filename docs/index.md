@@ -21,11 +21,9 @@ datasight run
 
 # Or inspect a configured project without the web UI
 datasight profile
-datasight quality
 
 # Or try a built-in demo dataset
 datasight demo eia-generation ./my-project    # US power plants
-datasight demo dsgrid-tempo ./my-project      # EV charging projections
 cd my-project
 # Edit .env with your API key (see Getting Started)
 datasight run
@@ -39,17 +37,17 @@ overview.
 
 <div class="grid cards" markdown>
 
--   :material-account:{ .lg .middle } **End user**
+-   :material-account:{ .lg .middle } **[End user](end-user/tutorials/getting-started.md)**
 
     ---
 
     Get started, explore data through the web UI, ask questions, view charts,
     and review SQL.
 
-    [:octicons-arrow-right-24: Getting started](end-user/getting-started.md)
-    [:octicons-arrow-right-24: Inspect files](end-user/inspect-files.md)
+    [:octicons-arrow-right-24: Explore US electricity generation](end-user/tutorials/getting-started.md)
+    [:octicons-arrow-right-24: Explore files without a project](end-user/how-to/explore-files.md)
 
--   :material-database-cog:{ .lg .middle } **Project developer**
+-   :material-database-cog:{ .lg .middle } **[Project developer](project-developer/schema-description.md)**
 
     ---
 
@@ -58,7 +56,7 @@ overview.
 
     [:octicons-arrow-right-24: Schema description](project-developer/schema-description.md)
 
--   :material-code-braces:{ .lg .middle } **Tool developer**
+-   :material-code-braces:{ .lg .middle } **[Tool developer](tool-developer/architecture.md)**
 
     ---
 

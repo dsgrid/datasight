@@ -1,25 +1,11 @@
 # Architecture
 
-datasight uses a FastAPI web server, a pluggable LLM backend, and a
-lightweight HTML/CSS/JS frontend. There are no heavy frameworks — the LLM
-agent loop, tool execution, and streaming are all implemented in plain Python.
-
-## LLM backends
-
-datasight supports multiple LLM providers through a common `LLMClient`
-abstraction (defined in `datasight.llm`). The backend is selected via the
-`LLM_PROVIDER` environment variable:
-
-- **`anthropic`** (default) — uses the Anthropic SDK to call Claude models via
-  the cloud API. Requires an `ANTHROPIC_API_KEY`.
-- **`github`** — uses [GitHub Models](https://github.com/marketplace/models)
-  via the OpenAI-compatible API. Included with GitHub Copilot subscriptions (no
-  per-token billing). Requires a `GITHUB_TOKEN`.
-- **`ollama`** — uses Ollama's OpenAI-compatible API to run models locally. No
-  API key required.
-
-All backends support the same tool-calling interface (`run_sql` and
-`visualize_data`), so the rest of the application is provider-agnostic.
+datasight is a FastAPI web server with a Svelte 5 + TypeScript + Tailwind
+frontend (built with Vite, served as static assets by FastAPI). The LLM agent
+loop, tool execution, and SSE streaming are implemented in plain Python, with
+a pluggable `LLMClient` abstraction that supports Anthropic, GitHub Models,
+and Ollama — see [Choosing an LLM](../concepts/choosing-an-llm.md) for
+guidance on picking a provider.
 
 ## System overview
 
@@ -27,7 +13,7 @@ All backends support the same tool-calling interface (`run_sql` and
 flowchart TB
     subgraph ui ["Web UI (FastAPI + SSE)"]
         WEB[FastAPI server]
-        HTML[HTML/JS frontend]
+        HTML[Svelte frontend]
     end
 
     subgraph agent ["LLM Agent Loop"]
@@ -85,25 +71,26 @@ flowchart TB
 sequenceDiagram
     participant U as User
     participant W as FastAPI
-    participant A as Claude API
+    participant L as LLM (via LLMClient)
     participant D as Database
 
     U->>W: POST /api/chat (SSE)
     activate W
-    W->>A: messages.create (tools)
-    activate A
-    A->>A: Write SQL query
-    A-->>W: tool_use: run_sql
-    deactivate A
-    W->>D: Execute SQL
-    activate D
-    D-->>W: DataFrame
-    deactivate D
-    W-->>U: SSE: tool_result (HTML table)
-    W->>A: tool_result + continue
-    activate A
-    A-->>W: text response
-    deactivate A
+    loop Until LLM stops calling tools
+        W->>L: send messages + tools
+        activate L
+        L-->>W: tool_use (run_sql / visualize_data)
+        deactivate L
+        W->>D: Execute SQL
+        activate D
+        D-->>W: DataFrame
+        deactivate D
+        W-->>U: SSE: tool_result (table / chart)
+    end
+    W->>L: final turn
+    activate L
+    L-->>W: text response
+    deactivate L
     W-->>U: SSE: token stream
     W-->>U: SSE: done
     deactivate W
@@ -112,18 +99,21 @@ sequenceDiagram
 ## Modules
 
 `datasight.cli`
-: Click CLI with `init`, `demo`, `run`, `ask`, `profile`, `quality`,
-  `dimensions`, `trends`, `recipes`, `doctor`, `verify`, `export`, `log`,
-  and report-management commands.
+: Click CLI entry point. See the [CLI reference](../reference/cli.md) for the
+  full command tree.
 
 `datasight.agent`
 : Shared agent loop and tool execution. Used by both the web UI and the
   headless `ask` CLI. Contains `run_agent_loop()`, `execute_tool()`, and
   Plotly spec resolution helpers.
 
+`datasight.settings`
+: Typed settings loaded from `.env` / environment variables (LLM provider,
+  database connection, feature flags).
+
 `datasight.config`
 : Configuration helpers — loads schema descriptions, example queries, and
-  creates SQL runners from environment settings.
+  creates SQL runners from settings.
 
 `datasight.schema`
 : Database introspection. Discovers tables, columns, and row counts using
@@ -134,6 +124,10 @@ sequenceDiagram
 : LLM client abstraction with implementations for Anthropic, GitHub Models,
   and Ollama. Converts between provider-specific message and tool formats.
 
+`datasight.prompts`
+: System prompt assembly — stitches schema, descriptions, example queries,
+  and tool guidance into the LLM context.
+
 `datasight.chart`
 : Interactive Plotly chart generator with chart-type switching buttons.
 
@@ -142,21 +136,45 @@ sequenceDiagram
   `PostgresRunner` for PostgreSQL servers, and `FlightSqlRunner` for remote
   databases via Arrow gRPC.
 
+`datasight.sql_validation`
+: SQL parsing and safety checks with `sqlglot` — rejects non-SELECT
+  statements and flags dialect issues before execution.
+
+`datasight.query_log`
+: Append-only JSON log of every executed query, surfaced by
+  `datasight log`.
+
+`datasight.cost`
+: Token accounting and cost estimation per LLM call and per session.
+
+`datasight.verify`
+: Query verification engine used by `datasight verify` to replay example
+  queries across models and compare results.
+
+`datasight.data_profile`, `datasight.integrity`, `datasight.distribution`, `datasight.validation`, `datasight.audit_report`
+: Data-quality commands — profiling, integrity checks, distribution
+  statistics, validation rules, and the combined audit report.
+
+`datasight.explore`
+: Ad-hoc file exploration for the `inspect` command (CSV / Parquet without
+  a project).
+
+`datasight.generate`
+: LLM-assisted project scaffolding (`datasight generate`) — produces schema
+  descriptions and example queries from raw data files.
+
 `datasight.export`
 : Converts a conversation session into a self-contained HTML page with
   inline CSS, Plotly charts, and syntax-highlighted SQL.
 
 `datasight.web.app`
 : FastAPI application with SSE streaming, tool execution, and REST API
-  endpoints for schema and query browsing.
+  endpoints for schema, query browsing, dashboards, and saved reports.
 
-`datasight.demo`
-: Downloads cleaned EIA energy data from PUDL's public S3 bucket and creates
-  a ready-to-use demo project.
-
-`datasight.demo_dsgrid_tempo`
-: Downloads NLR TEMPO EV charging demand projections from OEDI's public S3
-  bucket and creates a ready-to-use demo project.
+`datasight.demo`, `datasight.demo_dsgrid_tempo`, `datasight.demo_time_validation`
+: Demo-project generators — download EIA generation data, NREL TEMPO EV
+  charging projections, and a synthetic time-validation dataset,
+  respectively.
 
 ## Schema context injection
 

@@ -8,6 +8,7 @@ export interface ToolMeta {
   execution_time_ms?: number;
   row_count?: number;
   column_count?: number;
+  columns?: string[];
   error?: string;
 }
 

@@ -190,32 +190,42 @@
 
 <div class="tool-result group min-w-0 w-full animate-fade-in" style="position: relative; margin-bottom: 16px;">
   <!-- Floating action buttons (visible on hover) -->
-  {#if onBookmark}
-    <button
-      class="tool-action-btn opacity-0 group-hover:opacity-100"
-      style="right: 112px;"
-      onclick={handleBookmark}
-    >
-      {bookmarked ? "Saved!" : "Bookmark"}
-    </button>
-  {/if}
-  {#if onPin}
-    <button
-      class="tool-action-btn opacity-0 group-hover:opacity-100"
-      style="right: 40px;"
-      onclick={onPin}
-    >
-      Pin
-    </button>
-  {/if}
-  {#if onDelete}
-    <button
-      class="tool-action-btn tool-action-btn-delete opacity-0 group-hover:opacity-100"
-      style="right: 4px;"
-      onclick={onDelete}
-    >
-      &times;
-    </button>
+  {#if onBookmark || onSaveReport || onPin || onDelete}
+    <div class="tool-action-bar opacity-0 group-hover:opacity-100">
+      {#if onBookmark}
+        <button
+          class="tool-action-btn"
+          onclick={handleBookmark}
+        >
+          {bookmarked ? "Saved!" : "Bookmark"}
+        </button>
+      {/if}
+      {#if onSaveReport}
+        <button
+          class="tool-action-btn"
+          onclick={handleSaveReport}
+        >
+          {reportSaved ? "Saved!" : "Report"}
+        </button>
+      {/if}
+      {#if onPin}
+        <button
+          class="tool-action-btn"
+          onclick={onPin}
+        >
+          Pin
+        </button>
+      {/if}
+      {#if onDelete}
+        <button
+          class="tool-action-btn tool-action-btn-delete"
+          onclick={onDelete}
+          title="Remove result"
+        >
+          &times;
+        </button>
+      {/if}
+    </div>
   {/if}
 
   <!-- Table wrapper (toolbar + table in one bordered container) -->

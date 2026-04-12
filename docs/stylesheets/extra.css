@@ -97,6 +97,26 @@
   color: var(--md-primary-fg-color--light);
 }
 
+/* ── Nested sidebar sections ──
+ * Differentiate sub-sections (How-to guides, Reference, Explanation) from
+ * the top-level role labels (End user, Project developer, Tool developer). */
+.md-sidebar--primary .md-nav .md-nav .md-nav__item--section > .md-nav__link,
+.md-sidebar--primary .md-nav[data-md-level="2"] > .md-nav__list > .md-nav__item--nested > .md-nav__link {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: .75;
+  margin-top: .6rem;
+  color: var(--md-primary-fg-color--dark);
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav .md-nav .md-nav__item--section > .md-nav__link,
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav[data-md-level="2"] > .md-nav__list > .md-nav__item--nested > .md-nav__link {
+  color: var(--ds-orange);
+  opacity: .85;
+}
+
 /* ── Code blocks ── */
 .md-typeset code {
   border-radius: 4px;
@@ -199,4 +219,12 @@
 [data-md-color-scheme="slate"] .mermaid .edgeLabel {
   background-color: var(--md-default-bg-color);
   color: var(--md-default-fg-color);
+}
+
+/* ── Keep code identifiers in table first/second columns on one line ──
+   Used heavily on the Configuration reference page, where variable names
+   (col 1) and default values (col 2) would otherwise wrap awkwardly. */
+.md-typeset table:not([class]) td:first-child code,
+.md-typeset table:not([class]) td:nth-child(2) code {
+  white-space: nowrap;
 }

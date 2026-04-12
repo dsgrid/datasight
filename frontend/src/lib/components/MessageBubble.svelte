@@ -84,34 +84,38 @@
 <div class="message-row flex min-w-0 w-full animate-fade-in {role === 'user' ? 'justify-end' : ''} group"
   style="margin-bottom: 18px;">
   {#if role === "user"}
-    <!-- User actions -->
-    <div class="flex items-start gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-      {#if onCopy}
-        <button
-          class="p-1 rounded hover:bg-surface-alt text-text-secondary cursor-pointer"
-          title="Copy prompt"
-          onclick={handleCopy}
-        >
-          {#if copied}
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7" /></svg>
-          {:else}
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5" /><path d="M5 11H3.5A1.5 1.5 0 0 1 2 9.5v-7A1.5 1.5 0 0 1 3.5 1h7A1.5 1.5 0 0 1 12 2.5V5" /></svg>
-          {/if}
-        </button>
-      {/if}
-      {#if onDeleteBlock}
-        <button
-          class="p-1 rounded hover:bg-surface-alt text-text-secondary cursor-pointer"
-          title="Delete question and responses"
-          onclick={onDeleteBlock}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4" /></svg>
-        </button>
-      {/if}
-    </div>
-
-    <div class="message-bubble max-w-[85%] rounded-xl bg-user-bg text-user-text whitespace-pre-wrap break-words"
-      style="padding: 12px 16px; border-bottom-right-radius: 4px; font-size: 0.925rem; line-height: 1.6;">
+    <div class="message-bubble relative max-w-[85%] rounded-xl bg-user-bg text-user-text whitespace-pre-wrap break-words"
+      style="padding: 12px {(onCopy || onDeleteBlock) ? '72px' : '16px'} 12px 16px; border-bottom-right-radius: 4px; font-size: 0.925rem; line-height: 1.6;">
+      <!-- User actions -->
+      <div
+        class="absolute flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+        style="top: 8px; right: 8px;"
+      >
+        {#if onCopy}
+          <button
+            class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
+            style="background: rgba(255,255,255,0.12);"
+            title="Copy prompt"
+            onclick={handleCopy}
+          >
+            {#if copied}
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7" /></svg>
+            {:else}
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5" /><path d="M5 11H3.5A1.5 1.5 0 0 1 2 9.5v-7A1.5 1.5 0 0 1 3.5 1h7A1.5 1.5 0 0 1 12 2.5V5" /></svg>
+            {/if}
+          </button>
+        {/if}
+        {#if onDeleteBlock}
+          <button
+            class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
+            style="background: rgba(255,255,255,0.12);"
+            title="Delete question and responses"
+            onclick={onDeleteBlock}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4" /></svg>
+          </button>
+        {/if}
+      </div>
       {content}
     </div>
   {:else}

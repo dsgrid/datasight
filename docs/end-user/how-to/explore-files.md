@@ -71,7 +71,7 @@ persist your session as a project. datasight will:
 - Auto-generate `schema_description.md` and `queries.yaml` using the LLM
 - Seed a `measures.yaml` scaffold from the inferred semantic measures
 
-See [Set up a project](project-setup.md) for the full project workflow.
+See [Set up a project](../../project-developer/set-up-project.md) for the full project workflow.
 
 ## Generate project files from files
 
@@ -83,7 +83,7 @@ datasight generate generation.parquet plants.csv
 ```
 
 This creates `schema_description.md`, `queries.yaml`, and `measures.yaml`
-in the current directory using the LLM. See [Set up a project](project-setup.md)
+in the current directory using the LLM. See [Set up a project](../../project-developer/set-up-project.md)
 for details.
 
 ## Supported file types

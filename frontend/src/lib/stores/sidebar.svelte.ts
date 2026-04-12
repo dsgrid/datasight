@@ -31,6 +31,7 @@ export interface RecentProject {
 export interface MeasureCatalogEntry {
   table: string;
   name: string;
+  column?: string;
   dtype: string;
   aggregation: string;
   display_name?: string;

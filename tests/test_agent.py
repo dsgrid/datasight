@@ -153,6 +153,31 @@ def test_split_traces_by_group():
     assert names == {"CA", "NY"}
 
 
+def test_resolve_plotly_spec_assigns_stable_trace_colors():
+    df = pd.DataFrame(
+        {
+            "fuel": ["NG", "NG", "SUN", "SUN"],
+            "year": [2023, 2024, 2023, 2024],
+            "mwh": [10, 20, 5, 8],
+        }
+    )
+    spec = {"data": [{"type": "bar", "x": "year", "y": "mwh", "name": "fuel"}]}
+
+    resolved = resolve_plotly_spec(spec, df)
+
+    colors = {trace["name"]: trace["marker"]["color"] for trace in resolved["data"]}
+    assert colors == {"NG": "#f28e2b", "SUN": "#edc948"}
+
+
+def test_resolve_plotly_spec_assigns_stable_bar_category_colors():
+    df = pd.DataFrame({"fuel": ["NG", "SUN"], "mwh": [10, 5]})
+    spec = {"data": [{"type": "bar", "x": "fuel", "y": "mwh"}]}
+
+    resolved = resolve_plotly_spec(spec, df)
+
+    assert resolved["data"][0]["marker"]["color"] == ["#f28e2b", "#edc948"]
+
+
 # ---------------------------------------------------------------------------
 # Tool execution
 # ---------------------------------------------------------------------------

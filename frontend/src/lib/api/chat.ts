@@ -34,6 +34,7 @@ interface ToolDoneData {
   execution_time_ms?: number;
   row_count?: number;
   column_count?: number;
+  columns?: string[];
   error?: string;
 }
 
@@ -105,6 +106,7 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
         execution_time_ms: d.execution_time_ms,
         row_count: d.row_count,
         column_count: d.column_count,
+        columns: d.columns,
         error: d.error,
       };
       chatStore.lastToolMeta = meta;

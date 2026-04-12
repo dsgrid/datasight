@@ -3,6 +3,17 @@
 import { fetchJson, postJson, deleteRequest, patchJson } from "./client";
 import { sidebarStore } from "$lib/stores/sidebar.svelte";
 import type { Bookmark, Report, Conversation } from "$lib/stores/sidebar.svelte";
+import type { DashboardFilter, DashboardItem } from "$lib/stores/dashboard.svelte";
+
+export interface ConversationData {
+  events: unknown[];
+  title: string;
+  dashboard?: {
+    items: DashboardItem[];
+    columns: number;
+    filters?: DashboardFilter[];
+  };
+}
 
 // ── Bookmarks ──
 
@@ -106,7 +117,7 @@ export async function loadConversations(): Promise<Conversation[]> {
 
 export async function loadConversation(
   sessionId: string,
-): Promise<{ events: unknown[]; title: string }> {
+): Promise<ConversationData> {
   return fetchJson(`/api/conversations/${encodeURIComponent(sessionId)}`);
 }
 

@@ -35,6 +35,7 @@ describe("dashboardStore", () => {
     const { dashboardStore } = await import("$lib/stores/dashboard.svelte");
     dashboardStore.clear();
     expect(dashboardStore.pinnedItems.length).toBe(0);
+    expect(dashboardStore.columns).toBe(0);
 
     const item = dashboardStore.addItem({ type: "note", title: "Test" });
     expect(item.id).toBeGreaterThan(0);
@@ -63,6 +64,126 @@ describe("dashboardStore", () => {
     const item = dashboardStore.addItem({ type: "table", title: "Old" });
     dashboardStore.updateItem(item.id, { title: "New" });
     expect(dashboardStore.pinnedItems[0].title).toBe("New");
+  });
+
+  it("returns the union of filterable card columns", async () => {
+    const { getAllCardColumns } = await import("$lib/stores/dashboard.svelte");
+
+    const columns = getAllCardColumns([
+      {
+        id: 1,
+        type: "chart",
+        sql: "SELECT state, fuel, total FROM a",
+        source_meta: {
+          question: "",
+          resultType: "chart",
+          meta: { columns: ["state", "fuel", "total"] },
+        },
+      },
+      {
+        id: 2,
+        type: "table",
+        sql: "SELECT state, total FROM b",
+        source_meta: {
+          question: "",
+          resultType: "table",
+          meta: { columns: ["state", "total"] },
+        },
+      },
+      { id: 3, type: "note", title: "note" },
+    ]);
+
+    expect(columns).toEqual(["state", "fuel", "total"]);
+  });
+
+  it("classifies filter status per card", async () => {
+    const { getCardFilterStatus, filtersForCard } = await import(
+      "$lib/stores/dashboard.svelte"
+    );
+
+    const cardA = {
+      id: 1,
+      type: "chart" as const,
+      sql: "SELECT state, total FROM a",
+      source_meta: {
+        question: "",
+        resultType: "chart",
+        meta: { columns: ["state", "total"] },
+      },
+    };
+    const cardB = {
+      id: 2,
+      type: "table" as const,
+      sql: "SELECT fuel, total FROM b",
+      source_meta: {
+        question: "",
+        resultType: "table",
+        meta: { columns: ["fuel", "total"] },
+      },
+    };
+
+    const stateFilter = {
+      id: 1,
+      column: "state",
+      operator: "eq" as const,
+      value: "CA",
+      scope: { type: "all" as const },
+    };
+    const fuelScoped = {
+      id: 2,
+      column: "fuel",
+      operator: "eq" as const,
+      value: "NG",
+      scope: { type: "cards" as const, cardIds: [2] },
+    };
+    const totalExcluded = {
+      id: 3,
+      column: "total",
+      operator: "gt" as const,
+      value: 10,
+      scope: { type: "cards" as const, cardIds: [2] },
+    };
+
+    expect(getCardFilterStatus(cardA, stateFilter)).toBe("applied");
+    expect(getCardFilterStatus(cardB, stateFilter)).toBe("not_applicable");
+    expect(getCardFilterStatus(cardA, fuelScoped)).toBe("excluded_by_scope");
+    expect(getCardFilterStatus(cardB, fuelScoped)).toBe("applied");
+    expect(getCardFilterStatus(cardA, totalExcluded)).toBe("excluded_by_scope");
+
+    expect(
+      filtersForCard(cardA, [stateFilter, fuelScoped, totalExcluded]).map(
+        (f) => f.id,
+      ),
+    ).toEqual([1]);
+    expect(
+      filtersForCard(cardB, [stateFilter, fuelScoped, totalExcluded]).map(
+        (f) => f.id,
+      ),
+    ).toEqual([2, 3]);
+  });
+
+  it("skips disabled filters when narrowing per card", async () => {
+    const { filtersForCard } = await import("$lib/stores/dashboard.svelte");
+
+    const card = {
+      id: 1,
+      type: "chart" as const,
+      sql: "SELECT state FROM a",
+      source_meta: {
+        question: "",
+        resultType: "chart",
+        meta: { columns: ["state"] },
+      },
+    };
+    const disabled = {
+      id: 1,
+      column: "state",
+      operator: "eq" as const,
+      value: "CA",
+      scope: { type: "all" as const },
+      enabled: false,
+    };
+    expect(filtersForCard(card, [disabled])).toEqual([]);
   });
 });
 
@@ -181,6 +302,64 @@ describe("queriesStore", () => {
     });
     expect(queriesStore.sessionQueries[0].sql).toBe("SELECT 2");
     expect(queriesStore.sessionQueries[1].sql).toBe("SELECT 1");
+  });
+});
+
+describe("conversation replay", () => {
+  it("hydrates chat messages and query history from persisted events", async () => {
+    const { replayConversationEvents } = await import("$lib/utils/conversation");
+
+    const replay = replayConversationEvents([
+      { event: "user_message", data: { text: "Generation by fuel?" } },
+      { event: "assistant_message", data: { text: "I'll query it." } },
+      {
+        event: "tool_start",
+        data: {
+          tool: "visualize_data",
+          input: {
+            sql: "SELECT fuel_type_code_agg, SUM(net_generation_mwh) FROM generation_fuel GROUP BY 1",
+            plotly_spec: { type: "bar" },
+          },
+        },
+      },
+      {
+        event: "tool_result",
+        data: { type: "chart", html: "<div>chart</div>", title: "Generation" },
+      },
+      {
+        event: "tool_done",
+        data: {
+          tool: "visualize_data",
+          sql: "SELECT fuel_type_code_agg, SUM(net_generation_mwh) FROM generation_fuel GROUP BY 1",
+          execution_time_ms: 12,
+          row_count: 4,
+          column_count: 2,
+          columns: ["fuel_type_code_agg", "net_generation_mwh"],
+          timestamp: "2026-04-12T00:00:00Z",
+        },
+      },
+      { event: "suggestions", data: { suggestions: ["Show coal by month"] } },
+    ]);
+
+    expect(replay.messages.map((message) => message.type)).toEqual([
+      "user_message",
+      "assistant_message",
+      "tool_start",
+      "tool_result",
+      "tool_done",
+      "suggestions",
+    ]);
+    expect(replay.queries).toEqual([
+      {
+        tool: "visualize_data",
+        sql: "SELECT fuel_type_code_agg, SUM(net_generation_mwh) FROM generation_fuel GROUP BY 1",
+        timestamp: "2026-04-12T00:00:00Z",
+        execution_time_ms: 12,
+        row_count: 4,
+        column_count: 2,
+        error: undefined,
+      },
+    ]);
   });
 });
 

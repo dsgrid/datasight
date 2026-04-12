@@ -6,6 +6,7 @@
   import { sendMessage } from "$lib/api/chat";
   import { addBookmark } from "$lib/api/saved";
   import { addReport } from "$lib/api/saved";
+  import { saveDashboard } from "$lib/api/dashboard";
   import MessageBubble from "./MessageBubble.svelte";
   import ToolIndicator from "./ToolIndicator.svelte";
   import ChartResult from "./ChartResult.svelte";
@@ -47,16 +48,24 @@
     ];
   }
 
-  function pinResult(event: ChatEvent & { type: "tool_result" }) {
+  async function pinResult(
+    event: ChatEvent & { type: "tool_result" },
+    toolCtx: { sql: string; tool: string; plotlySpec: unknown; meta?: Record<string, unknown> } | null,
+  ) {
     dashboardStore.addItem({
       type: event.resultType === "chart" ? "chart" : "table",
       html: event.html,
       title: event.title || "",
+      sql: toolCtx?.sql,
+      tool: toolCtx?.tool || (event.resultType === "chart" ? "visualize_data" : "run_sql"),
+      plotly_spec: toolCtx?.plotlySpec,
       source_meta: {
         question: "",
         resultType: event.resultType,
+        meta: toolCtx?.meta,
       },
     });
+    await saveDashboard();
   }
 
   function bookmarkResult(sql: string, tool: string, name: string) {
@@ -88,7 +97,17 @@
   /** Get the last sql/tool info for action buttons. */
   function getLastToolContext(
     upToIndex: number,
-  ): { sql: string; tool: string; plotlySpec: unknown } | null {
+  ): { sql: string; tool: string; plotlySpec: unknown; meta?: Record<string, unknown> } | null {
+    let toolMeta: Record<string, unknown> | undefined;
+    for (let i = upToIndex + 1; i < chatStore.messages.length; i++) {
+      const msg = chatStore.messages[i];
+      if (msg.type === "tool_done") {
+        toolMeta = msg.meta as unknown as Record<string, unknown>;
+        break;
+      }
+      if (msg.type === "tool_start" || msg.type === "user_message") break;
+    }
+
     for (let i = upToIndex; i >= 0; i--) {
       const msg = chatStore.messages[i];
       if (msg.type === "tool_done") {
@@ -96,6 +115,7 @@
           sql: msg.meta.sql,
           tool: msg.meta.tool,
           plotlySpec: null,
+          meta: msg.meta as unknown as Record<string, unknown>,
         };
       }
       if (msg.type === "tool_start") {
@@ -103,6 +123,7 @@
           sql: msg.sql || "",
           tool: msg.tool,
           plotlySpec: msg.plotlySpec,
+          meta: toolMeta,
         };
       }
     }
@@ -183,7 +204,7 @@
         <ChartResult
           html={event.html}
           title={event.title}
-          onPin={() => pinResult(event)}
+          onPin={() => pinResult(event, toolCtx)}
           onBookmark={toolCtx
             ? () =>
                 bookmarkResult(
@@ -207,7 +228,7 @@
         <TableResult
           html={event.html}
           title={event.title}
-          onPin={() => pinResult(event)}
+          onPin={() => pinResult(event, toolCtx)}
           onBookmark={toolCtx
             ? () =>
                 bookmarkResult(

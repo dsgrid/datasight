@@ -211,7 +211,7 @@ live database connectivity.
 ## Review the query log
 
 `datasight log` shows recent SQL queries. Logging must be enabled first —
-see [SQL query log](query-log.md).
+see [Review the SQL query log](review-query-log.md).
 
 ```bash
 datasight log

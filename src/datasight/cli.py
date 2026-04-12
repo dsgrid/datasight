@@ -29,8 +29,16 @@ from datasight.data_profile import (
     format_measure_overrides_yaml,
     format_measure_prompt_context,
 )
+from datasight.audit_report import (
+    build_audit_report,
+    render_audit_report_html,
+    render_audit_report_markdown,
+)
+from datasight.distribution import build_distribution_overview
+from datasight.integrity import build_integrity_overview
 from datasight.llm import create_llm_client
 from datasight.settings import Settings
+from datasight.validation import build_validation_report, load_validation_config
 
 
 def _resolve_settings(
@@ -522,6 +530,107 @@ def _render_recipes_markdown(recipes: list[dict[str, str]]) -> str:
     return "\n".join(lines).strip()
 
 
+def _render_integrity_markdown(data: dict[str, Any]) -> str:
+    lines = [
+        "# Referential Integrity",
+        "",
+        f"- Tables scanned: {data['table_count']}",
+    ]
+    if data["primary_keys"]:
+        lines.extend(["", "## Primary Keys"])
+        for item in data["primary_keys"]:
+            unique = (
+                "unique"
+                if item["is_unique"]
+                else f"NOT unique ({item['distinct_count']}/{item['row_count']})"
+            )
+            lines.append(f"- `{item['table']}.{item['column']}`: {unique}")
+    if data["duplicate_keys"]:
+        lines.extend(["", "## Duplicate Keys"])
+        for item in data["duplicate_keys"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item['duplicate_count']} duplicate rows"
+            )
+    if data["orphan_foreign_keys"]:
+        lines.extend(["", "## Orphan Foreign Keys"])
+        for item in data["orphan_foreign_keys"]:
+            lines.append(
+                f"- `{item['child_table']}.{item['child_column']}` -> "
+                f"`{item['parent_table']}.{item['parent_column']}`: "
+                f"{item['orphan_count']} orphans out of {item['child_rows']} rows"
+            )
+    if data["join_explosions"]:
+        lines.extend(["", "## Join Explosion Risks"])
+        for item in data["join_explosions"]:
+            lines.append(
+                f"- {item['table_a']} x {item['table_b']} on `{item['join_column']}`: "
+                f"{item['explosion_factor']}x ({item['expected_rows']} -> {item['actual_rows']} rows)"
+            )
+    if data["notes"]:
+        lines.extend(["", "## Notes"])
+        for item in data["notes"]:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _render_distribution_markdown(data: dict[str, Any]) -> str:
+    lines = [
+        "# Distribution Profiling",
+        "",
+        f"- Tables scanned: {data['table_count']}",
+    ]
+    if data["distributions"]:
+        lines.extend(["", "## Distributions"])
+        for d in data["distributions"]:
+            role_info = f" (role: {d['role']})" if d.get("role") else ""
+            lines.append(
+                f"- `{d['table']}.{d['column']}`{role_info}: "
+                f"p5={_fmt_dist(d.get('p5'))}, p50={_fmt_dist(d.get('p50'))}, "
+                f"p95={_fmt_dist(d.get('p95'))}, "
+                f"zero={_fmt_dist(d.get('zero_rate'))}%, neg={_fmt_dist(d.get('negative_rate'))}%, "
+                f"outliers={d.get('outlier_count', 0)}"
+            )
+    if data["energy_flags"]:
+        lines.extend(["", "## Energy Flags"])
+        for f in data["energy_flags"]:
+            lines.append(f"- `{f['table']}.{f['column']}`: {f['detail']}")
+    if data["spikes"]:
+        lines.extend(["", "## Temporal Spikes"])
+        for s in data["spikes"]:
+            lines.append(f"- {s['detail']}")
+    if data["notes"]:
+        lines.extend(["", "## Notes"])
+        for item in data["notes"]:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
+def _render_validation_markdown(data: dict[str, Any]) -> str:
+    summary = data.get("summary", {})
+    lines = [
+        "# Validation Report",
+        "",
+        f"- Rules run: {data.get('rule_count', 0)}",
+        f"- Pass: {summary.get('pass', 0)}, Fail: {summary.get('fail', 0)}, Warn: {summary.get('warn', 0)}",
+    ]
+    if data["results"]:
+        lines.extend(["", "## Results"])
+        for r in data["results"]:
+            col = f" ({r['column']})" if r.get("column") else ""
+            lines.append(
+                f"- [{r['status'].upper()}] `{r['table']}` {r['rule']}{col}: {r['detail']}"
+            )
+    return "\n".join(lines)
+
+
+def _fmt_dist(value: Any) -> str:
+    if value is None:
+        return "?"
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return str(value)
+
+
 def _format_profile_value(value: Any, default: str = "?") -> str:
     if value is None or value == "":
         return default
@@ -854,6 +963,7 @@ def _load_batch_entries(questions_file: str) -> list[dict[str, str | None]]:
 def _emit_ask_result(
     result, output_format: str, chart_format: str | None, output_path: str | None
 ) -> None:
+    from rich import box
     from rich.console import Console
     from rich.table import Table as RichTable
 
@@ -875,7 +985,7 @@ def _emit_ask_result(
                     output_path if not chart_format else None,
                 )
             else:
-                rich_table = RichTable(show_lines=True)
+                rich_table = RichTable(box=box.ROUNDED, padding=(0, 1))
                 for col in tr.df.columns:
                     rich_table.add_column(str(col))
                 for _, row in tr.df.head(50).iterrows():
@@ -999,6 +1109,10 @@ click.rich_click.COMMAND_GROUPS = {
             "commands": ["inspect", "run"],
         },
         {
+            "name": "Project setup",
+            "commands": ["init", "generate", "doctor"],
+        },
+        {
             "name": "AI-powered",
             "commands": ["ask", "verify"],
         },
@@ -1007,16 +1121,16 @@ click.rich_click.COMMAND_GROUPS = {
             "commands": ["profile", "quality", "measures", "dimensions", "trends", "recipes"],
         },
         {
-            "name": "Project setup",
-            "commands": ["init", "generate"],
+            "name": "Data quality audit (no LLM)",
+            "commands": ["integrity", "distribution", "validate", "audit-report"],
+        },
+        {
+            "name": "Session history",
+            "commands": ["log", "export", "report"],
         },
         {
             "name": "Demo datasets",
             "commands": ["demo"],
-        },
-        {
-            "name": "Utilities",
-            "commands": ["doctor", "log", "export", "report"],
         },
     ],
 }
@@ -1656,6 +1770,7 @@ def verify(project_dir, model, queries_path, verbose):
     results, ambiguity_results = asyncio.run(_run())
 
     # Print results
+    from rich import box
     from rich.console import Console
     from rich.table import Table
     from rich.text import Text
@@ -1667,6 +1782,7 @@ def verify(project_dir, model, queries_path, verbose):
     if ambiguous_count:
         amb_table = Table(
             show_lines=True,
+            box=box.ROUNDED,
             title=f"Ambiguity Analysis ({ambiguous_count} warning{'s' if ambiguous_count != 1 else ''})",
             title_style="bold yellow",
         )
@@ -1690,7 +1806,7 @@ def verify(project_dir, model, queries_path, verbose):
         console.print()
 
     # --- Verification results ---
-    table = Table(show_lines=True, title="Verification Results")
+    table = Table(show_lines=True, box=box.ROUNDED, title="Verification Results")
     table.add_column("#", style="dim", no_wrap=True, width=3)
     table.add_column("Question", min_width=30, overflow="fold")
     table.add_column("Status", no_wrap=True, width=6)
@@ -2577,6 +2693,546 @@ def quality(project_dir, table, output_format, output_path):
         )
     if output_path:
         _write_or_print(console.export_text(), output_path)
+
+
+# ---------------------------------------------------------------------------
+# Integrity command
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Focus integrity checks on a specific table.")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the integrity audit to a file instead of stdout.",
+)
+def integrity(project_dir, table, output_format, output_path):
+    """Audit cross-table referential integrity — keys, orphans, and join risks."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    from datasight.config import load_joins_config
+
+    declared_joins = load_joins_config(None, project_dir) or None
+
+    async def _run_integrity():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info_filtered = [table_info]
+        else:
+            schema_info_filtered = schema_info
+        return await build_integrity_overview(
+            schema_info_filtered, sql_runner.run_sql, declared_joins
+        )
+
+    integrity_data = asyncio.run(_run_integrity())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(integrity_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_integrity_markdown(integrity_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Referential Integrity",
+            [("Tables scanned", str(integrity_data["table_count"]))],
+        )
+    )
+    if integrity_data["primary_keys"]:
+        console.print(
+            _build_profile_detail_table(
+                "Primary Keys",
+                [
+                    ("Table", "left"),
+                    ("Column", "left"),
+                    ("Distinct", "right"),
+                    ("Rows", "right"),
+                    ("Unique", "left"),
+                ],
+                [
+                    [
+                        item["table"],
+                        item["column"],
+                        str(item["distinct_count"]),
+                        str(item["row_count"]),
+                        "yes" if item["is_unique"] else "NO",
+                    ]
+                    for item in integrity_data["primary_keys"]
+                ],
+            )
+        )
+    if integrity_data["duplicate_keys"]:
+        console.print(
+            _build_profile_detail_table(
+                "Duplicate Keys",
+                [("Table", "left"), ("Column", "left"), ("Duplicates", "right")],
+                [
+                    [item["table"], item["column"], str(item["duplicate_count"])]
+                    for item in integrity_data["duplicate_keys"]
+                ],
+            )
+        )
+    if integrity_data["orphan_foreign_keys"]:
+        console.print(
+            _build_profile_detail_table(
+                "Orphan Foreign Keys",
+                [
+                    ("Child", "left"),
+                    ("Parent", "left"),
+                    ("Orphans", "right"),
+                    ("Child Rows", "right"),
+                ],
+                [
+                    [
+                        f"{item['child_table']}.{item['child_column']}",
+                        f"{item['parent_table']}.{item['parent_column']}",
+                        str(item["orphan_count"]),
+                        str(item["child_rows"]),
+                    ]
+                    for item in integrity_data["orphan_foreign_keys"]
+                ],
+            )
+        )
+    if integrity_data["join_explosions"]:
+        console.print(
+            _build_profile_detail_table(
+                "Join Explosion Risks",
+                [
+                    ("Table A", "left"),
+                    ("Table B", "left"),
+                    ("Column", "left"),
+                    ("Expected", "right"),
+                    ("Actual", "right"),
+                    ("Factor", "right"),
+                ],
+                [
+                    [
+                        item["table_a"],
+                        item["table_b"],
+                        item["join_column"],
+                        str(item["expected_rows"]),
+                        str(item["actual_rows"]),
+                        f"{item['explosion_factor']}x",
+                    ]
+                    for item in integrity_data["join_explosions"]
+                ],
+            )
+        )
+    if integrity_data["notes"]:
+        console.print(
+            _build_profile_detail_table(
+                "Notes",
+                [("Observation", "left")],
+                [[item] for item in integrity_data["notes"]],
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+# ---------------------------------------------------------------------------
+# Distribution command
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Profile distributions for a specific table.")
+@click.option(
+    "--column",
+    default=None,
+    help="Focus on a specific column as table.column.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the distribution profile to a file instead of stdout.",
+)
+def distribution(project_dir, table, column, output_format, output_path):
+    """Profile value distributions — percentiles, outliers, and energy flags."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+    if table and column:
+        click.echo("Error: use either --table or --column, not both.", err=True)
+        sys.exit(1)
+
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    from datasight.config import load_measure_overrides
+
+    measure_overrides = load_measure_overrides(None, project_dir)
+
+    async def _run_distribution():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info_filtered = [table_info]
+        else:
+            schema_info_filtered = schema_info
+        return await build_distribution_overview(
+            schema_info_filtered, sql_runner.run_sql, measure_overrides, column
+        )
+
+    dist_data = asyncio.run(_run_distribution())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(dist_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_distribution_markdown(dist_data), output_path)
+        return
+
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Distribution Profiling",
+            [("Tables scanned", str(dist_data["table_count"]))],
+        )
+    )
+    if dist_data["distributions"]:
+        console.print(
+            _build_profile_detail_table(
+                "Distributions",
+                [
+                    ("Column", "left"),
+                    ("p5", "right"),
+                    ("p50", "right"),
+                    ("p95", "right"),
+                    ("Zero %", "right"),
+                    ("Neg %", "right"),
+                    ("Outliers", "right"),
+                ],
+                [
+                    [
+                        f"{d['table']}.{d['column']}",
+                        _fmt_dist(d.get("p5")),
+                        _fmt_dist(d.get("p50")),
+                        _fmt_dist(d.get("p95")),
+                        _fmt_dist(d.get("zero_rate")),
+                        _fmt_dist(d.get("negative_rate")),
+                        str(d.get("outlier_count", 0)),
+                    ]
+                    for d in dist_data["distributions"]
+                ],
+            )
+        )
+    if dist_data["energy_flags"]:
+        console.print(
+            _build_profile_detail_table(
+                "Energy Flags",
+                [("Column", "left"), ("Flag", "left"), ("Detail", "left")],
+                [
+                    [f"{f['table']}.{f['column']}", f["flag"], f["detail"]]
+                    for f in dist_data["energy_flags"]
+                ],
+            )
+        )
+    if dist_data["spikes"]:
+        console.print(
+            _build_profile_detail_table(
+                "Temporal Spikes",
+                [("Column", "left"), ("Period", "left"), ("Z-score", "right"), ("Detail", "left")],
+                [
+                    [
+                        f"{s['table']}.{s['measure_column']}",
+                        s["period"],
+                        str(s["z_score"]),
+                        s["detail"],
+                    ]
+                    for s in dist_data["spikes"]
+                ],
+            )
+        )
+    if dist_data["notes"]:
+        console.print(
+            _build_profile_detail_table(
+                "Notes",
+                [("Observation", "left")],
+                [[item] for item in dist_data["notes"]],
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+# ---------------------------------------------------------------------------
+# Validate command
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Run rules for a specific table only.")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(),
+    default=None,
+    help="Path to validation.yaml (default: project_dir/validation.yaml).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json", "markdown"]),
+    default="table",
+    help="Output format (default: table).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help="Write the validation report to a file instead of stdout.",
+)
+@click.option(
+    "--scaffold",
+    is_flag=True,
+    help="Write an example validation.yaml to the project directory and exit.",
+)
+@click.option("--overwrite", is_flag=True, help="Overwrite an existing validation.yaml.")
+def validate(project_dir, table, config_path, output_format, output_path, scaffold, overwrite):
+    """Run declarative validation rules against the database."""
+    from rich.console import Console
+
+    project_dir = str(Path(project_dir).resolve())
+
+    if scaffold:
+        target = Path(config_path) if config_path else Path(project_dir) / "validation.yaml"
+        if target.exists() and not overwrite:
+            click.echo(
+                f"Error: {target} already exists. Use --overwrite to replace.",
+                err=True,
+            )
+            sys.exit(1)
+        template = Path(__file__).parent / "templates" / "validation.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+        click.echo(f"Wrote {target}. Edit the rules to match your dataset.")
+        return
+
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    rules = load_validation_config(config_path, project_dir)
+    if not rules:
+        click.echo(
+            "No validation rules configured. Run `datasight validate --scaffold` "
+            "to generate an example validation.yaml, then edit it for your dataset."
+        )
+        return
+
+    if table:
+        rules = [r for r in rules if r.get("table", "").lower() == table.lower()]
+        if not rules:
+            click.echo(f"No validation rules found for table: {table}")
+            return
+
+    async def _run_validate():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        return await build_validation_report(schema_info, sql_runner.run_sql, rules)
+
+    validation_data = asyncio.run(_run_validate())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(validation_data, indent=2), output_path)
+        return
+
+    if output_format == "markdown":
+        _write_or_print(_render_validation_markdown(validation_data), output_path)
+        return
+
+    summary = validation_data.get("summary", {})
+    console = Console(record=bool(output_path))
+    console.print(
+        _build_metric_table(
+            "Validation Report",
+            [
+                ("Rules run", str(validation_data.get("rule_count", 0))),
+                ("Pass", str(summary.get("pass", 0))),
+                ("Fail", str(summary.get("fail", 0))),
+                ("Warn", str(summary.get("warn", 0))),
+            ],
+        )
+    )
+    if validation_data["results"]:
+        console.print(
+            _build_profile_detail_table(
+                "Results",
+                [
+                    ("Table", "left"),
+                    ("Rule", "left"),
+                    ("Column", "left"),
+                    ("Status", "left"),
+                    ("Detail", "left"),
+                ],
+                [
+                    [
+                        r["table"],
+                        r["rule"],
+                        r.get("column") or "-",
+                        (
+                            f"[green]{r['status'].upper()}[/green]"
+                            if r["status"] == "pass"
+                            else (
+                                f"[red]{r['status'].upper()}[/red]"
+                                if r["status"] == "fail"
+                                else f"[yellow]{r['status'].upper()}[/yellow]"
+                            )
+                        ),
+                        r["detail"],
+                    ]
+                    for r in validation_data["results"]
+                ],
+            )
+        )
+    if output_path:
+        _write_or_print(console.export_text(), output_path)
+
+
+# ---------------------------------------------------------------------------
+# Audit report command
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="audit-report")
+@click.option(
+    "--project-dir",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project directory containing .env and config files.",
+)
+@click.option("--table", default=None, help="Scope the audit to a specific table.")
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(),
+    default="report.html",
+    show_default=True,
+    help="Output path (.html, .md, or .json).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["html", "markdown", "json"]),
+    default=None,
+    help="Output format (default: inferred from file extension).",
+)
+def audit_report(project_dir, table, output_path, output_format):
+    """Generate a comprehensive audit report combining all checks."""
+    project_dir = str(Path(project_dir).resolve())
+    settings, _ = _resolve_settings(project_dir)
+    resolved_db_path = _resolve_db_path(settings, project_dir)
+    if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
+        click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
+        sys.exit(1)
+
+    # Infer format from extension if not specified
+    if output_format is None:
+        ext = Path(output_path).suffix.lower()
+        if ext == ".html":
+            output_format = "html"
+        elif ext == ".md":
+            output_format = "markdown"
+        elif ext == ".json":
+            output_format = "json"
+        else:
+            output_format = "html"
+
+    from datasight.config import load_joins_config, load_measure_overrides
+
+    measure_overrides = load_measure_overrides(None, project_dir)
+    validation_rules = load_validation_config(None, project_dir) or None
+    declared_joins = load_joins_config(None, project_dir) or None
+
+    async def _run_audit_report():
+        sql_runner, schema_info = await _load_schema_info_for_project(project_dir, settings)
+        if table:
+            table_info = find_table_info(schema_info, table)
+            if table_info is None:
+                raise click.ClickException(f"Table not found: {table}")
+            schema_info_filtered = [table_info]
+        else:
+            schema_info_filtered = schema_info
+        return await build_audit_report(
+            schema_info_filtered,
+            sql_runner.run_sql,
+            measure_overrides,
+            validation_rules,
+            declared_joins,
+            project_name=Path(project_dir).name,
+        )
+
+    report_data = asyncio.run(_run_audit_report())
+
+    if output_format == "json":
+        _write_or_print(json.dumps(report_data, indent=2), output_path)
+    elif output_format == "markdown":
+        _write_or_print(render_audit_report_markdown(report_data), output_path)
+    else:
+        _write_or_print(render_audit_report_html(report_data), output_path)
 
 
 @cli.command()
@@ -3546,6 +4202,7 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
 )
 def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
     """Display the SQL query log in a formatted table."""
+    from rich import box
     from rich.console import Console
     from rich.table import Table
     from rich.text import Text
@@ -3590,7 +4247,7 @@ def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
     cost_entries = [e for e in entries if e.get("type") == "cost"]
 
     console = Console()
-    table = Table(show_lines=True)
+    table = Table(box=box.ROUNDED)
     table.add_column("#", justify="right", style="dim", no_wrap=True)
     table.add_column("Timestamp", style="dim", no_wrap=True)
     table.add_column("Tool", no_wrap=True)
@@ -3642,7 +4299,7 @@ def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
 
     # Show cost summary when --cost is used
     if cost and cost_entries:
-        cost_table = Table(title="LLM Cost Summary", show_lines=True)
+        cost_table = Table(title="LLM Cost Summary", box=box.ROUNDED)
         cost_table.add_column("Timestamp", style="dim", no_wrap=True)
         cost_table.add_column("Question", overflow="fold")
         cost_table.add_column("API Calls", justify="right", no_wrap=True)
@@ -3698,6 +4355,7 @@ def report():
 )
 def report_list(project_dir):
     """List all saved reports."""
+    from rich import box
     from rich.console import Console
     from rich.table import Table
 
@@ -3712,7 +4370,7 @@ def report_list(project_dir):
         return
 
     console = Console()
-    table = Table(show_lines=True)
+    table = Table(box=box.ROUNDED)
     table.add_column("ID", justify="right", no_wrap=True)
     table.add_column("Name", min_width=20)
     table.add_column("Tool", no_wrap=True)
@@ -3803,9 +4461,10 @@ def report_run(report_id, project_dir, output_format, chart_format, output_path)
             case "json":
                 click.echo(result.df.to_json(orient="records", indent=2))
             case _:
+                from rich import box
                 from rich.table import Table as RichTable
 
-                rt = RichTable(show_lines=True)
+                rt = RichTable(box=box.ROUNDED)
                 for col in result.df.columns:
                     rt.add_column(str(col))
                 for _, row in result.df.head(50).iterrows():

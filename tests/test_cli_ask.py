@@ -7,10 +7,47 @@ They are marked with ``@pytest.mark.integration`` and can be skipped with:
 """
 
 import json
+import os
 import subprocess
 import sys
 
 import pytest
+
+
+# Env vars that datasight reads — if any of these leak in from an earlier
+# in-process test (via load_dotenv populating os.environ), they will override
+# the test's .env and break isolation. Scrub them before launching a
+# subprocess.
+_SCRUBBED_ENV_VARS = (
+    "DB_MODE",
+    "DB_PATH",
+    "LLM_PROVIDER",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_BASE_URL",
+    "OLLAMA_MODEL",
+    "OLLAMA_BASE_URL",
+    "GITHUB_TOKEN",
+    "GITHUB_MODEL",
+    "FLIGHT_URI",
+    "FLIGHT_TOKEN",
+    "FLIGHT_USERNAME",
+    "FLIGHT_PASSWORD",
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DATABASE",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_URL",
+    "POSTGRES_SSLMODE",
+)
+
+
+def _clean_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in _SCRUBBED_ENV_VARS:
+        env.pop(key, None)
+    return env
 
 
 def _run_ask(project_dir, question, *extra_args, timeout=180):
@@ -30,6 +67,7 @@ def _run_ask(project_dir, question, *extra_args, timeout=180):
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=_clean_subprocess_env(),
     )
     return result
 

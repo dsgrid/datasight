@@ -4,9 +4,19 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
 
 import datasight.web.app as web_app
+
+from tests._env_helpers import scrub_datasight_env
+
+
+@pytest.fixture(autouse=True)
+def _scrub_datasight_env():
+    """Prevent leaked env vars from other test files auto-loading a project."""
+    scrub_datasight_env()
+    web_app._state.clear_project()
 
 
 def _typed_stub(value: object) -> Any:

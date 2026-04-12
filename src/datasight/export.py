@@ -254,10 +254,62 @@ def _build_dashboard_cards(
     return cards, chart_specs
 
 
+_OPERATOR_SYMBOLS = {
+    "eq": "=",
+    "neq": "≠",
+    "gt": ">",
+    "gte": "≥",
+    "lt": "<",
+    "lte": "≤",
+    "contains": "contains",
+    "in": "in",
+}
+
+
+def _format_filter_value(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
+def _format_filter_scope(scope: Any) -> str:
+    if not isinstance(scope, dict) or scope.get("type") != "cards":
+        return ""
+    card_ids = scope.get("cardIds") or []
+    if not isinstance(card_ids, list):
+        return ""
+    n = len(card_ids)
+    if n == 0:
+        return "no cards"
+    return f"{n} card{'' if n == 1 else 's'}"
+
+
+def _build_filter_chips(filters: list[dict[str, Any]]) -> list[dict[str, str]]:
+    chips = []
+    for f in filters:
+        column = f.get("column")
+        if not column:
+            continue
+        operator = _OPERATOR_SYMBOLS.get(f.get("operator", "eq"), f.get("operator", "="))
+        value = _format_filter_value(f.get("value"))
+        scope = _format_filter_scope(f.get("scope"))
+        chips.append(
+            {
+                "column": column,
+                "operator": operator,
+                "value": value,
+                "scope": scope,
+                "has_scope": bool(scope),
+            }
+        )
+    return chips
+
+
 def export_dashboard_html(
     items: list[dict[str, Any]],
     title: str = "datasight dashboard",
     columns: int = 2,
+    filters: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render dashboard items as a self-contained HTML page with unified Plotly.
 
@@ -278,6 +330,7 @@ def export_dashboard_html(
     A complete HTML string.
     """
     cards, chart_specs = _build_dashboard_cards(items)
+    filter_chips = _build_filter_chips(filters or [])
 
     return render_template(
         "export_dashboard",
@@ -289,5 +342,7 @@ def export_dashboard_html(
             "columns": columns,
             "cards": cards,
             "chart_specs_json": json.dumps(chart_specs),
+            "has_filters": bool(filter_chips),
+            "filter_chips": filter_chips,
         },
     )

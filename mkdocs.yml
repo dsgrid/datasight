@@ -66,22 +66,34 @@ plugins:
 nav:
   - Home: index.md
   - End user:
-      - Getting started: end-user/getting-started.md
-      - Explore files:
-          - Inspect files: end-user/inspect-files.md
-          - Audit data quality: end-user/data-quality.md
-      - Curated projects:
-          - Set up a project: end-user/project-setup.md
-          - Use the web UI: end-user/web-ui.md
-          - Ask questions (CLI): end-user/ask-questions.md
-          - Create visualizations: end-user/visualizations.md
-          - Semantic measures: end-user/measures.md
-          - Time series: end-user/time-series.md
-      - Try the demos: end-user/demo-dataset.md
-      - Query confidence: end-user/query-confidence.md
-      - SQL query log: end-user/query-log.md
-      - Connect to HPC: end-user/remote-hpc.md
+      - How-to guides:
+          - Install datasight: end-user/how-to/install.md
+          - Explore files without a project: end-user/how-to/explore-files.md
+          - Ask questions in the web UI: end-user/how-to/ask-in-web-ui.md
+          - Ask questions from the CLI: end-user/how-to/ask-from-cli.md
+          - Create visualizations: end-user/how-to/create-visualizations.md
+          - Build a dashboard: end-user/how-to/build-a-dashboard.md
+          - Save and rerun results: end-user/how-to/save-and-rerun.md
+          - Audit data quality: end-user/how-to/audit-data-quality.md
+          - Configure semantic measures: end-user/how-to/configure-measures.md
+          - Declare time series: end-user/how-to/declare-time-series.md
+          - Review the SQL query log: end-user/how-to/review-query-log.md
+          - Run on an HPC compute node: end-user/how-to/run-on-hpc.md
+          - Connect to a remote Flight SQL backend: end-user/how-to/connect-flight-sql.md
+      - Tutorials:
+          - Explore US electricity generation (EIA): end-user/tutorials/getting-started.md
+          - Explore EV charging demand (TEMPO): end-user/tutorials/tempo.md
+          - Time validation demo: end-user/tutorials/time-validation.md
+      - Reference:
+          - Web UI: end-user/reference/web-ui.md
+          - Keyboard shortcuts: end-user/reference/keyboard-shortcuts.md
+          - Query confidence toggles: end-user/reference/query-confidence-toggles.md
+      - Explanation:
+          - Why clarifying questions appear: end-user/explanation/query-confidence.md
+          - Trusting AI-generated results: end-user/explanation/trusting-ai-results.md
+          - What semantic measures are: end-user/explanation/semantic-measures.md
   - Project developer:
+      - Set up a project: project-developer/set-up-project.md
       - Database connections: project-developer/database-connections.md
       - Query CSV and Parquet files: project-developer/querying-files.md
       - Write a schema description: project-developer/schema-description.md
@@ -95,3 +107,4 @@ nav:
       - CLI: reference/cli.md
   - Concepts:
       - Users and roles: concepts/users-and-roles.md
+      - Choosing an LLM: concepts/choosing-an-llm.md

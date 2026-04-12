@@ -333,6 +333,52 @@ def load_time_series_config(path: str | None, project_dir: str) -> list[dict[str
     return valid
 
 
+def load_joins_config(path: str | None, project_dir: str) -> list[dict[str, Any]]:
+    """Load declared join relationships from YAML.
+
+    Expected format is a list of mappings with ``child_table``,
+    ``child_column``, ``parent_table``, and optionally ``parent_column``
+    (defaults to ``id``).
+    """
+    if not path:
+        default = os.path.join(project_dir, "joins.yaml")
+        if os.path.exists(default):
+            path = default
+        else:
+            return []
+    if not os.path.exists(path):
+        logger.warning(f"Joins config not found: {path}")
+        return []
+    with open(path, encoding="utf-8") as f:
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse {path}: {e}")
+            return []
+    if not isinstance(data, list):
+        logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
+        return []
+
+    valid: list[dict[str, Any]] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        child_table = str(entry.get("child_table") or "").strip()
+        child_column = str(entry.get("child_column") or "").strip()
+        parent_table = str(entry.get("parent_table") or "").strip()
+        if not child_table or not child_column or not parent_table:
+            continue
+        valid.append(
+            {
+                "child_table": child_table,
+                "child_column": child_column,
+                "parent_table": parent_table,
+                "parent_column": str(entry.get("parent_column") or "id").strip(),
+            }
+        )
+    return valid
+
+
 def format_example_queries(queries: list[dict[str, str]]) -> str:
     """Format example queries as a system prompt section.
 

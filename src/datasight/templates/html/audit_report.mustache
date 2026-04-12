@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>datasight Audit Report{{#has_project_name}} — {{project_name}}{{/has_project_name}}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #f8f9fa; color: #1a1a2e;
+    padding: 24px; line-height: 1.6;
+    max-width: 1100px; margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 4px; color: #15a8a8; }
+  h2 { font-size: 1.2rem; font-weight: 600; margin: 24px 0 12px; color: #1a1a2e; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 1rem; font-weight: 500; margin: 16px 0 8px; color: #444; }
+  .meta { font-size: 0.85rem; color: #666; margin-bottom: 20px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .summary-card { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; text-align: center; }
+  .summary-card .number { font-size: 1.8rem; font-weight: 600; color: #15a8a8; }
+  .summary-card .label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 16px; }
+  th { background: #f1f3f5; padding: 8px 12px; text-align: left; font-weight: 500; border-bottom: 2px solid #dee2e6; }
+  td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+  tr:hover td { background: #f8f9fa; }
+  .note { font-size: 0.85rem; color: #666; margin: 4px 0; padding-left: 16px; }
+  .note::before { content: "— "; }
+  .pass { color: #2e7d32; font-weight: 500; }
+  .fail { color: #c62828; font-weight: 500; }
+  .warn { color: #e65100; font-weight: 500; }
+  .flag { background: #fff3e0; border-left: 3px solid #e65100; padding: 8px 12px; margin: 6px 0; font-size: 0.85rem; border-radius: 0 4px 4px 0; }
+  .section { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  .unique-yes { color: #2e7d32; }
+  .unique-no { color: #c62828; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>datasight Audit Report{{#has_project_name}} — {{project_name}}{{/has_project_name}}</h1>
+<p class="meta">Generated: {{generated_at}}</p>
+
+<div class="summary-grid">
+  <div class="summary-card"><div class="number">{{table_count}}</div><div class="label">Tables</div></div>
+  <div class="summary-card"><div class="number">{{total_rows}}</div><div class="label">Total Rows</div></div>
+  <div class="summary-card"><div class="number">{{total_columns}}</div><div class="label">Total Columns</div></div>
+</div>
+
+<!-- Quality -->
+<div class="section">
+<h2>Data Quality</h2>
+
+{{#has_null_columns}}
+<h3>Null-heavy Columns</h3>
+<table>
+  <tr><th>Column</th><th>Nulls</th><th>Null %</th></tr>
+  {{#null_columns}}
+  <tr><td>{{table}}.{{column}}</td><td>{{null_count}}</td><td>{{null_rate}}</td></tr>
+  {{/null_columns}}
+</table>
+{{/has_null_columns}}
+
+{{#has_numeric_flags}}
+<h3>Numeric Range Flags</h3>
+<table>
+  <tr><th>Column</th><th>Issue</th></tr>
+  {{#numeric_flags}}
+  <tr><td>{{table}}.{{column}}</td><td>{{issue}}</td></tr>
+  {{/numeric_flags}}
+</table>
+{{/has_numeric_flags}}
+
+{{#quality_notes}}
+<p class="note">{{.}}</p>
+{{/quality_notes}}
+</div>
+
+<!-- Integrity -->
+<div class="section">
+<h2>Referential Integrity</h2>
+
+{{#has_primary_keys}}
+<h3>Primary Keys</h3>
+<table>
+  <tr><th>Table</th><th>Column</th><th>Distinct</th><th>Rows</th><th>Unique</th></tr>
+  {{#primary_keys}}
+  <tr>
+    <td>{{table}}</td><td>{{column}}</td><td>{{distinct_count}}</td><td>{{row_count}}</td>
+    <td>{{#is_unique}}<span class="unique-yes">yes</span>{{/is_unique}}{{^is_unique}}<span class="unique-no">NO</span>{{/is_unique}}</td>
+  </tr>
+  {{/primary_keys}}
+</table>
+{{/has_primary_keys}}
+
+{{#has_duplicate_keys}}
+<h3>Duplicate Keys</h3>
+<table>
+  <tr><th>Table</th><th>Column</th><th>Duplicates</th></tr>
+  {{#duplicate_keys}}
+  <tr><td>{{table}}</td><td>{{column}}</td><td>{{duplicate_count}}</td></tr>
+  {{/duplicate_keys}}
+</table>
+{{/has_duplicate_keys}}
+
+{{#has_orphan_foreign_keys}}
+<h3>Orphan Foreign Keys</h3>
+<table>
+  <tr><th>Child</th><th>Parent</th><th>Orphans</th><th>Child Rows</th></tr>
+  {{#orphan_foreign_keys}}
+  <tr><td>{{child_table}}.{{child_column}}</td><td>{{parent_table}}.{{parent_column}}</td><td class="fail">{{orphan_count}}</td><td>{{child_rows}}</td></tr>
+  {{/orphan_foreign_keys}}
+</table>
+{{/has_orphan_foreign_keys}}
+
+{{#has_join_explosions}}
+<h3>Join Explosion Risks</h3>
+<table>
+  <tr><th>Table A</th><th>Table B</th><th>Column</th><th>Expected</th><th>Actual</th><th>Factor</th></tr>
+  {{#join_explosions}}
+  <tr><td>{{table_a}}</td><td>{{table_b}}</td><td>{{join_column}}</td><td>{{expected_rows}}</td><td>{{actual_rows}}</td><td class="warn">{{explosion_factor}}x</td></tr>
+  {{/join_explosions}}
+</table>
+{{/has_join_explosions}}
+
+{{#integrity_notes}}
+<p class="note">{{.}}</p>
+{{/integrity_notes}}
+</div>
+
+<!-- Distribution -->
+<div class="section">
+<h2>Distribution Profiling</h2>
+
+{{#has_distributions}}
+<h3>Distributions</h3>
+<table>
+  <tr><th>Column</th><th>p5</th><th>p50</th><th>p95</th><th>Zero %</th><th>Neg %</th><th>Outliers</th></tr>
+  {{#distributions}}
+  <tr><td>{{table}}.{{column}}</td><td>{{p5_fmt}}</td><td>{{p50_fmt}}</td><td>{{p95_fmt}}</td><td>{{zero_rate_fmt}}</td><td>{{negative_rate_fmt}}</td><td>{{outlier_count}}</td></tr>
+  {{/distributions}}
+</table>
+{{/has_distributions}}
+
+{{#has_energy_flags}}
+<h3>Energy Flags</h3>
+{{#energy_flags}}
+<div class="flag">{{table}}.{{column}}: {{detail}}</div>
+{{/energy_flags}}
+{{/has_energy_flags}}
+
+{{#has_spikes}}
+<h3>Temporal Spikes</h3>
+{{#spikes}}
+<div class="flag">{{detail}}</div>
+{{/spikes}}
+{{/has_spikes}}
+
+{{#distribution_notes}}
+<p class="note">{{.}}</p>
+{{/distribution_notes}}
+</div>
+
+<!-- Validation -->
+{{#has_validation}}
+<div class="section">
+<h2>Validation Rules</h2>
+<p>Rules run: {{validation_rule_count}} &mdash; <span class="pass">{{validation_pass}} pass</span>, <span class="fail">{{validation_fail}} fail</span>, <span class="warn">{{validation_warn}} warn</span></p>
+
+{{#has_validation_results}}
+<table>
+  <tr><th>Table</th><th>Rule</th><th>Column</th><th>Status</th><th>Detail</th></tr>
+  {{#validation_results}}
+  <tr>
+    <td>{{table}}</td><td>{{rule}}</td><td>{{column_display}}</td>
+    <td>{{#is_pass}}<span class="pass">{{/is_pass}}{{#is_fail}}<span class="fail">{{/is_fail}}{{#is_warn}}<span class="warn">{{/is_warn}}{{status_upper}}</span></td>
+    <td>{{detail}}</td>
+  </tr>
+  {{/validation_results}}
+</table>
+{{/has_validation_results}}
+</div>
+{{/has_validation}}
+
+</body>
+</html>

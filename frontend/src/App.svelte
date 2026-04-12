@@ -29,9 +29,15 @@
     loadReports,
     loadConversations,
   } from "$lib/api/saved";
-  import { loadDashboard } from "$lib/api/dashboard";
+  import {
+    applyDashboardData,
+    clearDashboard,
+    loadDashboard,
+    saveDashboard,
+  } from "$lib/api/dashboard";
   import { loadMeasureCatalog } from "$lib/api/measures";
   import { loadConversation } from "$lib/api/saved";
+  import { replayConversationEvents } from "$lib/utils/conversation";
   import {
     loadDatasetOverview,
     loadMeasureOverview,
@@ -58,6 +64,16 @@
     theme = theme === "light" ? "dark" : "light";
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("datasight-theme", theme);
+  }
+
+  async function startNewChat() {
+    chatStore.clear();
+    queriesStore.clear();
+    await clearDashboard();
+    sessionStore.sessionId = crypto.randomUUID();
+    dashboardStore.currentView = "chat";
+    exportMode = false;
+    exportExcludeIndices = new Set();
   }
 
   /** Load all data after a project is opened. */
@@ -124,46 +140,13 @@
       const data = await loadConversation(sessionStore.sessionId);
       if (!data.events || (data.events as unknown[]).length === 0) return;
 
-      for (const event of data.events as Array<Record<string, unknown>>) {
-        const type = event.type as string;
-        if (type === "user_message") {
-          chatStore.pushMessage({
-            type: "user_message",
-            content: event.content as string,
-          });
-        } else if (type === "assistant_message") {
-          chatStore.pushMessage({
-            type: "assistant_message",
-            content: event.content as string,
-          });
-        } else if (type === "tool_start") {
-          chatStore.pushMessage({
-            type: "tool_start",
-            tool: event.tool as string,
-            sql: (event.sql as string) || "",
-          });
-        } else if (type === "tool_result") {
-          chatStore.pushMessage({
-            type: "tool_result",
-            html: event.html as string,
-            title: (event.title as string) || "",
-            resultType: (event.result_type as string) === "chart" ? "chart" : "table",
-          });
-        } else if (type === "tool_done") {
-          chatStore.pushMessage({
-            type: "tool_done",
-            meta: (event.meta as { sql: string; tool: string }) || {
-              sql: "",
-              tool: "",
-            },
-          });
-        } else if (type === "suggestions") {
-          chatStore.pushMessage({
-            type: "suggestions",
-            suggestions: event.suggestions as string[],
-          });
-        }
-      }
+      const replay = replayConversationEvents(data.events);
+      chatStore.clear();
+      queriesStore.clear();
+      chatStore.messages = replay.messages;
+      queriesStore.sessionQueries = replay.queries;
+      queriesStore.sessionTotalCost = replay.totalCost;
+      applyDashboardData(data.dashboard || { items: [], columns: 0, filters: [] });
     } catch {
       // No saved conversation — that's fine
     }
@@ -271,7 +254,7 @@
       shortcutsOpen = !shortcutsOpen;
     } else if (e.key === "n" || e.key === "N") {
       e.preventDefault();
-      chatStore.clear();
+      startNewChat();
     } else if (e.key === "d" || e.key === "D") {
       e.preventDefault();
       dashboardStore.currentView =
@@ -308,6 +291,7 @@
       const idx = dashboardStore.selectedCardIdx;
       if (idx >= 0 && idx < dashboardStore.pinnedItems.length) {
         dashboardStore.removeItem(dashboardStore.pinnedItems[idx].id);
+        void saveDashboard();
       }
     }
   }
@@ -323,6 +307,7 @@
   onToggleSidebar={() => sidebarStore.toggleSidebar()}
   onToggleSqlPanel={() => (sqlPanelOpen = !sqlPanelOpen)}
   onToggleExport={() => (exportMode = !exportMode)}
+  onNewChat={startNewChat}
   projectLoaded={sessionStore.projectLoaded}
   currentView={dashboardStore.currentView}
   onSwitchView={(v) => (dashboardStore.currentView = v)}
@@ -378,6 +363,7 @@
 <CommandPalette
   onToggleSettings={() => (settingsOpen = !settingsOpen)}
   onToggleSidebar={() => sidebarStore.toggleSidebar()}
+  onNewChat={startNewChat}
 />
 <ShortcutsModal
   open={shortcutsOpen}

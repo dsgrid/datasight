@@ -1,8 +1,28 @@
-# Connect to a remote HPC with GizmoSQL
+# Connect to a remote Flight SQL backend (GizmoSQL)
 
-This guide covers connecting datasight to parquet files on a remote HPC
-filesystem using [GizmoSQL](https://github.com/gizmodata/gizmosql) as a
-Flight SQL server.
+This guide covers configuring datasight to talk to a remote
+[GizmoSQL](https://github.com/gizmodata/gizmosql) server over the Arrow
+Flight SQL protocol. The common use is running GizmoSQL on an HPC compute
+node while datasight runs on your laptop — queries travel over an SSH
+tunnel and results come back.
+
+## When to use this
+
+Most HPC users are better served by
+[running datasight directly on a compute node](run-on-hpc.md).
+Reach for a Flight SQL backend when:
+
+- **You want a shared server.** A single GizmoSQL process can serve
+  multiple analysts concurrently, each running their own datasight
+  client.
+- **You can't install datasight in the HPC environment.** Rare, but
+  possible on locked-down clusters.
+- **Your LLM calls must originate from your laptop.** Either because
+  policy forbids compute-node egress to hosted APIs, or because you want
+  to run a local model on your laptop's GPU. Keeping the agent
+  client-side while the engine stays server-side handles both cases.
+
+If none of those apply, use the simpler path.
 
 ## Overview
 
