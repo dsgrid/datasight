@@ -101,14 +101,18 @@ def test_create_sql_runner_from_settings_resolves_relative_path(tmp_path, test_d
     shutil.copy(test_duckdb_path, project / rel_name)
 
     settings = DatabaseSettings(mode="duckdb", path=rel_name)
-    runner = create_sql_runner_from_settings(settings, project_dir=str(project))
+    runner = create_sql_runner_from_settings(
+        settings, project_dir=str(project), sql_cache_max_bytes=0
+    )
     assert isinstance(runner, DuckDBRunner)
     runner.close()
 
 
 def test_create_sql_runner_from_settings_absolute_path(test_duckdb_path):
     settings = DatabaseSettings(mode="duckdb", path=test_duckdb_path)
-    runner = create_sql_runner_from_settings(settings, project_dir="/nonexistent")
+    runner = create_sql_runner_from_settings(
+        settings, project_dir="/nonexistent", sql_cache_max_bytes=0
+    )
     assert isinstance(runner, DuckDBRunner)
     runner.close()
 

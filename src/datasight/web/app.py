@@ -73,7 +73,7 @@ from datasight.explore import (
     save_ephemeral_as_project,
 )
 from datasight.generate import build_generation_context, parse_generation_response
-from datasight.runner import SqlRunner
+from datasight.runner import CachingSqlRunner, SqlRunner
 from datasight.schema import format_schema_context, introspect_schema
 from datasight.settings import Settings, capture_original_env, restore_original_env
 from datasight.sql_validation import build_measure_rule_map, build_schema_map
@@ -572,6 +572,11 @@ class AppState:
         """Drop cached deterministic UI diagnostics."""
         self._insight_cache.clear()
 
+    def clear_sql_cache(self) -> None:
+        """Drop cached SQL results (if the runner is a CachingSqlRunner)."""
+        if isinstance(self.sql_runner, CachingSqlRunner):
+            self.sql_runner.clear_cache()
+
     @staticmethod
     def _cache_key(question: str) -> str:
         normalized = " ".join(question.lower().split())
@@ -921,7 +926,11 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state.sql_dialect = settings.database.sql_dialect
 
     try:
-        state.sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+        state.sql_runner = create_sql_runner_from_settings(
+            settings.database,
+            project_dir,
+            sql_cache_max_bytes=settings.app.sql_cache_max_bytes,
+        )
     except Exception as e:
         logger.exception("Failed to create SQL runner")
         raise ProjectError(f"Failed to connect to database: {e}") from e
@@ -1934,6 +1943,8 @@ async def add_files_endpoint(request: Request, state: AppState = Depends(get_sta
         from datasight.runner import DuckDBRunner, EphemeralDuckDBRunner
 
         runner = state.sql_runner
+        if isinstance(runner, CachingSqlRunner):
+            runner = runner._inner
         conn: _duckdb.DuckDBPyConnection | None = None
         reopen_readonly = False
 
@@ -1958,6 +1969,9 @@ async def add_files_endpoint(request: Request, state: AppState = Depends(get_sta
         # Update state
         if state.is_ephemeral:
             state.ephemeral_tables_info.extend(new_tables)
+
+        # New tables invalidate any cached schema/result queries.
+        state.clear_sql_cache()
 
         # Re-introspect schema
         tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)

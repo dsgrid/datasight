@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -20,6 +21,9 @@ from datasight.exceptions import ConnectionError, QueryError, QueryTimeoutError
 
 # Default timeout for SQL queries (seconds). Can be overridden per-runner.
 DEFAULT_QUERY_TIMEOUT: float = 120.0
+
+# Default SQL result cache size (1 GiB). 0 disables caching.
+DEFAULT_SQL_CACHE_MAX_BYTES: int = 1 << 30
 
 # Type alias for async SQL execution function
 RunSql = Callable[[str], Awaitable[pd.DataFrame]]
@@ -443,3 +447,97 @@ class FlightSqlRunner:
                 f"Query timed out after {self.timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
+
+
+class CachingSqlRunner:
+    """Wraps a SqlRunner with a byte-bounded LRU cache of SQL-result DataFrames.
+
+    Keyed on normalized SQL text. Cache is cleared via `clear_cache()` on
+    schema reload. Results larger than `max_bytes` are not cached.
+    """
+
+    def __init__(self, inner: SqlRunner, max_bytes: int = DEFAULT_SQL_CACHE_MAX_BYTES):
+        self._inner = inner
+        self._max_bytes = max(0, int(max_bytes))
+        self._cache: OrderedDict[str, tuple[pd.DataFrame, int]] = OrderedDict()
+        self._total_bytes = 0
+        self._lock = asyncio.Lock()
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def _normalize(sql: str) -> str:
+        collapsed = " ".join(sql.split())
+        # Strip trailing semicolons plus any whitespace they were separated by.
+        while collapsed.endswith(";") or collapsed.endswith(" "):
+            collapsed = collapsed[:-1]
+        return collapsed.lower()
+
+    @staticmethod
+    def _estimate_bytes(df: pd.DataFrame) -> int:
+        try:
+            return int(df.memory_usage(deep=True).sum())
+        except Exception:
+            return 0
+
+    def clear_cache(self) -> None:
+        self._cache.clear()
+        self._total_bytes = 0
+
+    @property
+    def cache_bytes(self) -> int:
+        return self._total_bytes
+
+    @property
+    def cache_entries(self) -> int:
+        return len(self._cache)
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        if self._max_bytes == 0:
+            return await self._inner.run_sql(sql)
+
+        key = self._normalize(sql)
+        async with self._lock:
+            entry = self._cache.get(key)
+            if entry is not None:
+                self._cache.move_to_end(key)
+                self.hits += 1
+                logger.debug(f"[sql-cache] HIT ({len(entry[0])} rows, {entry[1]} bytes)")
+                return entry[0].copy()
+
+        # Miss: execute outside the lock to avoid serializing all queries.
+        df = await self._inner.run_sql(sql)
+        size = self._estimate_bytes(df)
+
+        async with self._lock:
+            self.misses += 1
+            if size == 0 or size > self._max_bytes:
+                logger.debug(f"[sql-cache] SKIP (size={size}, max={self._max_bytes})")
+                return df
+            # Overwrite any existing entry for this key.
+            existing = self._cache.pop(key, None)
+            if existing is not None:
+                self._total_bytes -= existing[1]
+            self._cache[key] = (df.copy(), size)
+            self._total_bytes += size
+            # Evict LRU entries until within budget.
+            while self._total_bytes > self._max_bytes and self._cache:
+                _, (_, evicted_size) = self._cache.popitem(last=False)
+                self._total_bytes -= evicted_size
+            logger.debug(
+                f"[sql-cache] STORED ({size} bytes, total={self._total_bytes}, "
+                f"entries={len(self._cache)})"
+            )
+        return df.copy()
+
+    def close(self) -> None:
+        self.clear_cache()
+        close = getattr(self._inner, "close", None)
+        if close is not None:
+            close()
+
+    async def __aenter__(self) -> "CachingSqlRunner":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

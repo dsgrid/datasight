@@ -87,6 +87,7 @@ For production, use `POSTGRES_SSLMODE=verify-full` and consider using a
 | `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries ([guide](../end-user/reference/query-confidence-toggles.md)) |
 | `CONFIRM_SQL` | `false` | Require user approval before executing SQL ([guide](../end-user/reference/query-confidence-toggles.md)) |
 | `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations ([guide](../end-user/reference/query-confidence-toggles.md)) |
+| `SQL_CACHE_MAX_BYTES` | `1073741824` (1 GiB) | In-memory SQL result cache budget ([concept](../concepts/sql-result-cache.md)). Set to `0` to disable. |
 
 ## Project files
 

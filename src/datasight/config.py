@@ -15,7 +15,14 @@ import yaml
 from loguru import logger
 
 from datasight.exceptions import ConfigurationError
-from datasight.runner import DuckDBRunner, FlightSqlRunner, PostgresRunner, SQLiteRunner, SqlRunner
+from datasight.runner import (
+    CachingSqlRunner,
+    DuckDBRunner,
+    FlightSqlRunner,
+    PostgresRunner,
+    SQLiteRunner,
+    SqlRunner,
+)
 from datasight.settings import DatabaseSettings
 
 
@@ -98,7 +105,10 @@ def create_sql_runner(
 
 
 def create_sql_runner_from_settings(
-    settings: DatabaseSettings, project_dir: str = ""
+    settings: DatabaseSettings,
+    project_dir: str = "",
+    *,
+    sql_cache_max_bytes: int = 1 << 30,
 ) -> SqlRunner:
     """Create a SqlRunner from DatabaseSettings.
 
@@ -118,7 +128,7 @@ def create_sql_runner_from_settings(
         if project_dir:
             db_path = str(Path(project_dir) / db_path)
 
-    return create_sql_runner(
+    runner = create_sql_runner(
         db_mode=settings.mode,
         db_path=db_path,
         flight_uri=settings.flight_uri,
@@ -133,6 +143,9 @@ def create_sql_runner_from_settings(
         postgres_url=settings.postgres_url,
         postgres_sslmode=settings.postgres_sslmode,
     )
+    if sql_cache_max_bytes > 0:
+        runner = CachingSqlRunner(runner, max_bytes=sql_cache_max_bytes)
+    return runner
 
 
 def load_schema_description(path: str | None, project_dir: str) -> str | None:

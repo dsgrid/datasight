@@ -108,3 +108,4 @@ nav:
   - Concepts:
       - Users and roles: concepts/users-and-roles.md
       - Choosing an LLM: concepts/choosing-an-llm.md
+      - SQL result cache: concepts/sql-result-cache.md
