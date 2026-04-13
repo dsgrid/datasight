@@ -5,6 +5,7 @@
   import { settingsStore } from "$lib/stores/settings.svelte";
   import type { ChatEvent } from "$lib/stores/chat.svelte";
   import { sendMessage } from "$lib/api/chat";
+  import { summarizeDataset } from "$lib/api/summarize";
   import { addBookmark } from "$lib/api/saved";
   import { addReport } from "$lib/api/saved";
   import { saveDashboard } from "$lib/api/dashboard";
@@ -170,7 +171,7 @@
               text-text-primary cursor-pointer transition-all
               hover:border-teal hover:shadow-[0_0_0_1px_var(--teal)]"
             style="padding: 10px 16px; border-radius: 8px; font-family: inherit; font-size: 0.88rem;"
-            onclick={() => sendMessage("Show me a summary of the data")}
+            onclick={() => summarizeDataset()}
           >
             Show me a summary of the data
           </button>

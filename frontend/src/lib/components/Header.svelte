@@ -4,6 +4,8 @@
   import { queriesStore } from "$lib/stores/queries.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { formatCost } from "$lib/utils/format";
+  import { summarizeDataset } from "$lib/api/summarize";
+  import { chatStore } from "$lib/stores/chat.svelte";
 
   interface Props {
     theme: string;
@@ -177,6 +179,21 @@
         style="gap: 8px; padding: 4px; border-radius: 12px;
                background: rgba(255,255,255,0.08);
                box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);">
+        <button
+          class="btn-icon"
+          title="Summarize dataset"
+          disabled={chatStore.isStreaming}
+          onclick={() => summarizeDataset()}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M2 3h12M2 6h10M2 9h12M2 12h8"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
         <button
           class="btn-icon {sqlPanelOpen ? 'active' : ''}"
           title="SQL History"
