@@ -73,6 +73,7 @@ nav:
           - Ask questions from the CLI: end-user/how-to/ask-from-cli.md
           - Create visualizations: end-user/how-to/create-visualizations.md
           - Build a dashboard: end-user/how-to/build-a-dashboard.md
+          - Save a dashboard as a template: end-user/how-to/save-dashboard-template.md
           - Save and rerun results: end-user/how-to/save-and-rerun.md
           - Audit data quality: end-user/how-to/audit-data-quality.md
           - Configure semantic measures: end-user/how-to/configure-measures.md

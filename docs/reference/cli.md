@@ -74,6 +74,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `export`: Export a conversation session as a self-contained HTML page.
 - `log`: Display the SQL query log in a formatted table.
 - `report`: Manage saved reports.
+- `templates`: Save and re-apply dashboards as templates across datasets.
 
 ### `datasight init`
 
@@ -198,6 +199,7 @@ datasight generate [OPTIONS] [FILES]...
 | `--model` | Model name (overrides .env). |
 | `--overwrite` | Overwrite existing files. |
 | `--table`, `-t` | Table or view to include (can be specified multiple times). If omitted, all tables are included. |
+| `--db-path` | When FILES are given, write a persistent DuckDB file here (relative paths are resolved against --project-dir) and update .env to point at it. Default: `database.duckdb`. |
 | `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight run`
@@ -656,3 +658,117 @@ datasight report delete [OPTIONS] REPORT_ID
 | --- | --- |
 | `REPORT_ID` |   |
 | `--project-dir` | Project directory. Default: `.`. |
+
+### `datasight templates`
+
+Save and re-apply dashboards as templates across datasets.
+
+```bash
+datasight templates [OPTIONS] COMMAND [ARGS]...
+```
+
+**Subcommands**
+
+- `save`: Save the current project dashboard as a reusable template.
+- `list`: List dashboard templates saved in this project.
+- `show`: Print a saved template as JSON.
+- `apply`: Apply a saved template to parquet files and export HTML dashboards.
+- `delete`: Delete a saved template.
+
+#### `datasight templates save`
+
+Save the current project dashboard as a reusable template.
+
+```bash
+datasight templates save [OPTIONS] NAME
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `NAME` |   |
+| `--project-dir` | Project directory containing .datasight/templates/ (default: cwd). Default: `.`. |
+| `--description` | Template description. |
+| `--table` | Table the template requires. Repeat once per table. When omitted, tables are inferred from each card's SQL. |
+| `--var` | Declare a template variable: --var NAME=VALUE. Every occurrence of VALUE in each card's SQL is rewritten to {{NAME}}, and NAME becomes a placeholder that must be resolved at apply time. |
+| `--var-from-filename` | Attach a filename-extraction regex to a variable: --var-from-filename NAME=REGEX. At apply time the regex is run against each input parquet's filename and its first capture group (or whole match) becomes the variable value. Use with --var to also set the save-time literal and default. |
+| `--overwrite` | Replace an existing template. |
+
+#### `datasight templates list`
+
+List dashboard templates saved in this project.
+
+```bash
+datasight templates list [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .datasight/templates/ (default: cwd). Default: `.`. |
+
+#### `datasight templates show`
+
+Print a saved template as JSON.
+
+```bash
+datasight templates show [OPTIONS] NAME
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `NAME` |   |
+| `--project-dir` | Project directory containing .datasight/templates/ (default: cwd). Default: `.`. |
+
+#### `datasight templates apply`
+
+Apply a saved template to parquet files and export HTML dashboards.
+
+Each required table is registered as a view inside an in-memory DuckDB
+connection. Tables not passed via --table fall back to the project's
+own DuckDB (from .env DB_PATH) — so fixed lookup tables like ``plants``
+don't need to be re-supplied. A single --table mapping may use a shell
+glob, in which case the template is applied once per matching file and
+written to --export-dir.
+
+Example: render the template once per yearly parquet, joining each
+against the project's plants table:
+
+    datasight templates apply generation-by-fuel \
+        --table 'generation_fuel=data/*.parquet' \
+        --export-dir out/
+
+```bash
+datasight templates apply [OPTIONS] NAME
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `NAME` |   |
+| `--project-dir` | Project directory containing .datasight/templates/ (default: cwd). Default: `.`. |
+| `--table` | Map a required table to a parquet file: --table NAME=PATH. Repeat per table. One mapping may use a glob to iterate the template across many files. Tables not mapped here are looked up in the project's DuckDB. |
+| `--output` | HTML output path for a single-shot run (no globbing). |
+| `--export-dir` | Directory for per-file HTML output when a --table mapping globs. |
+| `--var` | Override a template variable: --var NAME=VALUE. Takes precedence over the variable's filename-derived value and default. |
+| `--fail-fast` | Stop on the first failure instead of continuing. |
+
+#### `datasight templates delete`
+
+Delete a saved template.
+
+```bash
+datasight templates delete [OPTIONS] NAME
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `NAME` |   |
+| `--project-dir` | Project directory containing .datasight/templates/ (default: cwd). Default: `.`. |
