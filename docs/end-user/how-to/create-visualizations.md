@@ -43,6 +43,29 @@ Beyond the basics, you can request any Plotly.js chart type:
 | Violin | "Compare score distributions by group using violin plots" |
 | Heatmap | "Create a heatmap of correlations between numeric columns" |
 
+## Trendlines and linear regression
+
+When you ask about a trend, rate of change, or correlation between two numeric
+variables, the AI fits a linear regression and overlays the fit line on the
+chart. Example prompts:
+
+- "Is net generation trending up for natural gas plants?"
+- "What's the relationship between capacity factor and plant age?"
+- "Plot monthly coal generation with a trendline"
+
+The chart will show the raw points plus a dashed trend line, and the written
+answer will quote the slope, intercept, and R² of the fit. R² is interpreted
+honestly:
+
+- **R² < 0.3** — weak fit; the trend is not predictive
+- **R² 0.3–0.7** — moderate fit
+- **R² > 0.7** — strong fit
+
+On DuckDB and PostgreSQL, the AI uses the built-in `regr_slope`,
+`regr_intercept`, `regr_r2`, and `corr` aggregates. SQLite has no built-in
+regression functions, so the AI computes slope and intercept manually — this
+works but is slower on large tables.
+
 ## How it works
 
 When you ask for a visualization, the AI:

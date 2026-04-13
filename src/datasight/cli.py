@@ -171,6 +171,7 @@ async def _run_ask_pipeline(
         mode="web",
         clarify_sql=False,
         dialect=sql_dialect,
+        headless=True,
     )
 
     log_path = os.environ.get(
