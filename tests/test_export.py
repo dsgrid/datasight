@@ -61,6 +61,51 @@ def test_export_empty_events():
     assert "Empty" in html
 
 
+def test_export_includes_provenance():
+    events = [
+        {"event": "user_message", "data": {"text": "Total generation?"}},
+        {"event": "assistant_message", "data": {"text": "I queried generation."}},
+        {
+            "event": "provenance",
+            "data": {
+                "model": "claude-test",
+                "dialect": "duckdb",
+                "project_dir": "/tmp/project",
+                "llm": {
+                    "api_calls": 2,
+                    "input_tokens": 100,
+                    "output_tokens": 40,
+                    "estimated_cost": 0.01,
+                },
+                "warnings": [],
+                "tools": [
+                    {
+                        "tool": "run_sql",
+                        "formatted_sql": "SELECT\n  SUM(net_generation_mwh)\nFROM generation_fuel",
+                        "validation": {"status": "passed", "errors": []},
+                        "execution": {
+                            "status": "success",
+                            "execution_time_ms": 4.2,
+                            "row_count": 1,
+                            "column_count": 1,
+                            "columns": ["sum"],
+                            "error": None,
+                        },
+                    }
+                ],
+            },
+        },
+    ]
+
+    html = export_session_html(events)
+
+    assert "Run details" in html
+    assert "claude-test" in html
+    assert "duckdb" in html
+    assert "passed" in html
+    assert "SUM(net_generation_mwh)" in html
+
+
 def test_export_excludes_entire_turn():
     """Excluding a turn should exclude user message, tools, AND assistant response."""
     events = [

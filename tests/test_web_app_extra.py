@@ -29,6 +29,7 @@ def isolated_web_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "explain_sql": web_app._state.explain_sql,
         "clarify_sql": web_app._state.clarify_sql,
         "show_cost": web_app._state.show_cost,
+        "show_provenance": web_app._state.show_provenance,
     }
     scrub_datasight_env()
 
@@ -619,6 +620,7 @@ def test_update_settings(isolated_web_state: None) -> None:
                 "explain_sql": True,
                 "clarify_sql": False,
                 "show_cost": False,
+                "show_provenance": True,
             },
         )
     body = resp.json()
@@ -626,6 +628,7 @@ def test_update_settings(isolated_web_state: None) -> None:
     assert body["explain_sql"] is True
     assert body["clarify_sql"] is False
     assert body["show_cost"] is False
+    assert body["show_provenance"] is True
 
 
 def test_update_settings_no_rebuild_path(isolated_web_state: None) -> None:

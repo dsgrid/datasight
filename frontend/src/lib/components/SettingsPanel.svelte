@@ -16,7 +16,12 @@
   let healthError = $state("");
 
   async function toggleSetting(
-    key: "confirm_sql" | "explain_sql" | "clarify_sql" | "show_cost",
+    key:
+      | "confirm_sql"
+      | "explain_sql"
+      | "clarify_sql"
+      | "show_cost"
+      | "show_provenance",
     currentValue: boolean,
   ) {
     // Optimistic update
@@ -33,6 +38,9 @@
         break;
       case "show_cost":
         settingsStore.showCost = newValue;
+        break;
+      case "show_provenance":
+        settingsStore.showProvenance = newValue;
         break;
     }
 
@@ -52,6 +60,9 @@
           break;
         case "show_cost":
           settingsStore.showCost = currentValue;
+          break;
+        case "show_provenance":
+          settingsStore.showProvenance = currentValue;
           break;
       }
     }
@@ -170,6 +181,21 @@
             <div class="text-sm text-text-primary">Show Cost</div>
             <div class="text-xs text-text-secondary">
               Display estimated token cost per turn
+            </div>
+          </div>
+        </label>
+
+        <label class="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settingsStore.showProvenance}
+            onchange={() => toggleSetting("show_provenance", settingsStore.showProvenance)}
+            class="w-4 h-4 rounded accent-teal"
+          />
+          <div>
+            <div class="text-sm text-text-primary">Show Run Details</div>
+            <div class="text-xs text-text-secondary">
+              Show copyable query provenance after results
             </div>
           </div>
         </label>

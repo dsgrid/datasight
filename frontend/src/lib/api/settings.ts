@@ -9,6 +9,7 @@ export interface SettingsData {
   explain_sql: boolean;
   clarify_sql: boolean;
   show_cost: boolean;
+  show_provenance: boolean;
 }
 
 export async function loadSettings(): Promise<SettingsData> {

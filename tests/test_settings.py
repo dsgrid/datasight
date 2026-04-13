@@ -180,6 +180,14 @@ class TestSettingsFromEnv:
         assert settings.llm.provider == "anthropic"
         assert settings.database.mode == "duckdb"
         assert settings.app.port == 8084
+        assert settings.app.show_provenance is False
+
+    def test_show_provenance_from_env(self, monkeypatch):
+        monkeypatch.setenv("SHOW_PROVENANCE", "true")
+
+        settings = Settings.from_env()
+
+        assert settings.app.show_provenance is True
 
     @pytest.fixture(autouse=True)
     def clean_env(self, monkeypatch):

@@ -23,3 +23,4 @@ class EventType(StrEnum):
     CONFIRM_SQL = "sql_confirm"
     CONFIRM_RESPONSE = "confirm_response"
     CACHE_HIT = "cache_hit"
+    PROVENANCE = "provenance"

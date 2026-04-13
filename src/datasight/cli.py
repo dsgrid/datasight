@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -185,6 +186,7 @@ async def _run_ask_pipeline(
     session_id = (
         f"cli-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}-{secrets.token_hex(3)}"
     )
+    turn_id = str(uuid.uuid4())
 
     result = await run_agent_loop(
         question=question,
@@ -197,6 +199,7 @@ async def _run_ask_pipeline(
         measure_rules=measure_rules,
         query_logger=query_logger,
         session_id=session_id,
+        turn_id=turn_id,
     )
 
     # Mirror the web app: emit a turn-level cost summary so `datasight log
@@ -214,6 +217,7 @@ async def _run_ask_pipeline(
         input_tokens=result.total_input_tokens,
         output_tokens=result.total_output_tokens,
         estimated_cost=cost_data.get("estimated_cost"),
+        turn_id=turn_id,
     )
     return result
 
@@ -1025,6 +1029,80 @@ def _emit_ask_result(
                         err=True,
                     )
                     sys.exit(1)
+
+
+def _build_cli_provenance(
+    *,
+    question: str,
+    result,
+    model: str,
+    dialect: str,
+    project_dir: str,
+) -> dict[str, Any]:
+    from datasight.cost import build_cost_data
+
+    cost_data = build_cost_data(
+        model, result.api_calls, result.total_input_tokens, result.total_output_tokens
+    )
+    tools = []
+    for tr in result.tool_results:
+        meta = tr.meta
+        tools.append(
+            {
+                "turn_id": meta.get("turn_id"),
+                "tool": meta.get("tool"),
+                "sql": meta.get("sql"),
+                "formatted_sql": meta.get("formatted_sql"),
+                "validation": meta.get("validation", {"status": "not_run", "errors": []}),
+                "execution": {
+                    "status": "error" if meta.get("error") else "success",
+                    "execution_time_ms": meta.get("execution_time_ms"),
+                    "row_count": meta.get("row_count"),
+                    "column_count": meta.get("column_count"),
+                    "columns": meta.get("columns", []),
+                    "error": meta.get("error"),
+                    "timestamp": meta.get("timestamp"),
+                },
+            }
+        )
+    warnings = [
+        f"{tool.get('tool') or 'tool'} failed: {tool['execution']['error']}"
+        for tool in tools
+        if tool["execution"]["error"]
+    ]
+    return {
+        "turn_id": tools[0].get("turn_id") if tools else None,
+        "question": question,
+        "model": model,
+        "dialect": dialect,
+        "project_dir": project_dir,
+        "tools": tools,
+        "llm": {
+            "api_calls": result.api_calls,
+            "input_tokens": result.total_input_tokens,
+            "output_tokens": result.total_output_tokens,
+            "estimated_cost": cost_data.get("estimated_cost"),
+        },
+        "warnings": warnings,
+    }
+
+
+def _emit_cli_provenance(
+    *,
+    question: str,
+    result,
+    model: str,
+    dialect: str,
+    project_dir: str,
+) -> None:
+    provenance = _build_cli_provenance(
+        question=question,
+        result=result,
+        model=model,
+        dialect=dialect,
+        project_dir=project_dir,
+    )
+    click.echo(json.dumps(provenance, indent=2), err=True)
 
 
 def _write_batch_result_files(
@@ -1934,6 +2012,11 @@ def verify(project_dir, model, queries_path, verbose):
     help="Print the SQL queries executed by the agent to the console.",
 )
 @click.option(
+    "--provenance",
+    is_flag=True,
+    help="Print run provenance as JSON to stderr.",
+)
+@click.option(
     "--sql-script",
     "sql_script_path",
     type=click.Path(),
@@ -1954,6 +2037,7 @@ def ask(
     questions_file,
     output_dir,
     print_sql,
+    provenance,
     sql_script_path,
     verbose,
 ):
@@ -1968,6 +2052,7 @@ def ask(
       datasight ask "Show generation by year" --chart-format html -o chart.html
       datasight ask "Top 5 states" --format csv -o results.csv
       datasight ask "Top 5 states" --print-sql
+      datasight ask "Top 5 states" --provenance
       datasight ask "Top 5 states" --sql-script top-states.sql
     """
     project_dir = str(Path(project_dir).resolve())
@@ -2039,6 +2124,14 @@ def ask(
                 _emit_ask_result(result, batch_output_format, None, None)
                 if print_sql:
                     _print_sql_queries(result)
+                if provenance:
+                    _emit_cli_provenance(
+                        question=batch_question,
+                        result=result,
+                        model=resolved_model,
+                        dialect=sql_dialect,
+                        project_dir=project_dir,
+                    )
                 if output_dir or entry.get("output"):
                     written = _write_batch_result_files(
                         output_dir=output_dir,
@@ -2072,6 +2165,14 @@ def ask(
     _emit_ask_result(result, output_format, chart_format, output_path)
     if print_sql:
         _print_sql_queries(result)
+    if provenance:
+        _emit_cli_provenance(
+            question=question,
+            result=result,
+            model=resolved_model,
+            dialect=sql_dialect,
+            project_dir=project_dir,
+        )
     if sql_script_path:
         script_text = _build_sql_script(result, question, sql_dialect)
         script_file = Path(sql_script_path)

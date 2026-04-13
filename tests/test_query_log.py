@@ -19,6 +19,7 @@ def test_log_writes_jsonl_entry(tmp_path):
         execution_time_ms=12.345,
         row_count=1,
         column_count=1,
+        turn_id="turn-1",
     )
     lines = log_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
@@ -27,6 +28,7 @@ def test_log_writes_jsonl_entry(tmp_path):
     assert entry["execution_time_ms"] == 12.35
     assert entry["sql"] == "SELECT 1"
     assert entry["error"] is None
+    assert entry["turn_id"] == "turn-1"
 
 
 def test_log_cost_writes_entry(tmp_path):
@@ -39,12 +41,14 @@ def test_log_cost_writes_entry(tmp_path):
         input_tokens=100,
         output_tokens=50,
         estimated_cost=0.01,
+        turn_id="turn-2",
     )
     entries = logger.read_recent()
     assert len(entries) == 1
     assert entries[0]["type"] == "cost"
     assert entries[0]["api_calls"] == 2
     assert entries[0]["estimated_cost"] == 0.01
+    assert entries[0]["turn_id"] == "turn-2"
 
 
 def test_read_recent_missing_file_returns_empty(tmp_path):

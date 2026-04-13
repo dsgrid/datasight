@@ -37,10 +37,12 @@ class QueryLogger:
         row_count: int | None = None,
         column_count: int | None = None,
         error: str | None = None,
+        turn_id: str | None = None,
     ) -> None:
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": session_id,
+            "turn_id": turn_id,
             "user_question": user_question,
             "tool": tool,
             "sql": sql,
@@ -64,11 +66,13 @@ class QueryLogger:
         input_tokens: int,
         output_tokens: int,
         estimated_cost: float | None = None,
+        turn_id: str | None = None,
     ) -> None:
         """Log a turn-level cost summary entry."""
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": session_id,
+            "turn_id": turn_id,
             "user_question": user_question,
             "type": "cost",
             "api_calls": api_calls,

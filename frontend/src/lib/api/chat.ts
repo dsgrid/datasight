@@ -4,7 +4,7 @@ import { chatStore } from "$lib/stores/chat.svelte";
 import { queriesStore } from "$lib/stores/queries.svelte";
 import { sessionStore } from "$lib/stores/session.svelte";
 import { settingsStore } from "$lib/stores/settings.svelte";
-import type { ToolMeta } from "$lib/stores/chat.svelte";
+import type { ProvenanceData, ToolMeta } from "$lib/stores/chat.svelte";
 
 export type SSEEventType =
   | "tool_start"
@@ -12,6 +12,7 @@ export type SSEEventType =
   | "tool_done"
   | "token"
   | "done"
+  | "provenance"
   | "suggestions"
   | "sql_confirm"
   | "sql_rejected"
@@ -36,6 +37,11 @@ interface ToolDoneData {
   column_count?: number;
   columns?: string[];
   error?: string;
+  validation?: {
+    status: string;
+    errors: string[];
+  };
+  turn_id?: string;
 }
 
 interface TokenData {
@@ -65,6 +71,7 @@ type SSEData =
   | ToolDoneData
   | TokenData
   | DoneData
+  | ProvenanceData
   | SuggestionsData
   | SqlConfirmData
   | ErrorData;
@@ -108,6 +115,8 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
         column_count: d.column_count,
         columns: d.columns,
         error: d.error,
+        validation: d.validation,
+        turn_id: d.turn_id,
       };
       chatStore.lastToolMeta = meta;
       chatStore.pushMessage({ type: "tool_done", meta });
@@ -189,6 +198,14 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
       if (d.estimated_cost != null) {
         queriesStore.addCost(d.estimated_cost);
       }
+      break;
+    }
+
+    case "provenance": {
+      chatStore.pushMessage({
+        type: "provenance",
+        provenance: data as ProvenanceData,
+      });
       break;
     }
 

@@ -1,4 +1,9 @@
-import type { ChatEvent, ToolMeta } from "$lib/stores/chat.svelte";
+import type {
+  ChatEvent,
+  ProvenanceData,
+  ProvenanceTool,
+  ToolMeta,
+} from "$lib/stores/chat.svelte";
 import type { QueryEntry } from "$lib/stores/queries.svelte";
 
 type RawConversationEvent = Record<string, unknown>;
@@ -48,6 +53,66 @@ function buildToolMeta(
       ? meta.columns.filter((column): column is string => typeof column === "string")
       : undefined,
     error: typeof meta.error === "string" ? meta.error : undefined,
+    validation: asValidationMeta(meta.validation),
+    turn_id: stringValue(meta.turn_id) || undefined,
+  };
+}
+
+function asValidationMeta(value: unknown): ToolMeta["validation"] {
+  const record = asRecord(value);
+  const errors = Array.isArray(record.errors)
+    ? record.errors.filter((error): error is string => typeof error === "string")
+    : [];
+  const status = stringValue(record.status);
+  return status ? { status, errors } : undefined;
+}
+
+function asProvenanceTool(value: unknown): ProvenanceTool {
+  const record = asRecord(value);
+  const execution = asRecord(record.execution);
+  const columns = Array.isArray(execution.columns)
+    ? execution.columns.filter((column): column is string => typeof column === "string")
+    : undefined;
+  return {
+    tool: stringValue(record.tool) || undefined,
+    sql: stringValue(record.sql) || undefined,
+    formatted_sql: stringValue(record.formatted_sql) || undefined,
+    validation: asValidationMeta(record.validation),
+    execution: {
+      status: stringValue(execution.status) || "unknown",
+      execution_time_ms:
+        typeof execution.execution_time_ms === "number"
+          ? execution.execution_time_ms
+          : undefined,
+      row_count: typeof execution.row_count === "number" ? execution.row_count : undefined,
+      column_count:
+        typeof execution.column_count === "number" ? execution.column_count : undefined,
+      columns,
+      error: typeof execution.error === "string" ? execution.error : null,
+      timestamp: stringValue(execution.timestamp) || undefined,
+    },
+  };
+}
+
+function asProvenanceData(payload: Record<string, unknown>): ProvenanceData {
+  const llm = asRecord(payload.llm);
+  return {
+    turn_id: stringValue(payload.turn_id) || undefined,
+    question: stringValue(payload.question) || undefined,
+    model: stringValue(payload.model) || undefined,
+    dialect: stringValue(payload.dialect) || undefined,
+    project_dir: stringValue(payload.project_dir) || undefined,
+    tools: Array.isArray(payload.tools) ? payload.tools.map(asProvenanceTool) : [],
+    llm: {
+      api_calls: typeof llm.api_calls === "number" ? llm.api_calls : undefined,
+      input_tokens: typeof llm.input_tokens === "number" ? llm.input_tokens : undefined,
+      output_tokens: typeof llm.output_tokens === "number" ? llm.output_tokens : undefined,
+      estimated_cost:
+        typeof llm.estimated_cost === "number" ? llm.estimated_cost : undefined,
+    },
+    warnings: Array.isArray(payload.warnings)
+      ? payload.warnings.filter((warning): warning is string => typeof warning === "string")
+      : [],
   };
 }
 
@@ -112,6 +177,8 @@ export function replayConversationEvents(events: unknown[]): ConversationReplay 
           )
         : [];
       messages.push({ type: "suggestions", suggestions });
+    } else if (type === "provenance") {
+      messages.push({ type: "provenance", provenance: asProvenanceData(payload) });
     } else if (type === "error") {
       messages.push({ type: "error", error: stringValue(payload.error) });
     } else if (type === "done" && typeof payload.estimated_cost === "number") {

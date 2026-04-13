@@ -30,6 +30,23 @@ describe("sessionStore", () => {
   });
 });
 
+describe("settingsStore", () => {
+  it("defaults provenance display to false and applies API values", async () => {
+    const { settingsStore } = await import("$lib/stores/settings.svelte");
+    expect(settingsStore.showProvenance).toBe(false);
+
+    settingsStore.applyFromApi({
+      confirm_sql: false,
+      explain_sql: false,
+      clarify_sql: true,
+      show_cost: true,
+      show_provenance: true,
+    });
+
+    expect(settingsStore.showProvenance).toBe(true);
+  });
+});
+
 describe("dashboardStore", () => {
   it("adds and removes items", async () => {
     const { dashboardStore } = await import("$lib/stores/dashboard.svelte");
@@ -335,7 +352,31 @@ describe("conversation replay", () => {
           row_count: 4,
           column_count: 2,
           columns: ["fuel_type_code_agg", "net_generation_mwh"],
+          validation: { status: "passed", errors: [] },
           timestamp: "2026-04-12T00:00:00Z",
+        },
+      },
+      {
+        event: "provenance",
+        data: {
+          model: "claude-test",
+          dialect: "duckdb",
+          tools: [
+            {
+              tool: "visualize_data",
+              formatted_sql:
+                "SELECT fuel_type_code_agg, SUM(net_generation_mwh) FROM generation_fuel GROUP BY 1",
+              validation: { status: "passed", errors: [] },
+              execution: {
+                status: "success",
+                execution_time_ms: 12,
+                row_count: 4,
+                column_count: 2,
+                columns: ["fuel_type_code_agg", "net_generation_mwh"],
+              },
+            },
+          ],
+          llm: { api_calls: 2, input_tokens: 100, output_tokens: 50 },
         },
       },
       { event: "suggestions", data: { suggestions: ["Show coal by month"] } },
@@ -347,8 +388,15 @@ describe("conversation replay", () => {
       "tool_start",
       "tool_result",
       "tool_done",
+      "provenance",
       "suggestions",
     ]);
+    const provenance = replay.messages[5];
+    expect(provenance.type).toBe("provenance");
+    if (provenance.type === "provenance") {
+      expect(provenance.provenance.model).toBe("claude-test");
+      expect(provenance.provenance.tools[0].validation?.status).toBe("passed");
+    }
     expect(replay.queries).toEqual([
       {
         tool: "visualize_data",

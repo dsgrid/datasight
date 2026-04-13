@@ -10,12 +10,52 @@ export interface ToolMeta {
   column_count?: number;
   columns?: string[];
   error?: string;
+  validation?: {
+    status: string;
+    errors: string[];
+  };
+  turn_id?: string;
 }
 
 export interface SourceMeta {
   question: string;
   resultType: string;
   meta: ToolMeta;
+}
+
+export interface ProvenanceTool {
+  tool?: string;
+  sql?: string;
+  formatted_sql?: string;
+  validation?: {
+    status: string;
+    errors: string[];
+  };
+  execution?: {
+    status: string;
+    execution_time_ms?: number;
+    row_count?: number;
+    column_count?: number;
+    columns?: string[];
+    error?: string | null;
+    timestamp?: string;
+  };
+}
+
+export interface ProvenanceData {
+  turn_id?: string;
+  question?: string;
+  model?: string;
+  dialect?: string;
+  project_dir?: string;
+  tools: ProvenanceTool[];
+  llm?: {
+    api_calls?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    estimated_cost?: number;
+  };
+  warnings?: string[];
 }
 
 export type ChatEvent =
@@ -29,6 +69,7 @@ export type ChatEvent =
       title?: string;
     }
   | { type: "tool_done"; meta: ToolMeta }
+  | { type: "provenance"; provenance: ProvenanceData }
   | { type: "sql_confirm"; sql: string; requestId: string }
   | { type: "suggestions"; suggestions: string[] }
   | { type: "clarify_options"; options: string[] }

@@ -2,6 +2,7 @@
   import { chatStore } from "$lib/stores/chat.svelte";
   import { dashboardStore } from "$lib/stores/dashboard.svelte";
   import { schemaStore } from "$lib/stores/schema.svelte";
+  import { settingsStore } from "$lib/stores/settings.svelte";
   import type { ChatEvent } from "$lib/stores/chat.svelte";
   import { sendMessage } from "$lib/api/chat";
   import { addBookmark } from "$lib/api/saved";
@@ -15,6 +16,7 @@
   import SuggestionButtons from "./SuggestionButtons.svelte";
   import ClarifyOptions from "./ClarifyOptions.svelte";
   import StarterOverview from "./StarterOverview.svelte";
+  import RunDetails from "./RunDetails.svelte";
   import { tick } from "svelte";
 
   let messagesEl = $state<HTMLElement | null>(null);
@@ -256,6 +258,8 @@
       <ClarifyOptions options={event.options} />
     {:else if event.type === "starter_overview"}
       <StarterOverview kind={event.kind} overview={event.overview} />
+    {:else if event.type === "provenance" && settingsStore.showProvenance}
+      <RunDetails provenance={event.provenance} />
     {:else if event.type === "error"}
       <div class="px-4 py-3 rounded-lg border mb-4 w-full animate-fade-in"
         style="color: var(--orange); background: rgba(254,93,38,0.06); border-color: rgba(254,93,38,0.2); font-size: 0.85rem;">

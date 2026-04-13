@@ -64,6 +64,7 @@ _PROJECT_ENV_VARS = [
     "CONFIRM_SQL",
     "EXPLAIN_SQL",
     "CLARIFY_SQL",
+    "SHOW_PROVENANCE",
     "QUERY_LOG_PATH",
     # Project-specific file paths
     "SCHEMA_DESCRIPTION_PATH",
@@ -213,6 +214,7 @@ class AppSettings:
     confirm_sql: bool = False
     explain_sql: bool = False
     clarify_sql: bool = True
+    show_provenance: bool = False
     max_history_pairs: int = 10
     response_cache_max: int = 100
     sql_cache_max_bytes: int = 1 << 30  # 1 GiB; 0 disables
@@ -315,6 +317,8 @@ class Settings:
                 confirm_sql=os.environ.get("CONFIRM_SQL", "").lower() in ("1", "true", "yes"),
                 explain_sql=os.environ.get("EXPLAIN_SQL", "").lower() in ("1", "true", "yes"),
                 clarify_sql=os.environ.get("CLARIFY_SQL", "1").lower() not in ("0", "false", "no"),
+                show_provenance=os.environ.get("SHOW_PROVENANCE", "").lower()
+                in ("1", "true", "yes"),
                 sql_cache_max_bytes=_safe_int(os.environ.get("SQL_CACHE_MAX_BYTES", ""), 1 << 30),
             ),
         )

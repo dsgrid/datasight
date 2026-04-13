@@ -22,6 +22,30 @@ HLJS_CSS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/gi
 DOMPURIFY_CDN = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"
 
 
+def _format_provenance_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Format provenance tool entries for Mustache rendering."""
+    formatted: list[dict[str, Any]] = []
+    for tool in tools:
+        validation = tool.get("validation") or {}
+        execution = tool.get("execution") or {}
+        columns = execution.get("columns") or []
+        formatted.append(
+            {
+                "tool": tool.get("tool") or "tool",
+                "sql": tool.get("formatted_sql") or tool.get("sql") or "",
+                "validation_status": validation.get("status") or "not_run",
+                "validation_errors": validation.get("errors") or [],
+                "execution_status": execution.get("status") or "unknown",
+                "execution_time_ms": execution.get("execution_time_ms"),
+                "row_count": execution.get("row_count"),
+                "column_count": execution.get("column_count"),
+                "columns": ", ".join(str(column) for column in columns),
+                "error": execution.get("error") or "",
+            }
+        )
+    return formatted
+
+
 def _group_events_into_blocks(
     events: list[dict[str, Any]],
     exclude_indices: set[int],
@@ -114,6 +138,24 @@ def _group_events_into_blocks(
                                 "html": html,  # Already escaped in df_to_html_table
                             }
                         )
+
+            case EventType.PROVENANCE:
+                if not is_turn_excluded():
+                    llm = data.get("llm") or {}
+                    pending_events.append(
+                        {
+                            "is_provenance": True,
+                            "model": data.get("model", ""),
+                            "dialect": data.get("dialect", ""),
+                            "project_dir": data.get("project_dir", ""),
+                            "api_calls": llm.get("api_calls"),
+                            "input_tokens": llm.get("input_tokens"),
+                            "output_tokens": llm.get("output_tokens"),
+                            "estimated_cost": llm.get("estimated_cost"),
+                            "warnings": data.get("warnings") or [],
+                            "tools": _format_provenance_tools(data.get("tools") or []),
+                        }
+                    )
 
     flush_pending()
     return blocks

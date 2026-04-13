@@ -341,6 +341,8 @@ class SqlExecutionResult:
     elapsed_ms: float = 0.0
     error: str | None = None
     validation_error: str | None = None
+    validation_status: str = "not_run"
+    validation_errors: list[str] = field(default_factory=list)
 
 
 async def execute_sql_with_validation(
@@ -382,25 +384,52 @@ async def execute_sql_with_validation(
             return SqlExecutionResult(
                 elapsed_ms=0.0,
                 validation_error=vr.error_message,
+                validation_status="failed",
+                validation_errors=vr.errors,
             )
+        validation_status = "passed"
+        validation_errors: list[str] = []
+    else:
+        validation_status = "not_run"
+        validation_errors = []
 
     # Execute the query
     t0 = time.perf_counter()
     try:
         df = await run_sql(sql)
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        return SqlExecutionResult(df=df, elapsed_ms=elapsed_ms)
+        return SqlExecutionResult(
+            df=df,
+            elapsed_ms=elapsed_ms,
+            validation_status=validation_status,
+            validation_errors=validation_errors,
+        )
     except QueryTimeoutError as e:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.warning(f"Query timed out after {elapsed_ms:.0f}ms: {sql[:200]}")
-        return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
+        return SqlExecutionResult(
+            elapsed_ms=elapsed_ms,
+            error=str(e),
+            validation_status=validation_status,
+            validation_errors=validation_errors,
+        )
     except QueryError as e:
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
+        return SqlExecutionResult(
+            elapsed_ms=elapsed_ms,
+            error=str(e),
+            validation_status=validation_status,
+            validation_errors=validation_errors,
+        )
     except Exception as e:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         logger.exception("Unexpected SQL error")
-        return SqlExecutionResult(elapsed_ms=elapsed_ms, error=str(e))
+        return SqlExecutionResult(
+            elapsed_ms=elapsed_ms,
+            error=str(e),
+            validation_status=validation_status,
+            validation_errors=validation_errors,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +464,7 @@ def _build_tool_meta(
     sql: str,
     execution_result: SqlExecutionResult,
     dialect: str = "duckdb",
+    turn_id: str = "",
 ) -> dict[str, Any]:
     """Build metadata dict for tool result."""
     from datetime import datetime, timezone
@@ -447,8 +477,14 @@ def _build_tool_meta(
         "row_count": None,
         "column_count": None,
         "error": execution_result.error or execution_result.validation_error,
+        "validation": {
+            "status": execution_result.validation_status,
+            "errors": execution_result.validation_errors,
+        },
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if turn_id:
+        meta["turn_id"] = turn_id
     if execution_result.df is not None:
         meta["row_count"] = len(execution_result.df)
         meta["column_count"] = len(execution_result.df.columns)
@@ -463,6 +499,7 @@ def _log_query(
     tool: str,
     sql: str,
     execution_result: SqlExecutionResult,
+    turn_id: str = "",
 ) -> None:
     """Log a query execution if logger is available."""
     if not query_logger:
@@ -476,6 +513,7 @@ def _log_query(
         row_count=len(execution_result.df) if execution_result.df is not None else None,
         column_count=len(execution_result.df.columns) if execution_result.df is not None else None,
         error=execution_result.error or execution_result.validation_error,
+        turn_id=turn_id or None,
     )
 
 
@@ -488,6 +526,7 @@ async def _execute_run_sql(
     query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
+    turn_id: str = "",
 ) -> ToolResult:
     """Execute the run_sql tool."""
     sql = input_data.get("sql", "")
@@ -500,8 +539,8 @@ async def _execute_run_sql(
         measure_rules=measure_rules,
         user_question=user_question,
     )
-    _log_query(query_logger, session_id, user_question, "run_sql", sql, result)
-    meta = _build_tool_meta("run_sql", sql, result, dialect=dialect)
+    _log_query(query_logger, session_id, user_question, "run_sql", sql, result, turn_id=turn_id)
+    meta = _build_tool_meta("run_sql", sql, result, dialect=dialect, turn_id=turn_id)
 
     # Handle validation error
     if result.validation_error:
@@ -552,6 +591,7 @@ async def _execute_visualize_data(
     query_logger: QueryLogger | None,
     session_id: str,
     user_question: str,
+    turn_id: str = "",
 ) -> ToolResult:
     """Execute the visualize_data tool."""
     sql = input_data.get("sql", "")
@@ -566,8 +606,16 @@ async def _execute_visualize_data(
         measure_rules=measure_rules,
         user_question=user_question,
     )
-    _log_query(query_logger, session_id, user_question, "visualize_data", sql, result)
-    meta = _build_tool_meta("visualize_data", sql, result, dialect=dialect)
+    _log_query(
+        query_logger,
+        session_id,
+        user_question,
+        "visualize_data",
+        sql,
+        result,
+        turn_id=turn_id,
+    )
+    meta = _build_tool_meta("visualize_data", sql, result, dialect=dialect, turn_id=turn_id)
 
     # Handle validation error
     if result.validation_error:
@@ -633,6 +681,7 @@ async def execute_tool(
     query_logger: QueryLogger | None = None,
     session_id: str = "",
     user_question: str = "",
+    turn_id: str = "",
 ) -> ToolResult:
     """Execute a tool call and return structured results.
 
@@ -670,6 +719,7 @@ async def execute_tool(
                 query_logger,
                 session_id,
                 user_question,
+                turn_id,
             )
         case "visualize_data":
             return await _execute_visualize_data(
@@ -681,6 +731,7 @@ async def execute_tool(
                 query_logger,
                 session_id,
                 user_question,
+                turn_id,
             )
         case _:
             return ToolResult(result_text=f"Unknown tool: {name}", meta={})
@@ -715,6 +766,7 @@ async def run_agent_loop(
     measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
     query_logger: QueryLogger | None = None,
     session_id: str = "",
+    turn_id: str = "",
     messages: list[dict[str, Any]] | None = None,
     tools: list[dict[str, Any]] | None = None,
     max_iterations: int = 15,
@@ -799,6 +851,7 @@ async def run_agent_loop(
                     query_logger=query_logger,
                     session_id=session_id,
                     user_question=question,
+                    turn_id=turn_id,
                 )
                 collected_tool_results.append(result)
                 tool_results_for_llm.append(

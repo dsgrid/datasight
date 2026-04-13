@@ -94,8 +94,8 @@ Toggle the sidebar with the hamburger button in the header or
 Open from the gear icon in the header. Configures:
 
 - LLM provider, model, API key, and base URL
-- Query behavior toggles (SQL confirmation, explanations)
-- Display options (cost visibility)
+- Query behavior toggles (SQL confirmation, explanations, clarifying questions)
+- Display options (cost visibility and run details)
 
 Also includes a **Project Health** section that checks `.env`, LLM
 settings, database configuration, `schema_description.md`, `queries.yaml`,
@@ -130,7 +130,7 @@ Failed queries are highlighted with an orange border.
 
 ## Result provenance
 
-Each live result card includes a **Source** disclosure showing:
+Pinned dashboard cards include a **Source** disclosure showing:
 
 - the originating question
 - tool type
@@ -139,8 +139,16 @@ Each live result card includes a **Source** disclosure showing:
 - chart type
 - generated SQL
 
-Pinned dashboard cards preserve this metadata and exported dashboards
-include it as well.
+The chat view can also show a **Run details** disclosure after each result.
+It is off by default. Enable **Settings** -> **Query Behavior** -> **Show
+Run Details** to show copyable provenance for new and replayed
+conversation turns. The disclosure includes validation status, execution
+metadata, formatted SQL, model, token usage, and **Copy JSON** / **Export
+JSON** buttons.
+
+Set `SHOW_PROVENANCE=true` in `.env` to make run details visible by
+default. Session HTML exports include run details when the conversation
+contains provenance events.
 
 ## Related reference
 

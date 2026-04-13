@@ -19,6 +19,10 @@ You can also set the defaults via `.env`:
 | `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries |
 | `CONFIRM_SQL` | `false` | Require user approval before executing SQL |
 | `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations |
+| `SHOW_PROVENANCE` | `false` | Show copyable run details in the web UI |
 
 See [Configuration reference](../../reference/configuration.md) for the
 full list of environment variables.
+
+`SHOW_PROVENANCE` is configured in the Settings panel under **Query
+Behavior** rather than on the header toolbar.

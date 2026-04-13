@@ -16,6 +16,7 @@ function createSettingsStore() {
   let explainSql = $state(false);
   let clarifySql = $state(false);
   let showCost = $state(true);
+  let showProvenance = $state(false);
   let llmConnected = $state(false);
   let llmConfig = $state<LlmConfig | null>(null);
 
@@ -44,6 +45,12 @@ function createSettingsStore() {
     set showCost(v: boolean) {
       showCost = v;
     },
+    get showProvenance() {
+      return showProvenance;
+    },
+    set showProvenance(v: boolean) {
+      showProvenance = v;
+    },
     get llmConnected() {
       return llmConnected;
     },
@@ -62,11 +69,13 @@ function createSettingsStore() {
       explain_sql: boolean;
       clarify_sql: boolean;
       show_cost: boolean;
+      show_provenance?: boolean;
     }) {
       confirmSql = data.confirm_sql;
       explainSql = data.explain_sql;
       clarifySql = data.clarify_sql;
       showCost = data.show_cost;
+      showProvenance = data.show_provenance ?? false;
     },
   };
 }

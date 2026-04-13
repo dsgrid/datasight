@@ -65,6 +65,26 @@
   }
   .table-result tr:hover td { background: #f8f9fa; }
   .table-toolbar, .table-pagination { display: none; }
+  .provenance {
+    margin: 12px 0 20px; border: 1px solid #dbe3ea; border-radius: 8px;
+    background: #fff; overflow: hidden;
+  }
+  .provenance summary {
+    cursor: pointer; padding: 10px 14px; font-weight: 600; color: #31545c;
+    background: #f5f9fa;
+  }
+  .provenance-body { padding: 12px 14px; font-size: 0.85rem; }
+  .provenance dl {
+    display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px;
+    margin-bottom: 12px;
+  }
+  .provenance dt { font-weight: 600; color: #566; }
+  .provenance dd { color: #1a1a2e; }
+  .provenance h2 {
+    font-size: 0.9rem; margin: 12px 0 6px; color: #31545c;
+  }
+  .provenance ul { margin: 0 0 12px 18px; }
+  .provenance .sql-block { margin-top: 8px; }
   .footer {
     margin-top: 40px; padding-top: 16px; border-top: 1px solid #dee2e6;
     font-size: 0.8rem; color: #999; text-align: center;
@@ -89,6 +109,45 @@
 {{#is_table}}
 <div class="result table-result">{{{html}}}</div>
 {{/is_table}}
+{{#is_provenance}}
+<details class="provenance">
+  <summary>Run details</summary>
+  <div class="provenance-body">
+    <dl>
+      <dt>Model</dt><dd>{{model}}</dd>
+      <dt>SQL dialect</dt><dd>{{dialect}}</dd>
+      <dt>Project</dt><dd>{{project_dir}}</dd>
+      <dt>LLM calls</dt><dd>{{api_calls}}</dd>
+      <dt>Input tokens</dt><dd>{{input_tokens}}</dd>
+      <dt>Output tokens</dt><dd>{{output_tokens}}</dd>
+      <dt>Estimated cost</dt><dd>{{estimated_cost}}</dd>
+    </dl>
+    {{#warnings}}
+    <h2>Warnings</h2>
+    <ul><li>{{.}}</li></ul>
+    {{/warnings}}
+    {{#tools}}
+    <h2>{{tool}}</h2>
+    <dl>
+      <dt>Validation</dt><dd>{{validation_status}}</dd>
+      <dt>Execution</dt><dd>{{execution_status}}</dd>
+      <dt>Runtime</dt><dd>{{execution_time_ms}} ms</dd>
+      <dt>Rows</dt><dd>{{row_count}}</dd>
+      <dt>Columns</dt><dd>{{column_count}}</dd>
+      <dt>Result columns</dt><dd>{{columns}}</dd>
+      <dt>Error</dt><dd>{{error}}</dd>
+    </dl>
+    {{#validation_errors}}
+    <h2>Validation errors</h2>
+    <ul><li>{{.}}</li></ul>
+    {{/validation_errors}}
+    {{#sql}}
+    <div class="sql-block"><pre><code class="language-sql">{{sql}}</code></pre></div>
+    {{/sql}}
+    {{/tools}}
+  </div>
+</details>
+{{/is_provenance}}
 {{/blocks}}
 <div class="footer">Exported from datasight</div>
 <script>

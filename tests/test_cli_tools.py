@@ -1455,7 +1455,13 @@ def _make_sql_result(text="answer", queries=None):
                 },
             )
         )
-    return SimpleNamespace(text=text, tool_results=tool_results)
+    return SimpleNamespace(
+        text=text,
+        tool_results=tool_results,
+        total_input_tokens=0,
+        total_output_tokens=0,
+        api_calls=0,
+    )
 
 
 def test_sanitize_sql_identifier_basic():
@@ -1646,6 +1652,34 @@ def test_ask_print_sql_outputs_queries_to_stderr(monkeypatch, project_dir):
     assert "SELECT count(*) FROM orders;" in result.stderr
     assert "SQL queries executed" not in result.stdout
     assert "SELECT count(*) FROM orders" not in result.stdout
+
+
+def test_ask_provenance_outputs_json_to_stderr(monkeypatch, project_dir):
+    async def fake_run_ask_pipeline(**kwargs):
+        return _make_sql_result(
+            text="here are the rows",
+            queries=[
+                {
+                    "sql": "SELECT count(*) FROM orders",
+                    "formatted_sql": "SELECT\n  count(*)\nFROM orders",
+                }
+            ],
+        )
+
+    monkeypatch.setattr("datasight.cli._run_ask_pipeline", fake_run_ask_pipeline)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["ask", "--project-dir", project_dir, "How many orders?", "--provenance"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "here are the rows" in result.stdout
+    provenance = json.loads(result.stderr)
+    assert provenance["question"] == "How many orders?"
+    assert provenance["dialect"] == "duckdb"
+    assert provenance["tools"][0]["formatted_sql"] == "SELECT\n  count(*)\nFROM orders"
+    assert provenance["tools"][0]["validation"]["status"] == "not_run"
 
 
 def test_ask_print_sql_keeps_json_stdout_parseable(monkeypatch, project_dir):

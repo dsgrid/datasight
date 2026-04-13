@@ -494,6 +494,7 @@ class AppState:
         self.explain_sql: bool = False
         self.clarify_sql: bool = True
         self.show_cost: bool = True
+        self.show_provenance: bool = False
         self.schema_text: str = ""
         self.schema_map: dict[str, set[str]] = {}
         self.measure_rules: dict[tuple[str, str], Any] = {}
@@ -949,6 +950,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state.confirm_sql = settings.app.confirm_sql
     state.explain_sql = settings.app.explain_sql
     state.clarify_sql = settings.app.clarify_sql
+    state.show_provenance = settings.app.show_provenance
     state._max_history_pairs = settings.app.max_history_pairs
     state._response_cache_max = settings.app.response_cache_max
 
@@ -1060,6 +1062,7 @@ async def execute_tool_web(
     state: AppState,
     session_id: str = "",
     user_question: str = "",
+    turn_id: str = "",
 ) -> tuple[str, str | None, str | None, dict[str, Any]]:
     """Execute a tool call via the shared agent module.
 
@@ -1078,8 +1081,80 @@ async def execute_tool_web(
         query_logger=state.query_logger,
         session_id=session_id,
         user_question=user_question,
+        turn_id=turn_id,
     )
     return result.result_text, result.result_html, None, result.meta
+
+
+def _build_tool_provenance(
+    *,
+    turn_id: str,
+    question: str,
+    model: str,
+    dialect: str,
+    project_dir: str,
+    tool_call_id: str,
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Build answer provenance from tool metadata."""
+    status = "error" if meta.get("error") else "success"
+    return {
+        "turn_id": turn_id,
+        "question": question,
+        "model": model,
+        "dialect": dialect,
+        "project_dir": project_dir,
+        "tool_call_id": tool_call_id,
+        "tool": meta.get("tool"),
+        "sql": meta.get("sql"),
+        "formatted_sql": meta.get("formatted_sql"),
+        "validation": meta.get("validation", {"status": "not_run", "errors": []}),
+        "execution": {
+            "status": status,
+            "execution_time_ms": meta.get("execution_time_ms"),
+            "row_count": meta.get("row_count"),
+            "column_count": meta.get("column_count"),
+            "columns": meta.get("columns", []),
+            "error": meta.get("error"),
+            "timestamp": meta.get("timestamp"),
+        },
+    }
+
+
+def _build_turn_provenance(
+    *,
+    turn_id: str,
+    question: str,
+    model: str,
+    dialect: str,
+    project_dir: str,
+    tools: list[dict[str, Any]],
+    cost_data: dict[str, Any],
+    api_calls: int,
+    input_tokens: int,
+    output_tokens: int,
+) -> dict[str, Any]:
+    """Build provenance payload for a completed assistant turn."""
+    warnings = [
+        f"{tool.get('tool') or 'tool'} failed: {tool['execution']['error']}"
+        for tool in tools
+        if tool.get("execution", {}).get("error")
+    ]
+    return {
+        "turn_id": turn_id,
+        "question": question,
+        "model": model,
+        "dialect": dialect,
+        "project_dir": project_dir,
+        "tools": tools,
+        "llm": {
+            "api_calls": api_calls,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost": cost_data.get("estimated_cost"),
+        },
+        "warnings": warnings,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1099,10 +1174,14 @@ async def generate_chat_response(
 
     messages = state.get_session_messages(session_id)
     messages.append({"role": "user", "content": message})
+    turn_id = str(uuid.uuid4())
+    tool_provenance: list[dict[str, Any]] = []
 
     conv = state.conversations.get(session_id) if state.conversations else None
     evt_log = conv["events"] if conv else []
-    evt_log.append({"event": EventType.USER_MESSAGE, "data": {"text": message}})
+    evt_log.append(
+        {"event": EventType.USER_MESSAGE, "data": {"text": message, "turn_id": turn_id}}
+    )
 
     if conv and conv["title"] == "Untitled":
         conv["title"] = message[:80] + ("..." if len(message) > 80 else "")
@@ -1266,6 +1345,7 @@ async def generate_chat_response(
                     state,
                     session_id=session_id,
                     user_question=message,
+                    turn_id=turn_id,
                 )
 
                 if result_html:
@@ -1282,6 +1362,18 @@ async def generate_chat_response(
                 if meta:
                     evt_log.append({"event": EventType.TOOL_DONE, "data": meta})
                     yield f"event: {EventType.TOOL_DONE}\ndata: {json.dumps(meta)}\n\n"
+                    if block.name in ("run_sql", "visualize_data"):
+                        tool_provenance.append(
+                            _build_tool_provenance(
+                                turn_id=turn_id,
+                                question=message,
+                                model=state.model,
+                                dialect=state.sql_dialect,
+                                project_dir=state.project_dir or "",
+                                tool_call_id=block.id,
+                                meta=meta,
+                            )
+                        )
                     await state.save_session(session_id)
 
                 tool_results.append(
@@ -1322,7 +1414,24 @@ async def generate_chat_response(
                 input_tokens=total_input_tokens,
                 output_tokens=total_output_tokens,
                 estimated_cost=cost_data.get("estimated_cost"),
+                turn_id=turn_id,
             )
+
+        provenance = _build_turn_provenance(
+            turn_id=turn_id,
+            question=message,
+            model=state.model,
+            dialect=state.sql_dialect,
+            project_dir=state.project_dir or "",
+            tools=tool_provenance,
+            cost_data=cost_data,
+            api_calls=api_calls,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+        )
+        evt_log.append({"event": EventType.PROVENANCE, "data": provenance})
+        await state.save_session(session_id)
+        yield f"event: {EventType.PROVENANCE}\ndata: {json.dumps(provenance)}\n\n"
 
         # Cache first-turn responses
         if is_first_turn:
@@ -1362,7 +1471,23 @@ async def generate_chat_response(
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
             estimated_cost=cost_data.get("estimated_cost"),
+            turn_id=turn_id,
         )
+    provenance = _build_turn_provenance(
+        turn_id=turn_id,
+        question=message,
+        model=state.model,
+        dialect=state.sql_dialect,
+        project_dir=state.project_dir or "",
+        tools=tool_provenance,
+        cost_data=cost_data,
+        api_calls=api_calls,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+    )
+    evt_log.append({"event": EventType.PROVENANCE, "data": provenance})
+    await state.save_session(session_id)
+    yield f"event: {EventType.PROVENANCE}\ndata: {json.dumps(provenance)}\n\n"
     max_iter_text = "Reached maximum number of tool calls. Please try a simpler question."
     evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": max_iter_text}})
     await state.save_session(session_id)
@@ -1788,6 +1913,7 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state.confirm_sql = settings.app.confirm_sql
         state.explain_sql = settings.app.explain_sql
         state.clarify_sql = settings.app.clarify_sql
+        state.show_provenance = settings.app.show_provenance
         state._max_history_pairs = settings.app.max_history_pairs
         state._response_cache_max = settings.app.response_cache_max
 
@@ -2923,6 +3049,7 @@ async def get_settings(state: AppState = Depends(get_state)):
         "explain_sql": state.explain_sql,
         "clarify_sql": state.clarify_sql,
         "show_cost": state.show_cost,
+        "show_provenance": state.show_provenance,
     }
 
 
@@ -2946,6 +3073,8 @@ async def update_settings(request: Request, state: AppState = Depends(get_state)
                 need_rebuild = True
         if "show_cost" in body:
             state.show_cost = bool(body["show_cost"])
+        if "show_provenance" in body:
+            state.show_provenance = bool(body["show_provenance"])
         if need_rebuild:
             state.rebuild_system_prompt()
         else:
@@ -2953,13 +3082,14 @@ async def update_settings(request: Request, state: AppState = Depends(get_state)
     logger.info(
         f"Settings updated: confirm_sql={state.confirm_sql}, "
         f"explain_sql={state.explain_sql}, clarify_sql={state.clarify_sql}, "
-        f"show_cost={state.show_cost}"
+        f"show_cost={state.show_cost}, show_provenance={state.show_provenance}"
     )
     return {
         "confirm_sql": state.confirm_sql,
         "explain_sql": state.explain_sql,
         "clarify_sql": state.clarify_sql,
         "show_cost": state.show_cost,
+        "show_provenance": state.show_provenance,
     }
 
 

@@ -197,6 +197,7 @@ async def test_execute_tool_run_sql(test_duckdb_path):
     assert result.result_html is not None
     assert result.meta["row_count"] == 1
     assert result.meta["error"] is None
+    assert result.meta["validation"]["status"] == "not_run"
 
 
 @pytest.mark.asyncio
@@ -224,6 +225,26 @@ async def test_execute_tool_validation_rejects_bad_table(test_duckdb_path):
     )
     runner.close()
     assert "validation error" in result.result_text.lower()
+    assert result.meta["validation"]["status"] == "failed"
+    assert "hallucinated_table" in result.meta["validation"]["errors"][0]
+    assert result.meta["error"] is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_validation_records_passed_status(test_duckdb_path):
+    runner = DuckDBRunner(test_duckdb_path)
+    schema_map = {"products": {"id", "name", "category", "price"}}
+    result = await execute_tool(
+        "run_sql",
+        {"sql": "SELECT COUNT(*) AS cnt FROM products"},
+        run_sql=runner.run_sql,
+        schema_map=schema_map,
+        turn_id="turn-1",
+    )
+    runner.close()
+    assert result.meta["validation"] == {"status": "passed", "errors": []}
+    assert result.meta["turn_id"] == "turn-1"
+    assert result.meta["row_count"] == 1
 
 
 @pytest.mark.asyncio

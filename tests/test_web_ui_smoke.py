@@ -24,6 +24,7 @@ def isolated_web_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "explain_sql": web_app._state.explain_sql,
         "clarify_sql": web_app._state.clarify_sql,
         "show_cost": web_app._state.show_cost,
+        "show_provenance": web_app._state.show_provenance,
     }
 
     scrub_datasight_env()
@@ -39,6 +40,7 @@ def isolated_web_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     web_app._state.explain_sql = original_flags["explain_sql"]
     web_app._state.clarify_sql = original_flags["clarify_sql"]
     web_app._state.show_cost = original_flags["show_cost"]
+    web_app._state.show_provenance = original_flags["show_provenance"]
 
     os.environ.clear()
     os.environ.update(original_env)
@@ -89,6 +91,7 @@ def test_ui_boot_contract_when_unloaded(isolated_web_state: None) -> None:
         "explain_sql": False,
         "clarify_sql": True,
         "show_cost": True,
+        "show_provenance": False,
     }
 
     llm_settings = llm_settings_response.json()
