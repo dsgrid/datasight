@@ -1,0 +1,192 @@
+"""Tests for `datasight generate` persisting a DuckDB file + updating .env."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import duckdb
+import pandas as pd
+import pytest
+from click.testing import CliRunner
+
+from datasight.cli import cli
+from datasight.config import set_env_vars
+from datasight.explore import build_persistent_duckdb, create_ephemeral_session
+from datasight.llm import TextBlock
+
+from tests._env_helpers import DATASIGHT_ENV_VARS, scrub_datasight_env
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    for key in DATASIGHT_ENV_VARS:
+        monkeypatch.delenv(key, raising=False)
+    yield
+    scrub_datasight_env()
+
+
+@pytest.fixture
+def parquet_file(tmp_path):
+    path = tmp_path / "generation_fuel.parquet"
+    pd.DataFrame(
+        {
+            "energy_source_code": ["WND", "SUN", "NG"],
+            "net_generation_mwh": [100.0, 80.0, 200.0],
+        }
+    ).to_parquet(path)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# build_persistent_duckdb
+# ---------------------------------------------------------------------------
+
+
+def test_build_persistent_duckdb_creates_views(tmp_path, parquet_file):
+    _, tables_info = create_ephemeral_session([str(parquet_file)])
+    db_path = tmp_path / "out.duckdb"
+    result = build_persistent_duckdb(db_path, tables_info)
+    assert result == db_path.resolve()
+    assert db_path.exists()
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        view_name = tables_info[0]["name"]
+        df = conn.execute(f'SELECT COUNT(*) AS n FROM "{view_name}"').fetchdf()
+        assert int(df["n"].iloc[0]) == 3
+
+
+def test_build_persistent_duckdb_refuses_overwrite(tmp_path, parquet_file):
+    _, tables_info = create_ephemeral_session([str(parquet_file)])
+    db_path = tmp_path / "out.duckdb"
+    build_persistent_duckdb(db_path, tables_info)
+    with pytest.raises(FileExistsError):
+        build_persistent_duckdb(db_path, tables_info)
+    build_persistent_duckdb(db_path, tables_info, overwrite=True)
+
+
+# ---------------------------------------------------------------------------
+# set_env_vars
+# ---------------------------------------------------------------------------
+
+
+def test_set_env_vars_creates_from_template(tmp_path):
+    env_path = tmp_path / ".env"
+    set_env_vars(env_path, {"DB_MODE": "duckdb", "DB_PATH": "./data.duckdb"})
+    text = env_path.read_text(encoding="utf-8")
+    assert "DB_MODE=duckdb" in text
+    assert "DB_PATH=./data.duckdb" in text
+    # Template placeholders preserved
+    assert "ANTHROPIC_API_KEY" in text
+
+
+def test_set_env_vars_replaces_existing_uncommented(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=my-key\nDB_MODE=sqlite\nDB_PATH=./old.sqlite\n",
+        encoding="utf-8",
+    )
+    set_env_vars(env_path, {"DB_MODE": "duckdb", "DB_PATH": "./new.duckdb"})
+    text = env_path.read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY=my-key" in text
+    assert "DB_MODE=duckdb" in text
+    assert "DB_PATH=./new.duckdb" in text
+    assert "./old.sqlite" not in text
+
+
+def test_set_env_vars_uncomments_commented_line(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("# DB_PATH=./old.duckdb\n", encoding="utf-8")
+    set_env_vars(env_path, {"DB_PATH": "./new.duckdb"})
+    text = env_path.read_text(encoding="utf-8")
+    assert "DB_PATH=./new.duckdb" in text
+    assert "# DB_PATH" not in text
+
+
+def test_set_env_vars_appends_missing(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("ANTHROPIC_API_KEY=x\n", encoding="utf-8")
+    set_env_vars(env_path, {"NEW_VAR": "y"})
+    text = env_path.read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY=x" in text
+    assert "NEW_VAR=y" in text
+
+
+# ---------------------------------------------------------------------------
+# CLI: datasight generate <file>
+# ---------------------------------------------------------------------------
+
+
+class _StubLLMClient:
+    async def create_message(self, **kwargs):
+        text = (
+            "--- schema_description.md ---\n"
+            "# Schema\n\nGeneration fuel data.\n\n"
+            "--- queries.yaml ---\n"
+            "- question: Total MWh\n"
+            "  sql: SELECT SUM(net_generation_mwh) FROM generation_fuel\n"
+        )
+        return SimpleNamespace(
+            content=[TextBlock(text)],
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+
+@pytest.fixture
+def stub_llm(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: _StubLLMClient())
+
+
+def test_generate_creates_db_and_updates_env(tmp_path, parquet_file, stub_llm):
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    db_path = tmp_path / "database.duckdb"
+    assert db_path.exists(), result.output
+
+    env_path = tmp_path / ".env"
+    assert env_path.exists()
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "DB_MODE=duckdb" in env_text
+    assert "DB_PATH=./database.duckdb" in env_text
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        tables = conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchdf()
+        assert "generation_fuel" in tables["table_name"].tolist()
+
+
+def test_generate_respects_custom_db_path(tmp_path, parquet_file, stub_llm):
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(parquet_file),
+            "--project-dir",
+            str(tmp_path),
+            "--db-path",
+            "db/custom.duckdb",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "db" / "custom.duckdb").exists()
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "DB_PATH=./db/custom.duckdb" in env_text
+
+
+def test_generate_refuses_to_overwrite_existing_db(tmp_path, parquet_file, stub_llm):
+    (tmp_path / "database.duckdb").write_bytes(b"")
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code != 0
+    assert "already exists" in result.output

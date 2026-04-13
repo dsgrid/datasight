@@ -127,11 +127,23 @@ configuring a database first:
 datasight generate generation.parquet plants.csv
 ```
 
-This connects to your database (or creates an ephemeral one from the given
-files), inspects tables and columns, samples code/enum columns to identify
-their meanings, and produces draft versions of both files. Review and edit
-the results — the AI gets you a solid starting point but you know your data
-best.
+When files are passed, datasight also:
+
+- Writes a persistent DuckDB file (`database.duckdb` by default in the
+  project directory) with views pointing at each input file.
+- Creates or updates `.env` with `DB_MODE=duckdb` and `DB_PATH` set to
+  the new database. Existing entries are replaced in place; other env
+  values (like `ANTHROPIC_API_KEY`) are preserved.
+
+Use `--db-path <path>` to write the database somewhere else (for example,
+`--db-path db/project.duckdb`). The path may be absolute or relative to
+`--project-dir`.
+
+The command connects to your database (or creates an ephemeral one from
+the given files), inspects tables and columns, samples code/enum columns
+to identify their meanings, and produces draft versions of
+`schema_description.md` and `queries.yaml`. Review and edit the results —
+the AI gets you a solid starting point but you know your data best.
 
 It also seeds a `measures.yaml` file for project-specific semantic
 overrides and a `time_series.yaml` file for temporal completeness

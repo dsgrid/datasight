@@ -31,6 +31,44 @@ def normalize_db_mode(db_mode: str) -> str:
     return "duckdb" if db_mode == "local" else db_mode
 
 
+def set_env_vars(env_path: Path | str, updates: dict[str, str]) -> None:
+    """Create-or-update an ``.env`` file, setting the given ``KEY=value`` pairs.
+
+    Existing lines that match a key (commented or uncommented) are replaced
+    in place. Keys not already present are appended. When ``env_path`` does
+    not exist, a new file is created from the bundled env template so the
+    user's LLM/API placeholders are preserved.
+    """
+    import re
+
+    env_path = Path(env_path)
+    if env_path.exists():
+        text = env_path.read_text(encoding="utf-8")
+    else:
+        template_path = Path(__file__).parent / "templates" / "env.template"
+        text = template_path.read_text(encoding="utf-8") if template_path.exists() else ""
+
+    lines = text.splitlines()
+    remaining = dict(updates)
+    pattern = re.compile(r"^\s*#?\s*([A-Z_][A-Z0-9_]*)\s*=")
+    out: list[str] = []
+    for line in lines:
+        match = pattern.match(line)
+        key = match.group(1) if match else None
+        if key and key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+    if remaining:
+        if out and out[-1].strip():
+            out.append("")
+        for key, value in remaining.items():
+            out.append(f"{key}={value}")
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def create_sql_runner(
     db_mode: str,
     db_path: str = "",

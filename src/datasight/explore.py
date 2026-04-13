@@ -367,6 +367,68 @@ def add_files_to_connection(
     return tables_info
 
 
+def build_persistent_duckdb(
+    db_path: str | Path,
+    tables_info: list[dict],
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Create a DuckDB file with views pointing at the given data sources.
+
+    Parameters
+    ----------
+    db_path:
+        Destination path for the DuckDB file.
+    tables_info:
+        Table info dicts (from :func:`create_ephemeral_session`) with
+        ``name``, ``path``, and ``type`` keys.
+    overwrite:
+        When ``True``, an existing file at ``db_path`` is removed first.
+
+    Returns
+    -------
+    The absolute path of the created DuckDB file.
+    """
+    db_path = Path(db_path).resolve()
+    if db_path.exists():
+        if not overwrite:
+            raise FileExistsError(f"Database already exists: {db_path}")
+        db_path.unlink()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = duckdb.connect(str(db_path))
+    attached: dict[str, str] = {}
+    used_aliases: set[str] = set()
+
+    try:
+        for table in tables_info:
+            if table["type"] == "duckdb":
+                source_path = table["path"]
+                if source_path not in attached:
+                    alias = sanitize_table_name(Path(source_path).stem) + "_db"
+                    base_alias = alias
+                    counter = 2
+                    while alias in used_aliases:
+                        alias = f"{base_alias}_{counter}"
+                        counter += 1
+                    used_aliases.add(alias)
+                    escaped_path = source_path.replace("'", "''")
+                    conn.execute(f"ATTACH '{escaped_path}' AS \"{alias}\" (READ_ONLY)")
+                    attached[source_path] = alias
+                alias = attached[source_path]
+                source_table = table.get("source_table", table["name"])
+                conn.execute(
+                    f'CREATE VIEW "{table["name"]}" AS SELECT * FROM "{alias}"."{source_table}"'
+                )
+            else:
+                conn.execute(create_view_sql(table["name"], table["path"], table["type"]))
+            logger.info(f"Created view '{table['name']}' in {db_path}")
+    finally:
+        conn.close()
+
+    return db_path
+
+
 def save_ephemeral_as_project(
     runner: object,  # noqa: ARG001  # kept for API consistency
     tables_info: list[dict],
