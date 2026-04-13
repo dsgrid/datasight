@@ -879,6 +879,35 @@ def test_cli_apply_batch_fails_on_filename_regex_mismatch(project, tmp_path):
     assert "does not match regex" in result.output
 
 
+def test_cli_apply_single_match_glob_is_rotating(project_with_plants_db, tmp_path):
+    """A glob matching exactly one file should still rotate (→ --export-dir works)."""
+    pd = pytest.importorskip("pandas")
+    parquet = tmp_path / "gen_2020.parquet"
+    pd.DataFrame(
+        {"energy_source_code": ["WND"], "net_generation_mwh": [1.0], "plant_id": [1]}
+    ).to_parquet(parquet)
+
+    dt.save_template(_joined_template("joined"), project_with_plants_db)
+    out_dir = tmp_path / "out"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "templates",
+            "apply",
+            "joined",
+            "--project-dir",
+            str(project_with_plants_db),
+            "--table",
+            f"generation_fuel={tmp_path}/gen_*.parquet",
+            "--export-dir",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert (out_dir / "gen_2020.html").exists()
+
+
 def test_cli_apply_var_override_beats_filename(project, tmp_path):
     pd = pytest.importorskip("pandas")
     p = tmp_path / "gen_2020.parquet"

@@ -1512,6 +1512,18 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
 
     project_dir = str(Path(project_dir).resolve())
 
+    # Resolve the would-be DB path up front so we can include it in the
+    # preflight check — otherwise a stale database.duckdb would abort the
+    # run only after the LLM call and the doc writes, leaving behind a
+    # partial, mutated project.
+    use_files = bool(files)
+    db_target: Path | None = None
+    if use_files:
+        _db_target = Path(db_path)
+        if not _db_target.is_absolute():
+            _db_target = Path(project_dir) / _db_target
+        db_target = _db_target.resolve()
+
     # Check for existing files early
     schema_path = Path(project_dir) / "schema_description.md"
     queries_path = Path(project_dir) / "queries.yaml"
@@ -1527,9 +1539,12 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
             existing.append("measures.yaml")
         if time_series_path.exists():
             existing.append("time_series.yaml")
+        if db_target is not None and db_target.exists():
+            existing.append(db_target.name)
         if existing:
+            verb = "exists" if len(existing) == 1 else "exist"
             click.echo(
-                f"Error: {', '.join(existing)} already exist. Use --overwrite to replace.",
+                f"Error: {', '.join(existing)} already {verb}. Use --overwrite to replace.",
                 err=True,
             )
             sys.exit(1)
@@ -1542,9 +1557,6 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
     # Load settings and validate
     settings, resolved_model = _resolve_settings(project_dir, model)
     _validate_settings_for_llm(settings)
-
-    # Determine whether we're using file arguments or a configured database
-    use_files = bool(files)
 
     if not use_files:
         resolved_db_path = _resolve_db_path(settings, project_dir)
@@ -1696,15 +1708,14 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
         from datasight.config import set_env_vars
         from datasight.explore import build_persistent_duckdb
 
-        db_target = Path(db_path)
-        if not db_target.is_absolute():
-            db_target = Path(project_dir) / db_target
-        db_target = db_target.resolve()
+        assert db_target is not None  # set above when use_files is True
         try:
             build_persistent_duckdb(db_target, tables_info, overwrite=overwrite)
         except FileExistsError:
+            # Preflight above rejects pre-existing DBs without --overwrite,
+            # so reaching here means the file appeared mid-run.
             click.echo(
-                f"Error: Database file already exists: {db_target}. Use --overwrite to replace.",
+                f"Error: Database file already exists: {db_target}.",
                 err=True,
             )
             sys.exit(1)
@@ -4982,21 +4993,18 @@ def template_apply(
     rotating_paths: list[str] = []
     fixed: dict[str, str] = {}
     for key, value in parsed.items():
-        if any(ch in value for ch in "*?["):
+        is_glob = any(ch in value for ch in "*?[")
+        if is_glob:
             matches = sorted(glob.glob(value))
-            if len(matches) > 1:
-                if rotating_name is not None:
-                    raise click.ClickException(
-                        f"Only one --table mapping may glob. "
-                        f"Both {rotating_name!r} and {key!r} glob."
-                    )
-                rotating_name = key
-                rotating_paths = matches
-                continue
-            if len(matches) == 1:
-                value = matches[0]
-            else:
+            if not matches:
                 raise click.ClickException(f"No files match --table {key}={value!r}.")
+            if rotating_name is not None:
+                raise click.ClickException(
+                    f"Only one --table mapping may glob. Both {rotating_name!r} and {key!r} glob."
+                )
+            rotating_name = key
+            rotating_paths = matches
+            continue
         if not Path(value).exists():
             raise click.ClickException(f"File not found for --table {key}: {value}")
         fixed[key] = value
@@ -5078,12 +5086,14 @@ def template_apply(
 
         results = asyncio.run(single_run())
     else:
-        if not export_dir:
+        if not export_dir and not (output_path and len(rotating_paths) == 1):
             raise click.ClickException(
                 "Batch mode (a --table mapping with multiple matches) needs --export-dir DIR."
             )
-        out_dir = Path(export_dir).resolve()
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(export_dir).resolve() if export_dir else None
+        if out_dir:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        fixed_output = Path(output_path).resolve() if output_path else None
 
         async def batch_run():
             from datasight.dashboard_template import ApplyResult
@@ -5091,7 +5101,11 @@ def template_apply(
             batch_results: list[ApplyResult] = []
             for path in rotating_paths:
                 stem = Path(path).stem
-                out_file = out_dir / f"{stem}.html"
+                if fixed_output is not None:
+                    out_file = fixed_output
+                else:
+                    assert out_dir is not None  # guarded above
+                    out_file = out_dir / f"{stem}.html"
                 sources = dict(fixed)
                 sources[rotating_name] = path
                 try:

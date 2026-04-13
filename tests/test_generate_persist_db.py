@@ -190,3 +190,31 @@ def test_generate_refuses_to_overwrite_existing_db(tmp_path, parquet_file, stub_
     )
     assert result.exit_code != 0
     assert "already exists" in result.output
+
+
+def test_generate_db_preflight_runs_before_llm_call(tmp_path, parquet_file, monkeypatch):
+    """An existing DB must abort generate before docs are written or the LLM is called."""
+    (tmp_path / "database.duckdb").write_bytes(b"")
+
+    called = {"n": 0}
+
+    def _unreachable(**kwargs):
+        called["n"] += 1
+        raise AssertionError("LLM should not be called when preflight rejects the run")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("datasight.cli.create_llm_client", _unreachable)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code != 0
+    assert "database.duckdb" in result.output
+    assert called["n"] == 0
+    # No partial docs should have been left behind.
+    for name in ("schema_description.md", "queries.yaml", "measures.yaml", "time_series.yaml"):
+        assert not (tmp_path / name).exists(), (
+            f"{name} was written before preflight rejected the run"
+        )
