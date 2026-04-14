@@ -4,6 +4,7 @@ export type MessageRole = "user" | "assistant";
 
 export interface ToolMeta {
   sql: string;
+  formatted_sql?: string;
   tool: string;
   execution_time_ms?: number;
   row_count?: number;

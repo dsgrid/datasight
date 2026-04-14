@@ -3,6 +3,7 @@
 export interface QueryEntry {
   tool: string;
   sql: string;
+  formatted_sql?: string;
   timestamp: string;
   execution_time_ms?: number;
   row_count?: number;

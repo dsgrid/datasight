@@ -84,7 +84,7 @@
             class="query-card-sql {expandedIdx === idx ? 'expanded' : ''}"
             onclick={() => (expandedIdx = expandedIdx === idx ? null : idx)}
           >
-            <pre>{query.sql}</pre>
+            <pre>{query.formatted_sql || query.sql}</pre>
           </button>
 
           <!-- Actions -->

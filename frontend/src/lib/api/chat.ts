@@ -32,6 +32,7 @@ interface ToolResultData {
 
 interface ToolDoneData {
   sql?: string;
+  formatted_sql?: string;
   execution_time_ms?: number;
   row_count?: number;
   column_count?: number;
@@ -109,6 +110,7 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
       const d = data as ToolDoneData;
       const meta: ToolMeta = {
         sql: d.sql || chatStore.lastSql,
+        formatted_sql: d.formatted_sql,
         tool: chatStore.lastToolName,
         execution_time_ms: d.execution_time_ms,
         row_count: d.row_count,
@@ -125,6 +127,7 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
       queriesStore.addQuery({
         tool: meta.tool,
         sql: meta.sql,
+        formatted_sql: meta.formatted_sql,
         timestamp: new Date().toISOString(),
         execution_time_ms: meta.execution_time_ms,
         row_count: meta.row_count,
