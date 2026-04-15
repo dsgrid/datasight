@@ -77,23 +77,63 @@ export async function getExploreStatus(): Promise<{
 
 export async function checkProjectPath(
   path: string,
-): Promise<{ is_project: boolean; name?: string }> {
+): Promise<{ exists: boolean; files: string[] }> {
   return postJson("/api/explore/check-project-path", { path });
 }
 
 export async function saveExploreAsProject(
   path: string,
-  name: string,
-  description?: string,
-): Promise<{ ok: boolean; error?: string }> {
-  return postJson("/api/explore/save-project", { path, name, description });
+  name?: string,
+): Promise<{ success: boolean; path?: string; error?: string }> {
+  return postJson("/api/explore/save-project", { path, name: name || null });
 }
 
-export async function generateProject(): Promise<{
-  ok: boolean;
-  error?: string;
-}> {
-  return postJson("/api/explore/generate-project", {});
+export interface GenerateProjectEvent {
+  type: "status" | "token" | "done" | "error";
+  data: Record<string, unknown>;
+}
+
+export async function generateProjectStream(
+  path: string,
+  name: string | null,
+  description: string | null,
+  onEvent: (event: GenerateProjectEvent) => void,
+): Promise<void> {
+  const response = await fetch("/api/explore/generate-project", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, name, description }),
+  });
+  if (!response.body) throw new Error("No response body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventType: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        eventType = line.slice(7).trim();
+      } else if (line.startsWith("data: ") && eventType) {
+        try {
+          const data = JSON.parse(line.slice(6));
+          onEvent({
+            type: eventType as GenerateProjectEvent["type"],
+            data,
+          });
+        } catch {
+          // Ignore malformed event data
+        }
+        eventType = null;
+      }
+    }
+  }
 }
 
 export async function addFiles(

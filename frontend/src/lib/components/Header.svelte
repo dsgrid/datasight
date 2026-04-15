@@ -16,6 +16,7 @@
     onToggleSqlPanel?: () => void;
     onToggleExport?: () => void;
     onNewChat?: () => void;
+    onSaveProject?: () => void;
     projectLoaded?: boolean;
     currentView?: ViewMode;
     onSwitchView?: (view: ViewMode) => void;
@@ -34,6 +35,7 @@
     onToggleSqlPanel,
     onToggleExport,
     onNewChat,
+    onSaveProject,
     projectLoaded = false,
     currentView = "chat",
     onSwitchView,
@@ -110,6 +112,18 @@
         >
           <span style="text-transform: uppercase; font-size: 0.6rem; letter-spacing: 0.05em; opacity: 0.8;">Explore</span>
           <span style="overflow: hidden; text-overflow: ellipsis;">{tableCount} table(s)</span>
+          {#if onSaveProject}
+            <button
+              class="cursor-pointer font-semibold transition-opacity hover:opacity-90"
+              title="Save this explore session as a project"
+              style="margin-left: 4px; padding: 2px 8px; border-radius: 4px;
+                     font-size: 0.68rem; border: none;
+                     background: var(--orange); color: var(--navy);"
+              onclick={onSaveProject}
+            >
+              Save
+            </button>
+          {/if}
         </div>
       {:else if projectName}
         <div

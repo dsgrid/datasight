@@ -9,6 +9,7 @@
   import DashboardView from "$lib/components/DashboardView.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import MeasureEditorModal from "$lib/components/MeasureEditorModal.svelte";
+  import SaveProjectModal from "$lib/components/SaveProjectModal.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import ShortcutsModal from "$lib/components/ShortcutsModal.svelte";
   import QueryHistoryPanel from "$lib/components/QueryHistoryPanel.svelte";
@@ -53,6 +54,7 @@
   let settingsOpen = $state(false);
   let projectsPanelOpen = $state(false);
   let measureEditorOpen = $state(false);
+  let saveProjectOpen = $state(false);
   let shortcutsOpen = $state(false);
   let sqlPanelOpen = $state(true);
   let exportMode = $state(false);
@@ -308,6 +310,7 @@
   onToggleSqlPanel={() => (sqlPanelOpen = !sqlPanelOpen)}
   onToggleExport={() => (exportMode = !exportMode)}
   onNewChat={startNewChat}
+  onSaveProject={() => (saveProjectOpen = true)}
   projectLoaded={sessionStore.projectLoaded}
   currentView={dashboardStore.currentView}
   onSwitchView={(v) => (dashboardStore.currentView = v)}
@@ -359,6 +362,10 @@
 <MeasureEditorModal
   open={measureEditorOpen}
   onClose={() => (measureEditorOpen = false)}
+/>
+<SaveProjectModal
+  open={saveProjectOpen}
+  onClose={() => (saveProjectOpen = false)}
 />
 <CommandPalette
   onToggleSettings={() => (settingsOpen = !settingsOpen)}
