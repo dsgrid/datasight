@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-from datasight.runner import RunSql
+from datasight.runner import RunSql, SQLiteRunner
 
 
 @dataclass
@@ -46,14 +46,15 @@ async def introspect_schema(run_sql: RunSql, runner: Any = None) -> list[TableIn
             logger.info(f"ADBC GetObjects discovered {len(table_names)} tables")
         except Exception as e:
             logger.info(f"ADBC GetObjects failed, falling back to SQL: {e}")
+    is_sqlite = _is_sqlite_runner(runner)
     if not table_names:
-        table_names = await _get_table_names(run_sql)
+        table_names = await _get_table_names(run_sql, prefer_sqlite=is_sqlite)
     if not table_names:
         logger.warning("No tables found in database")
         return tables
 
     for tname in table_names:
-        cols = await _get_columns(run_sql, tname)
+        cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
         row_count = await _get_row_count(run_sql, tname)
         tables.append(TableInfo(name=tname, columns=cols, row_count=row_count))
 
@@ -101,12 +102,29 @@ async def _run(run_sql: RunSql, sql: str) -> pd.DataFrame:
     try:
         return await run_sql(sql)
     except Exception as e:
-        logger.info(f"Query failed: {sql!r} — {e}")
+        logger.debug(f"Schema probe failed: {sql!r} - {e}")
         return pd.DataFrame()
 
 
-async def _get_table_names(run_sql: RunSql) -> list[str]:
+def _is_sqlite_runner(runner: Any) -> bool:
+    """Return True when ``runner`` is or wraps a SQLiteRunner."""
+    current = runner
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, SQLiteRunner):
+            return True
+        seen.add(id(current))
+        current = getattr(current, "_inner", None)
+    return False
+
+
+async def _get_table_names(run_sql: RunSql, *, prefer_sqlite: bool = False) -> list[str]:
     """Get table names, trying multiple strategies."""
+    if prefer_sqlite:
+        names = await _get_sqlite_table_names(run_sql)
+        if names:
+            return names
+
     df = await _run(run_sql, "SHOW TABLES")
     if not df.empty and len(df.columns) > 0:
         return df.iloc[:, 0].tolist()
@@ -120,10 +138,23 @@ async def _get_table_names(run_sql: RunSql) -> list[str]:
     if not df.empty:
         return df.iloc[:, 0].tolist()
 
-    df = await _run(run_sql, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+    names = await _get_sqlite_table_names(run_sql)
+    if names:
+        return names
+
+    return []
+
+
+async def _get_sqlite_table_names(run_sql: RunSql) -> list[str]:
+    """Get SQLite table and view names."""
+    df = await _run(
+        run_sql,
+        "SELECT name FROM sqlite_master "
+        "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+        "ORDER BY name",
+    )
     if not df.empty:
         return df.iloc[:, 0].tolist()
-
     return []
 
 
@@ -137,9 +168,16 @@ def _validate_identifier(name: str) -> str:
     return name
 
 
-async def _get_columns(run_sql: RunSql, table: str) -> list[ColumnInfo]:
+async def _get_columns(
+    run_sql: RunSql, table: str, *, prefer_sqlite: bool = False
+) -> list[ColumnInfo]:
     """Get column info for a table."""
     _validate_identifier(table)
+
+    if prefer_sqlite:
+        cols = await _get_sqlite_columns(run_sql, table)
+        if cols:
+            return cols
 
     df = await _run(run_sql, f'DESCRIBE "{table}"')
     if not df.empty and "column_name" in df.columns:
@@ -175,7 +213,19 @@ async def _get_columns(run_sql: RunSql, table: str) -> list[ColumnInfo]:
             )
         return cols
 
-    # Fallback: SQLite PRAGMA table_info
+    cols = await _get_sqlite_columns(run_sql, table)
+    if cols:
+        return cols
+
+    df = await _run(run_sql, f'SELECT * FROM "{table}" LIMIT 0')
+    if not df.empty or len(df.columns) > 0:
+        return [ColumnInfo(name=c, dtype="UNKNOWN") for c in df.columns]
+
+    return []
+
+
+async def _get_sqlite_columns(run_sql: RunSql, table: str) -> list[ColumnInfo]:
+    """Get SQLite column info for a table or view."""
     df = await _run(run_sql, f'PRAGMA table_info("{table}")')
     if not df.empty and "name" in df.columns:
         cols = []
@@ -188,10 +238,6 @@ async def _get_columns(run_sql: RunSql, table: str) -> list[ColumnInfo]:
                 )
             )
         return cols
-
-    df = await _run(run_sql, f'SELECT * FROM "{table}" LIMIT 0')
-    if not df.empty or len(df.columns) > 0:
-        return [ColumnInfo(name=c, dtype="UNKNOWN") for c in df.columns]
 
     return []
 
