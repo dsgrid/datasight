@@ -80,6 +80,28 @@ class TestDetectFileType:
 
         assert detect_file_type(str(db_file)) == "duckdb"
 
+    def test_sqlite_file(self, tmp_path):
+        """Detect SQLite database file."""
+        import sqlite3
+
+        db_file = tmp_path / "data.sqlite"
+        conn = sqlite3.connect(str(db_file))
+        conn.execute("CREATE TABLE t (x INTEGER)")
+        conn.close()
+
+        assert detect_file_type(str(db_file)) == "sqlite"
+
+    def test_sqlite_db_extension(self, tmp_path):
+        """Detect SQLite database file with .db extension."""
+        import sqlite3
+
+        db_file = tmp_path / "data.db"
+        conn = sqlite3.connect(str(db_file))
+        conn.execute("CREATE TABLE t (x INTEGER)")
+        conn.close()
+
+        assert detect_file_type(str(db_file)) == "sqlite"
+
     def test_nonexistent_path(self):
         """Return None for nonexistent paths."""
         assert detect_file_type("/nonexistent/path.csv") is None

@@ -1,7 +1,8 @@
-"""Tests for `datasight generate` persisting a DuckDB file + updating .env."""
+"""Tests for `datasight generate` persisting database configuration."""
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 
 import duckdb
@@ -117,7 +118,13 @@ def test_set_env_vars_appends_missing(tmp_path):
 
 
 class _StubLLMClient:
+    calls: list[dict]
+
+    def __init__(self):
+        self.calls = []
+
     async def create_message(self, **kwargs):
+        self.calls.append(kwargs)
         text = (
             "--- schema_description.md ---\n"
             "# Schema\n\nGeneration fuel data.\n\n"
@@ -134,8 +141,10 @@ class _StubLLMClient:
 
 @pytest.fixture
 def stub_llm(monkeypatch):
+    client = _StubLLMClient()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: _StubLLMClient())
+    monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: client)
+    return client
 
 
 def test_generate_creates_db_and_updates_env(tmp_path, parquet_file, stub_llm):
@@ -179,6 +188,117 @@ def test_generate_respects_custom_db_path(tmp_path, parquet_file, stub_llm):
     assert (tmp_path / "db" / "custom.duckdb").exists()
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "DB_PATH=./db/custom.duckdb" in env_text
+
+
+def test_generate_sqlite_file_updates_env_without_creating_duckdb(tmp_path, stub_llm):
+    db_path = tmp_path / "generation.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code TEXT, net_generation_mwh REAL)")
+    conn.executemany(
+        "INSERT INTO generation_fuel VALUES (?, ?)",
+        [("WND", 100.0), ("SUN", 80.0), ("NG", 200.0)],
+    )
+    conn.commit()
+    conn.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(db_path), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    assert not (tmp_path / "database.duckdb").exists()
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "DB_MODE=sqlite" in env_text
+    assert "DB_PATH=./generation.sqlite" in env_text
+    assert "sqlite" in stub_llm.calls[0]["messages"][0]["content"].lower()
+
+
+def test_generate_duckdb_file_updates_env_without_creating_default_db(tmp_path, stub_llm):
+    db_path = tmp_path / "generation.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE generation_fuel AS "
+        "SELECT 'WND' AS energy_source_code, 100.0 AS net_generation_mwh"
+    )
+    conn.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(db_path), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "DB_MODE=duckdb" in env_text
+    assert "DB_PATH=./generation.duckdb" in env_text
+    assert "duckdb" in stub_llm.calls[0]["messages"][0]["content"].lower()
+
+
+def test_generate_rejects_db_path_with_existing_sqlite(tmp_path, stub_llm):
+    db_path = tmp_path / "generation.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code TEXT)")
+    conn.commit()
+    conn.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(db_path),
+            "--project-dir",
+            str(tmp_path),
+            "--db-path",
+            "db/custom.duckdb",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--db-path is only used" in result.output
+    assert not stub_llm.calls
+
+
+def test_generate_rejects_db_path_with_existing_duckdb(tmp_path, stub_llm):
+    db_path = tmp_path / "generation.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code VARCHAR)")
+    conn.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(db_path),
+            "--project-dir",
+            str(tmp_path),
+            "--db-path",
+            "db/custom.duckdb",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--db-path is only used" in result.output
+    assert not stub_llm.calls
+
+
+def test_generate_rejects_sqlite_file_mixed_with_other_inputs(tmp_path, parquet_file, stub_llm):
+    db_path = tmp_path / "generation.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code TEXT)")
+    conn.commit()
+    conn.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(db_path), str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code != 0
+    assert "SQLite input currently supports exactly one" in result.output
+    assert not stub_llm.calls
 
 
 def test_generate_refuses_to_overwrite_existing_db(tmp_path, parquet_file, stub_llm):

@@ -28,7 +28,7 @@ def detect_file_type(path: str) -> str | None:
 
     Returns
     -------
-    One of: "csv", "parquet", "hive_parquet", "csv_dir", "duckdb",
+    One of: "csv", "parquet", "hive_parquet", "csv_dir", "duckdb", "sqlite",
     or None if not recognized.
     """
     p = Path(path)
@@ -42,7 +42,15 @@ def detect_file_type(path: str) -> str | None:
             return "csv"
         if suffix == ".parquet":
             return "parquet"
-        if suffix in (".duckdb", ".db"):
+        if suffix in (".sqlite", ".sqlite3"):
+            return "sqlite"
+        if suffix == ".duckdb":
+            return "duckdb"
+        if suffix == ".db":
+            with p.open("rb") as f:
+                header = f.read(16)
+            if header == b"SQLite format 3\x00":
+                return "sqlite"
             return "duckdb"
         return None
 

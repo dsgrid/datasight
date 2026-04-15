@@ -120,14 +120,33 @@ you can let the AI generate them from your database:
 datasight generate
 ```
 
-You can also pass Parquet, CSV, or DuckDB files directly instead of
-configuring a database first:
+You can also pass existing database files or tabular files directly
+instead of configuring a database first:
 
 ```bash
-datasight generate generation.parquet plants.csv
+# Existing DuckDB database: referenced directly
+datasight generate generation.duckdb
+
+# Existing SQLite database: referenced directly
+datasight generate generation.sqlite
+
+# CSV inputs: datasight creates ./database.duckdb
+datasight generate generation.csv plants.csv
+
+# Parquet inputs: datasight creates ./database.duckdb
+datasight generate generation.parquet plants.parquet
+
+# CSV inputs with a custom output DuckDB path
+datasight generate generation.csv plants.csv --db-path db/project.duckdb
+
+# Parquet inputs with a custom output DuckDB path
+datasight generate generation.parquet plants.parquet --db-path db/project.duckdb
 ```
 
-When files are passed, datasight also:
+For a single existing DuckDB or SQLite file, datasight creates or updates
+`.env` to point at that database directly.
+
+When CSV, Parquet, or mixed file inputs are passed, datasight also:
 
 - Writes a persistent DuckDB file (`database.duckdb` by default in the
   project directory) with views pointing at each input file.
@@ -135,9 +154,10 @@ When files are passed, datasight also:
   the new database. Existing entries are replaced in place; other env
   values (like `ANTHROPIC_API_KEY`) are preserved.
 
-Use `--db-path <path>` to write the database somewhere else (for example,
-`--db-path db/project.duckdb`). The path may be absolute or relative to
-`--project-dir`.
+Use `--db-path <path>` to write that generated DuckDB somewhere else
+(for example, `--db-path db/project.duckdb`). The path may be absolute or
+relative to `--project-dir`. Do not use `--db-path` with a single existing
+DuckDB or SQLite database; those inputs are referenced directly.
 
 The command connects to your database (or creates an ephemeral one from
 the given files), inspects tables and columns, samples code/enum columns

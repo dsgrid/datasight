@@ -458,11 +458,17 @@ def test_audit_report_missing_db(tmp_path, clean_env):
 def test_export_list_no_conversations(tmp_path):
     (tmp_path / ".env").write_text("LLM_PROVIDER=ollama\n", encoding="utf-8")
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["export", "--project-dir", str(tmp_path), "--list-sessions", "dummy"]
-    )
+    result = runner.invoke(cli, ["export", "--project-dir", str(tmp_path), "--list-sessions"])
     assert result.exit_code == 0
     assert "No conversations" in result.output
+
+
+def test_export_requires_session_id_without_list_sessions(tmp_path):
+    (tmp_path / ".env").write_text("LLM_PROVIDER=ollama\n", encoding="utf-8")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["export", "--project-dir", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "provide a SESSION_ID" in result.output
 
 
 def test_export_session_not_found(tmp_path):

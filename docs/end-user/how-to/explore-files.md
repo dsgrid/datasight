@@ -82,9 +82,36 @@ schema documentation:
 datasight generate generation.parquet plants.csv
 ```
 
-This creates `schema_description.md`, `queries.yaml`, and `measures.yaml`
-in the current directory using the LLM. See [Set up a project](../../project-developer/set-up-project.md)
-for details.
+Examples:
+
+```bash
+# Reference an existing DuckDB database directly
+datasight generate generation.duckdb
+
+# Reference an existing SQLite database directly
+datasight generate generation.sqlite
+
+# Create ./database.duckdb from CSV inputs
+datasight generate generation.csv plants.csv
+
+# Create ./database.duckdb from Parquet inputs
+datasight generate generation.parquet plants.parquet
+
+# Create a custom project DuckDB from CSV inputs
+datasight generate generation.csv plants.csv --db-path db/project.duckdb
+
+# Create a custom project DuckDB from Parquet inputs
+datasight generate generation.parquet plants.parquet --db-path db/project.duckdb
+```
+
+`--db-path` is an output path. Use it only when datasight is creating a
+DuckDB project database from CSV, Parquet, or mixed file inputs. Do not
+use `--db-path` with a single existing DuckDB or SQLite database; those
+files are referenced directly in `.env`.
+
+This creates `schema_description.md`, `queries.yaml`, `measures.yaml`,
+and `time_series.yaml` in the current directory using the LLM. See
+[Set up a project](../../project-developer/set-up-project.md) for details.
 
 ## Supported file types
 
@@ -92,10 +119,12 @@ for details.
 |------|---------|-----------------|
 | CSV | `data.csv` | Loaded via DuckDB's `read_csv_auto` |
 | Parquet | `data.parquet` | Loaded via DuckDB's `read_parquet` |
-| DuckDB | `data.duckdb` | Opened directly with all tables/views |
+| DuckDB | `data.duckdb` | Referenced directly when it is the only input |
+| SQLite | `data.sqlite` | Referenced directly when it is the only input |
 | Parquet directory | `data_dir/` | Hive-partitioned parquet with `read_parquet` glob |
 | CSV directory | `data_dir/` | All CSVs loaded via `read_csv_auto` glob |
 
-Each file becomes a view in an ephemeral in-memory DuckDB database. The
-view name is derived from the filename (e.g. `generation.parquet` becomes
-the `generation` table).
+For CSV and Parquet inputs, each file becomes a view in an ephemeral
+in-memory DuckDB database while documentation is generated. The view name
+is derived from the filename (e.g. `generation.parquet` becomes the
+`generation` table).

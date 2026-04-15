@@ -58,6 +58,25 @@ def _clean_text(text: str) -> str:
     return cleaned
 
 
+def _clean_epilog(text: str) -> str:
+    cleaned = _clean_text(text)
+    lines = [line.rstrip() for line in cleaned.splitlines() if line.strip()]
+    out: list[str] = []
+    previous_indented = False
+    for line in lines:
+        stripped = line.lstrip()
+        indented = line.startswith(("  ", "\t"))
+        if out and stripped.endswith(":") and out[-1] != "":
+            out.append("")
+        if out and not indented and previous_indented and out[-1] != "":
+            out.append("")
+        out.append(line)
+        if stripped.endswith(":"):
+            out.append("")
+        previous_indented = indented
+    return "\n".join(out).strip()
+
+
 def _first_paragraph(text: str) -> str:
     paragraphs = [part.strip() for part in _clean_text(text).split("\n\n") if part.strip()]
     return paragraphs[0] if paragraphs else ""
@@ -80,6 +99,10 @@ def _render_command(level: int, command_path: str, command: click.Command) -> li
     help_text = _clean_text(command.help or command.short_help or "")
     if help_text:
         lines.extend([help_text, ""])
+
+    epilog = _clean_epilog(getattr(command, "epilog", "") or "")
+    if epilog:
+        lines.extend([epilog, ""])
 
     lines.extend(["```bash", _usage_line(command_path, command), "```", ""])
 
@@ -136,7 +159,7 @@ def generate_markdown() -> str:
         "datasight quality --table generation_fuel",
         "datasight dimensions --table generation_fuel",
         "datasight trends --table generation_fuel",
-        "datasight recipes --table generation_fuel",
+        "datasight recipes list --table generation_fuel",
         "```",
         "",
         "### Check project health",

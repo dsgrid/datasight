@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sys
+from textwrap import dedent
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,13 @@ from datasight.integrity import build_integrity_overview
 from datasight.llm import create_llm_client
 from datasight.settings import Settings
 from datasight.validation import build_validation_report, load_validation_config
+
+
+def _epilog(text: str) -> str:
+    """Normalize Click epilog text defined in indented decorators."""
+    # Rich Click reflows epilog paragraphs. Treat each authored line as its
+    # own paragraph so examples remain scannable in terminal help.
+    return "\n\n".join(line.rstrip() for line in dedent(text).strip().splitlines())
 
 
 def _resolve_settings(
@@ -1281,11 +1289,23 @@ def _prepare_web_runtime(
     return settings, resolved_model, resolved_port
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Use this when you want to fill in .env, schema_description.md,
+        queries.yaml, and time_series.yaml by hand.
+
+        If you already have a DuckDB/SQLite database or CSV/Parquet files and
+        want datasight to inspect them and draft these files, use:
+
+            datasight generate <file>...
+        """
+    )
+)
 @click.argument("project_dir", default=".")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files.")
 def init(project_dir: str, overwrite: bool):
-    """Create a new datasight project with template files.
+    """Create blank datasight project template files.
 
     PROJECT_DIR defaults to the current directory.
     """
@@ -1326,15 +1346,36 @@ def init(project_dir: str, overwrite: bool):
     click.echo("  1. Edit .env with your API key and database path")
     click.echo("  2. Edit schema_description.md to describe your data")
     click.echo("  3. Edit queries.yaml with example questions")
-    click.echo("  4. Run: datasight run")
+    click.echo("  4. Or let datasight draft files from data:")
+    click.echo("     datasight generate <database-or-files> --overwrite")
+    click.echo("  5. Run: datasight run")
 
 
-@cli.group()
+@cli.group(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight demo eia-generation eia-demo
+            datasight demo dsgrid-tempo tempo-demo
+            datasight demo time-validation time-demo
+        """
+    )
+)
 def demo():
     """Create ready-to-run demo projects with sample datasets."""
 
 
-@demo.command(name="eia-generation")
+@demo.command(
+    name="eia-generation",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight demo eia-generation eia-demo --min-year 2021
+        """
+    ),
+)
 @click.argument("project_dir", default=".")
 @click.option(
     "--min-year", type=int, default=2020, help="Earliest year to include (default: 2020)."
@@ -1377,7 +1418,16 @@ def demo_eia_generation(project_dir: str, min_year: int):
     click.echo("  3. datasight run")
 
 
-@demo.command(name="dsgrid-tempo")
+@demo.command(
+    name="dsgrid-tempo",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight demo dsgrid-tempo tempo-demo
+        """
+    ),
+)
 @click.argument("project_dir", default=".")
 def demo_dsgrid_tempo(project_dir: str):
     """Download dsgrid TEMPO EV charging demand projections.
@@ -1423,7 +1473,16 @@ def demo_dsgrid_tempo(project_dir: str):
     click.echo("  3. datasight run")
 
 
-@demo.command(name="time-validation")
+@demo.command(
+    name="time-validation",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight demo time-validation time-demo
+        """
+    ),
+)
 @click.argument("project_dir", default=".")
 def demo_time_validation(project_dir: str):
     """Generate a synthetic energy consumption dataset with planted time errors.
@@ -1469,7 +1528,37 @@ def demo_time_validation(project_dir: str):
     click.echo("  3. datasight run            # explore interactively")
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Use datasight init for blank templates; use datasight generate to create
+        project files from an existing database or data files.
+
+        Examples:
+
+            # Use the database configured in .env
+            datasight generate
+
+            # Reference an existing DuckDB or SQLite database directly
+            datasight generate grid.duckdb
+            datasight generate generation.sqlite
+
+            # Build ./database.duckdb from CSV inputs
+            datasight generate generation.csv plants.csv
+
+            # Build ./database.duckdb from Parquet inputs
+            datasight generate generation.parquet plants.parquet
+
+            # Build a custom project DuckDB from CSV or Parquet inputs
+            datasight generate generation.csv --db-path project.duckdb
+            datasight generate generation.parquet --db-path project.duckdb
+
+        FILES are input data. --db-path is only the output DuckDB path used
+        when datasight needs to build a project database from CSV/Parquet or
+        mixed file inputs.
+        """
+    )
+)
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option(
     "--project-dir",
@@ -1489,11 +1578,11 @@ def demo_time_validation(project_dir: str):
     "--db-path",
     "db_path",
     type=click.Path(),
-    default="database.duckdb",
-    show_default=True,
+    default=None,
     help=(
-        "When FILES are given, write a persistent DuckDB file here (relative "
-        "paths are resolved against --project-dir) and update .env to point at it."
+        "Output DuckDB path to create from CSV/Parquet or mixed file inputs "
+        "(default: database.duckdb). Do not use this with a single existing "
+        "DuckDB or SQLite database; those are referenced directly."
     ),
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
@@ -1503,10 +1592,6 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
     Connects to the database, inspects tables and columns, samples
     code/enum columns, and asks the LLM to produce documentation
     and example queries.
-
-    Optionally pass one or more Parquet, CSV, or DuckDB files directly:
-
-        datasight generate generation.parquet plants.csv
     """
     import asyncio
 
@@ -1518,11 +1603,50 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
     # partial, mutated project.
     use_files = bool(files)
     db_target: Path | None = None
+    sqlite_source_path: Path | None = None
+    duckdb_source_path: Path | None = None
     if use_files:
-        _db_target = Path(db_path)
-        if not _db_target.is_absolute():
-            _db_target = Path(project_dir) / _db_target
-        db_target = _db_target.resolve()
+        from datasight.explore import detect_file_type
+
+        resolved_file_types = [
+            (Path(file_path).resolve(), detect_file_type(str(Path(file_path).resolve())))
+            for file_path in files
+        ]
+        sqlite_files = [
+            file_path for file_path, file_type in resolved_file_types if file_type == "sqlite"
+        ]
+        duckdb_files = [
+            file_path for file_path, file_type in resolved_file_types if file_type == "duckdb"
+        ]
+        if sqlite_files:
+            if len(files) != 1:
+                click.echo(
+                    "Error: SQLite input currently supports exactly one SQLite file.",
+                    err=True,
+                )
+                sys.exit(1)
+            if db_path:
+                click.echo(
+                    "Error: --db-path is only used when creating a project DuckDB from "
+                    "CSV/Parquet or mixed inputs; omit it for an existing SQLite database.",
+                    err=True,
+                )
+                sys.exit(1)
+            sqlite_source_path = sqlite_files[0]
+        elif len(duckdb_files) == 1 and len(files) == 1:
+            if db_path:
+                click.echo(
+                    "Error: --db-path is only used when creating a project DuckDB from "
+                    "CSV/Parquet or mixed inputs; omit it for an existing DuckDB database.",
+                    err=True,
+                )
+                sys.exit(1)
+            duckdb_source_path = duckdb_files[0]
+        else:
+            _db_target = Path(db_path or "database.duckdb")
+            if not _db_target.is_absolute():
+                _db_target = Path(project_dir) / _db_target
+            db_target = _db_target.resolve()
 
     # Check for existing files early
     schema_path = Path(project_dir) / "schema_description.md"
@@ -1564,11 +1688,20 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
             click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
             sys.exit(1)
 
-    sql_dialect = "duckdb" if use_files else settings.database.sql_dialect
+    if sqlite_source_path is not None:
+        sql_dialect = "sqlite"
+    elif duckdb_source_path is not None:
+        sql_dialect = "duckdb"
+    else:
+        sql_dialect = "duckdb" if use_files else settings.database.sql_dialect
 
     click.echo("datasight generate")
     click.echo(f"  Model:    {resolved_model}")
-    if use_files:
+    if sqlite_source_path is not None:
+        click.echo(f"  Database: sqlite - {sqlite_source_path}")
+    elif duckdb_source_path is not None:
+        click.echo(f"  Database: duckdb - {duckdb_source_path}")
+    elif use_files:
         click.echo(f"  Files:    {', '.join(files)}")
     else:
         resolved_db_path = _resolve_db_path(settings, project_dir)
@@ -1588,7 +1721,17 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
             base_url=settings.llm.base_url,
         )
 
-        if use_files:
+        if sqlite_source_path is not None:
+            from datasight.runner import SQLiteRunner
+
+            sql_runner = SQLiteRunner(str(sqlite_source_path))
+            tables_info = []
+        elif duckdb_source_path is not None:
+            from datasight.runner import DuckDBRunner
+
+            sql_runner = DuckDBRunner(str(duckdb_source_path))
+            tables_info = []
+        elif use_files:
             from datasight.explore import create_ephemeral_session
 
             sql_runner, tables_info = create_ephemeral_session(list(files))
@@ -1704,7 +1847,23 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
     time_series_path.write_text(asyncio.run(_build_time_series_scaffold()), encoding="utf-8")
     written.append("time_series.yaml")
 
-    if use_files:
+    if sqlite_source_path is not None or duckdb_source_path is not None:
+        from datasight.config import set_env_vars
+
+        db_source_path = sqlite_source_path or duckdb_source_path
+        assert db_source_path is not None
+        try:
+            rel_db = db_source_path.relative_to(Path(project_dir).resolve())
+            db_env_value = f"./{rel_db.as_posix()}"
+        except ValueError:
+            db_env_value = str(db_source_path)
+
+        env_path = Path(project_dir) / ".env"
+        existed = env_path.exists()
+        db_mode = "sqlite" if sqlite_source_path is not None else "duckdb"
+        set_env_vars(env_path, {"DB_MODE": db_mode, "DB_PATH": db_env_value})
+        written.append(".env (updated)" if existed else ".env")
+    elif use_files:
         from datasight.config import set_env_vars
         from datasight.explore import build_persistent_duckdb
 
@@ -1745,7 +1904,17 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
         sys.exit(1)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight run
+            datasight run --project-dir eia-demo
+            datasight run --port 9000 --model gpt-4o
+        """
+    )
+)
 @click.option("--port", type=int, default=None, help="Web UI port (default: 8084).")
 @click.option("--host", default="0.0.0.0", help="Bind address.")
 @click.option("--model", default=None, help="LLM model name (overrides .env).")
@@ -1798,7 +1967,29 @@ def run(
     )
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight verify
+            datasight verify --queries verification.yaml
+            datasight verify --model gpt-4o
+
+        Add expected results to queries.yaml entries:
+
+          - question: "Top 3 states by generation"
+            sql: |
+              SELECT state, SUM(mwh) AS total
+              FROM generation GROUP BY state
+              ORDER BY total DESC LIMIT 3
+            expected:
+              row_count: 3
+              columns: [state, total]
+              contains: ["CA", "TX"]
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -1820,19 +2011,6 @@ def verify(project_dir, model, queries_path, verbose):
     Runs each question from queries.yaml through the full LLM pipeline,
     executes the generated SQL, and compares results against expected values.
     Use this to validate correctness across different models and providers.
-
-    Add expected results to queries.yaml entries:
-
-    \b
-      - question: "Top 3 states by generation"
-        sql: |
-          SELECT state, SUM(mwh) AS total
-          FROM generation GROUP BY state
-          ORDER BY total DESC LIMIT 3
-        expected:
-          row_count: 3
-          columns: [state, total]
-          contains: ["CA", "TX"]
     """
     import asyncio
 
@@ -2025,7 +2203,21 @@ def verify(project_dir, model, queries_path, verbose):
     sys.exit(0 if failed == 0 else 1)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight ask "What are the top 5 states by generation?"
+            datasight ask "Show generation by year" --chart-format html -o chart.html
+            datasight ask "Top 5 states" --format csv -o results.csv
+            datasight ask --file questions.txt --output-dir batch-output
+            datasight ask "Top 5 states" --print-sql
+            datasight ask "Top 5 states" --provenance
+            datasight ask "Top 5 states" --sql-script top-states.sql
+        """
+    )
+)
 @click.argument("question", required=False)
 @click.option(
     "--project-dir",
@@ -2107,15 +2299,6 @@ def ask(
 
     Runs the full LLM agent loop without starting a web server.
     Results are printed to the console.
-
-    \b
-    Examples:
-      datasight ask "What are the top 5 states by generation?"
-      datasight ask "Show generation by year" --chart-format html -o chart.html
-      datasight ask "Top 5 states" --format csv -o results.csv
-      datasight ask "Top 5 states" --print-sql
-      datasight ask "Top 5 states" --provenance
-      datasight ask "Top 5 states" --sql-script top-states.sql
     """
     project_dir = str(Path(project_dir).resolve())
 
@@ -2246,7 +2429,18 @@ def ask(
         click.echo(f"SQL script saved to {script_file}", err=True)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight profile
+            datasight profile --table generation_fuel
+            datasight profile --column generation_fuel.net_generation_mwh
+            datasight profile --format markdown -o profile.md
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -2275,7 +2469,11 @@ def ask(
     help="Write the profile output to a file instead of stdout.",
 )
 def profile(project_dir, table, column, output_format, output_path):
-    """Profile your dataset — row counts, date coverage, and column statistics."""
+    """Profile your dataset - row counts, date coverage, and column statistics.
+
+    Use this before asking questions to understand table sizes, candidate
+    measures, dimensions, null rates, and date ranges.
+    """
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -2543,7 +2741,18 @@ def profile(project_dir, table, column, output_format, output_path):
         _write_or_print(console.export_text(), output_path)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight measures
+            datasight measures --table generation_fuel
+            datasight measures --scaffold
+            datasight measures --format markdown -o measures.md
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -2571,7 +2780,12 @@ def profile(project_dir, table, column, output_format, output_path):
     help="Write the measure overview to a file instead of stdout.",
 )
 def measures(project_dir, table, scaffold, overwrite, output_format, output_path):
-    """Surface likely measures and default aggregations."""
+    """Surface likely measures and default aggregations.
+
+    Measures are numeric columns that should usually be summed, averaged,
+    or otherwise aggregated in generated SQL. Use --scaffold to create an
+    editable measures.yaml override file.
+    """
     from rich.console import Console
     from datasight.config import load_measure_overrides
 
@@ -2701,7 +2915,17 @@ def measures(project_dir, table, scaffold, overwrite, output_format, output_path
         _write_or_print(console.export_text(), output_path)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight quality
+            datasight quality --table generation_fuel
+            datasight quality --format markdown -o quality.md
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -2725,7 +2949,11 @@ def measures(project_dir, table, scaffold, overwrite, output_format, output_path
     help="Write the quality audit to a file instead of stdout.",
 )
 def quality(project_dir, table, output_format, output_path):
-    """Audit data quality — nulls, suspicious ranges, and date coverage."""
+    """Audit data quality - nulls, suspicious ranges, and date coverage.
+
+    Also checks temporal completeness when time_series.yaml defines expected
+    time series structure.
+    """
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -2863,7 +3091,17 @@ def quality(project_dir, table, output_format, output_path):
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight integrity
+            datasight integrity --table plants
+            datasight integrity --format json -o integrity.json
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -2887,7 +3125,11 @@ def quality(project_dir, table, output_format, output_path):
     help="Write the integrity audit to a file instead of stdout.",
 )
 def integrity(project_dir, table, output_format, output_path):
-    """Audit cross-table referential integrity — keys, orphans, and join risks."""
+    """Audit cross-table referential integrity - keys, orphans, and join risks.
+
+    Use this to find likely primary keys, duplicate keys, orphaned foreign
+    keys, and joins that may multiply rows unexpectedly.
+    """
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -3028,7 +3270,18 @@ def integrity(project_dir, table, output_format, output_path):
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight distribution
+            datasight distribution --table generation_fuel
+            datasight distribution --column generation_fuel.net_generation_mwh
+            datasight distribution --format markdown -o distributions.md
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -3057,7 +3310,11 @@ def integrity(project_dir, table, output_format, output_path):
     help="Write the distribution profile to a file instead of stdout.",
 )
 def distribution(project_dir, table, column, output_format, output_path):
-    """Profile value distributions — percentiles, outliers, and energy flags."""
+    """Profile value distributions - percentiles, outliers, and energy flags.
+
+    Use this to inspect numeric ranges, skew, zero/negative rates, outliers,
+    and energy-domain flags before building charts or validation rules.
+    """
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -3176,7 +3433,18 @@ def distribution(project_dir, table, column, output_format, output_path):
 # ---------------------------------------------------------------------------
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight validate --scaffold
+            datasight validate
+            datasight validate --table generation_fuel
+            datasight validate --format markdown -o validation.md
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -3213,7 +3481,11 @@ def distribution(project_dir, table, column, output_format, output_path):
 )
 @click.option("--overwrite", is_flag=True, help="Overwrite an existing validation.yaml.")
 def validate(project_dir, table, config_path, output_format, output_path, scaffold, overwrite):
-    """Run declarative validation rules against the database."""
+    """Run declarative validation rules against the database.
+
+    Rules live in validation.yaml. Use --scaffold to create a starter file,
+    edit it for your dataset, then run validate to produce pass/fail output.
+    """
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -3319,7 +3591,19 @@ def validate(project_dir, table, config_path, output_format, output_path, scaffo
 # ---------------------------------------------------------------------------
 
 
-@cli.command(name="audit-report")
+@cli.command(
+    name="audit-report",
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight audit-report
+            datasight audit-report -o audit.html
+            datasight audit-report --format markdown -o audit.md
+            datasight audit-report --table generation_fuel -o generation-audit.html
+        """
+    ),
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -3344,7 +3628,11 @@ def validate(project_dir, table, config_path, output_format, output_path, scaffo
     help="Output format (default: inferred from file extension).",
 )
 def audit_report(project_dir, table, output_path, output_format):
-    """Generate a comprehensive audit report combining all checks."""
+    """Generate a comprehensive audit report combining all checks.
+
+    Combines profile, measures, quality, integrity, distribution, and
+    validation results into one HTML, Markdown, or JSON artifact.
+    """
     project_dir = str(Path(project_dir).resolve())
     settings, _ = _resolve_settings(project_dir)
     resolved_db_path = _resolve_db_path(settings, project_dir)
@@ -3398,7 +3686,17 @@ def audit_report(project_dir, table, output_path, output_format):
         _write_or_print(render_audit_report_html(report_data), output_path)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight dimensions
+            datasight dimensions --table generation_fuel
+            datasight dimensions --format json -o dimensions.json
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -3422,7 +3720,11 @@ def audit_report(project_dir, table, output_path, output_format):
     help="Write the dimension overview to a file instead of stdout.",
 )
 def dimensions(project_dir, table, output_format, output_path):
-    """Surface likely grouping dimensions and category breakdowns."""
+    """Surface likely grouping dimensions and category breakdowns.
+
+    Use this to find text/code columns that are good GROUP BY candidates,
+    such as fuel codes, states, sectors, plants, or scenario labels.
+    """
     from rich.console import Console
 
     project_dir = str(Path(project_dir).resolve())
@@ -3500,7 +3802,18 @@ def dimensions(project_dir, table, output_format, output_path):
         _write_or_print(console.export_text(), output_path)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight trends
+            datasight trends --table generation_fuel
+            datasight trends generation.parquet plants.parquet
+            datasight trends --format markdown -o trends.md
+        """
+    )
+)
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option(
     "--project-dir",
@@ -3527,9 +3840,8 @@ def dimensions(project_dir, table, output_format, output_path):
 def trends(files, project_dir, table, output_format, output_path):
     """Surface likely trend analyses and chart recommendations.
 
-    Optionally pass one or more Parquet, CSV, or DuckDB files directly:
-
-        datasight trends generation.parquet plants.parquet
+    Run inside a configured project, or pass one or more Parquet, CSV, or
+    DuckDB files directly for a quick file-only trend scan.
     """
     from rich.console import Console
     from datasight.config import load_measure_overrides
@@ -3649,7 +3961,18 @@ def trends(files, project_dir, table, output_format, output_path):
         _write_or_print(console.export_text(), output_path)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight inspect generation.parquet
+            datasight inspect generation.csv plants.csv
+            datasight inspect data_dir/
+            datasight inspect generation.parquet --format markdown -o inspect.md
+        """
+    )
+)
 @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
 @click.option(
     "--format",
@@ -3672,12 +3995,6 @@ def inspect(files, output_format, output_path):
     Creates an ephemeral in-memory database from the given files and runs
     profile, quality, measures, dimensions, trends, and recipes — printing
     everything to the console without creating a project.
-
-    \b
-    Examples:
-        datasight inspect generation.parquet
-        datasight inspect generation.csv plants.csv
-        datasight inspect data_dir/
     """
     from rich.console import Console
 
@@ -3954,12 +4271,38 @@ def inspect(files, output_format, output_path):
         _write_or_print(console.export_text(), output_path)
 
 
-@cli.group()
+@cli.group(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight recipes list
+            datasight recipes list --table generation_fuel
+            datasight recipes run 1
+        """
+    )
+)
 def recipes():
-    """Generate and run reusable deterministic prompt recipes."""
+    """Generate and run reusable deterministic prompt recipes.
+
+    Recipes are suggested natural-language questions derived from the
+    schema. Listing recipes does not call an LLM; running one sends the
+    recipe prompt through the normal ask pipeline.
+    """
 
 
-@recipes.command(name="list")
+@recipes.command(
+    name="list",
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight recipes list
+            datasight recipes list --table generation_fuel
+            datasight recipes list --format markdown -o recipes.md
+        """
+    ),
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -4025,7 +4368,18 @@ def recipes_list(project_dir, table, output_format, output_path):
         _write_or_print(console.export_text(), output_path)
 
 
-@recipes.command(name="run")
+@recipes.command(
+    name="run",
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight recipes run 1
+            datasight recipes run 2 --format csv -o recipe.csv
+            datasight recipes run 3 --chart-format html -o recipe.html
+        """
+    ),
+)
 @click.argument("recipe_id", type=int)
 @click.option(
     "--project-dir",
@@ -4060,7 +4414,10 @@ def recipes_list(project_dir, table, output_format, output_path):
 def recipes_run(
     recipe_id, project_dir, table, model, output_format, chart_format, output_path, verbose
 ):
-    """Run a generated recipe by ID through the normal ask pipeline."""
+    """Run a generated recipe by ID through the normal ask pipeline.
+
+    RECIPE_ID is the numeric ID shown by datasight recipes list.
+    """
     import asyncio
 
     from rich.console import Console
@@ -4095,7 +4452,17 @@ def recipes_run(
     _emit_ask_result(result, output_format, chart_format, output_path)
 
 
-@cli.command()
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight doctor
+            datasight doctor --format markdown -o doctor.md
+            datasight doctor --project-dir eia-demo
+        """
+    )
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -4118,7 +4485,11 @@ def recipes_run(
     help="Write doctor output to a file instead of stdout.",
 )
 def doctor(project_dir, output_format, output_path):
-    """Check project configuration, local files, and database connectivity."""
+    """Check project configuration, local files, and database connectivity.
+
+    Use this when a project will not load, an API key is missing, a database
+    path is wrong, or the web UI cannot write state under .datasight/.
+    """
     from rich.console import Console
     from rich.table import Table as RichTable
 
@@ -4234,8 +4605,18 @@ def doctor(project_dir, output_format, output_path):
         sys.exit(1)
 
 
-@cli.command()
-@click.argument("session_id")
+@cli.command(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight export --list-sessions
+            datasight export abc123def -o my-analysis.html
+            datasight export abc123def --exclude 2,3
+        """
+    )
+)
+@click.argument("session_id", required=False)
 @click.option(
     "--output",
     "-o",
@@ -4260,12 +4641,6 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
     """Export a conversation session as a self-contained HTML page.
 
     SESSION_ID is the conversation ID (use --list-sessions to see available IDs).
-
-    \b
-    Examples:
-      datasight export --list-sessions
-      datasight export abc123def -o my-analysis.html
-      datasight export abc123def --exclude 2,3
     """
     import json as json_mod
 
@@ -4310,6 +4685,13 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
         console.print(table)
         return
 
+    if not session_id:
+        click.echo(
+            "Error: provide a SESSION_ID or use --list-sessions to see available sessions.",
+            err=True,
+        )
+        sys.exit(1)
+
     # Load session
     session_path = conv_dir / f"{session_id}.json"
     if not session_path.exists():
@@ -4345,7 +4727,20 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
     click.echo(f"Session exported to {output_path}")
 
 
-@cli.command(name="log")
+@cli.command(
+    name="log",
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight log
+            datasight log --tail 50 --full
+            datasight log --errors
+            datasight log --cost
+            datasight log --sql 1
+        """
+    ),
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -4364,7 +4759,12 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
     help="Print raw SQL for query # (shown in the # column). Ready to copy-paste.",
 )
 def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
-    """Display the SQL query log in a formatted table."""
+    """Display the SQL query log in a formatted table.
+
+    Shows recent SQL queries generated by datasight. Use --sql N to print
+    one raw SQL statement for copy/paste into DuckDB, SQLite, or another
+    SQL client.
+    """
     from rich import box
     from rich.console import Console
     from rich.table import Table
@@ -4504,12 +4904,36 @@ def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
         console.print(f"\n[dim]{cost_summary}[/dim]")
 
 
-@cli.group()
+@cli.group(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight report list
+            datasight report run 1
+            datasight report run 1 --format csv -o report.csv
+            datasight report delete 1
+        """
+    )
+)
 def report():
-    """Manage saved reports."""
+    """Manage saved reports.
+
+    Reports are saved from the web UI and can be listed, re-run against
+    fresh data, exported, or deleted from the CLI.
+    """
 
 
-@report.command(name="list")
+@report.command(
+    name="list",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight report list
+        """
+    ),
+)
 @click.option(
     "--project-dir",
     type=click.Path(exists=True),
@@ -4547,7 +4971,18 @@ def report_list(project_dir):
     click.echo(f"\n{len(reports)} report(s)")
 
 
-@report.command(name="run")
+@report.command(
+    name="run",
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight report run 1
+            datasight report run 1 --format csv -o report.csv
+            datasight report run 2 --chart-format html -o chart.html
+        """
+    ),
+)
 @click.argument("report_id", type=int)
 @click.option(
     "--project-dir",
@@ -4655,7 +5090,16 @@ def report_run(report_id, project_dir, output_format, chart_format, output_path)
         click.echo(result.result_text, err=True)
 
 
-@report.command(name="delete")
+@report.command(
+    name="delete",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight report delete 1
+        """
+    ),
+)
 @click.argument("report_id", type=int)
 @click.option(
     "--project-dir",
@@ -4679,9 +5123,23 @@ def report_delete(report_id, project_dir):
     click.echo(f"Report {report_id} deleted.")
 
 
-@cli.group()
+@cli.group(
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight templates save generation-dashboard
+            datasight templates list
+            datasight templates apply generation-dashboard --output out.html
+        """
+    )
+)
 def templates():
-    """Save and re-apply dashboards as templates across datasets."""
+    """Save and re-apply dashboards as templates across datasets.
+
+    Templates capture dashboard cards from the web UI so the same SQL and
+    charts can be applied to another dataset with matching tables.
+    """
 
 
 def _load_project_dashboard(project_dir: str) -> dict[str, Any]:
@@ -4738,7 +5196,19 @@ _PROJECT_DIR_OPT = click.option(
 )
 
 
-@templates.command(name="save")
+@templates.command(
+    name="save",
+    epilog=_epilog(
+        """
+        Examples:
+
+            datasight templates save generation-dashboard
+            datasight templates save generation-dashboard --description "Monthly generation cards"
+            datasight templates save generation-dashboard --table generation_fuel --overwrite
+            datasight templates save by-scenario --var SCENARIO=reference
+        """
+    ),
+)
 @click.argument("name")
 @_PROJECT_DIR_OPT
 @click.option("--description", default=None, help="Template description.")
@@ -4783,7 +5253,11 @@ def template_save(
     variable_regexes: tuple[str, ...],
     overwrite: bool,
 ):
-    """Save the current project dashboard as a reusable template."""
+    """Save the current project dashboard as a reusable template.
+
+    The dashboard must already exist in the project, usually from building
+    and saving cards in the web UI.
+    """
     from datasight.dashboard_template import (
         TemplateError,
         build_template,
@@ -4834,7 +5308,16 @@ def template_save(
         click.echo(f"  variables: {names}")
 
 
-@templates.command(name="list")
+@templates.command(
+    name="list",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight templates list
+        """
+    ),
+)
 @_PROJECT_DIR_OPT
 def template_list(project_dir: str):
     """List dashboard templates saved in this project."""
@@ -4868,7 +5351,16 @@ def template_list(project_dir: str):
     click.echo(f"\n{len(entries)} template(s) in {directory}")
 
 
-@templates.command(name="show")
+@templates.command(
+    name="show",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight templates show generation-dashboard
+        """
+    ),
+)
 @click.argument("name")
 @_PROJECT_DIR_OPT
 def template_show(name: str, project_dir: str):
@@ -4882,7 +5374,24 @@ def template_show(name: str, project_dir: str):
     click.echo(json.dumps(data, indent=2))
 
 
-@templates.command(name="apply")
+@templates.command(
+    name="apply",
+    epilog=_epilog(
+        """
+        Examples:
+
+            # Render once, mapping one required table to a parquet file
+            datasight templates apply generation-by-fuel \\
+                --table generation_fuel=data/generation.parquet \\
+                --output generation.html
+
+            # Render once per matching parquet, writing one HTML per file
+            datasight templates apply generation-by-fuel \\
+                --table 'generation_fuel=data/*.parquet' \\
+                --export-dir out/
+        """
+    ),
+)
 @click.argument("name")
 @_PROJECT_DIR_OPT
 @click.option(
@@ -4941,13 +5450,6 @@ def template_apply(
     don't need to be re-supplied. A single --table mapping may use a shell
     glob, in which case the template is applied once per matching file and
     written to --export-dir.
-
-    Example: render the template once per yearly parquet, joining each
-    against the project's plants table:
-
-        datasight templates apply generation-by-fuel \\
-            --table 'generation_fuel=data/*.parquet' \\
-            --export-dir out/
     """
     import asyncio
     import glob
@@ -5161,7 +5663,16 @@ def template_apply(
         raise SystemExit(1)
 
 
-@templates.command(name="delete")
+@templates.command(
+    name="delete",
+    epilog=_epilog(
+        """
+        Example:
+
+            datasight templates delete generation-dashboard
+        """
+    ),
+)
 @click.argument("name")
 @_PROJECT_DIR_OPT
 def template_delete(name: str, project_dir: str):
