@@ -60,11 +60,11 @@ datasight ask --file questions.txt --output-dir batch-output
 
 datasight pairs a FastAPI backend with a Svelte 5 + TypeScript + Tailwind CSS
 frontend built with Vite. It supports multiple LLM backends — Anthropic
-(default), GitHub Models, and Ollama — selectable via `LLM_PROVIDER` in `.env`.
+(default), OpenAI, GitHub Models, and Ollama — selectable via `LLM_PROVIDER` in `.env`.
 
 ```
 datasight run / datasight ask / datasight profile / datasight quality
-  → LLM provider (Anthropic / GitHub Models / Ollama)
+  → LLM provider (Anthropic / OpenAI / GitHub Models / Ollama)
     → DuckDB / PostgreSQL / SQLite / Flight SQL
     → Plotly chart generator
   → Web UI (SSE streaming) or CLI output

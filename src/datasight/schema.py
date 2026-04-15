@@ -102,7 +102,7 @@ async def _run(run_sql: RunSql, sql: str) -> pd.DataFrame:
     try:
         return await run_sql(sql)
     except Exception as e:
-        logger.debug(f"Schema probe failed: {sql!r} - {e}")
+        logger.trace(f"Schema probe failed: {sql!r} - {e}")
         return pd.DataFrame()
 
 
