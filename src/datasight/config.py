@@ -326,6 +326,67 @@ def load_measure_overrides(path: str | None, project_dir: str) -> list[dict[str,
     return valid
 
 
+def load_schema_config(path: str | None, project_dir: str) -> dict[str, Any] | None:
+    """Load optional ``schema.yaml`` allowlist for tables and columns.
+
+    Expected format::
+
+        tables:
+          - name: orders
+          - name: customers
+            columns: [id, email, created_at]
+
+    Returns the parsed mapping when present, or ``None`` when the file is
+    absent or unparseable. Invalid entries are dropped with a warning.
+    """
+    if not path:
+        default = os.path.join(project_dir, "schema.yaml")
+        if os.path.exists(default):
+            path = default
+        else:
+            return None
+    if not os.path.exists(path):
+        logger.warning(f"Schema config not found: {path}")
+        return None
+    with open(path, encoding="utf-8") as f:
+        try:
+            data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse {path}: {e}")
+            return None
+    if not isinstance(data, dict):
+        logger.warning(f"Expected a mapping in {path}, got {type(data).__name__}")
+        return None
+
+    raw_tables = data.get("tables")
+    if raw_tables is None:
+        return {"tables": []}
+    if not isinstance(raw_tables, list):
+        logger.warning(f"Expected 'tables' to be a list in {path}")
+        return {"tables": []}
+
+    cleaned: list[dict[str, Any]] = []
+    for entry in raw_tables:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        item: dict[str, Any] = {"name": name}
+        for key in ("columns", "excluded_columns"):
+            if key not in entry:
+                continue
+            val = entry[key]
+            if val is None:
+                item[key] = []
+            elif isinstance(val, list):
+                item[key] = [str(c).strip() for c in val if str(c).strip()]
+            else:
+                logger.warning(f"schema.yaml: ignoring non-list {key!r} for table {name}")
+        cleaned.append(item)
+    return {"tables": cleaned}
+
+
 _VALID_FREQUENCIES = {"PT1H", "PT15M", "PT30M", "P1D", "P1M"}
 
 

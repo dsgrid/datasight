@@ -113,3 +113,14 @@ Each live result card includes a **Source** disclosure with the originating
 question, tool type, row and column counts, execution time, chart type, and
 the generated SQL. Pinned dashboard cards preserve this metadata and
 exported dashboards include it as well.
+
+## Troubleshooting
+
+### "Maximum context length exceeded" or "request too large"
+
+Your database schema is too large for the LLM's context window. This
+commonly happens on the free GitHub Models tier (capped at 8,000 tokens)
+when the database has more than ~20 tables. Ask your project developer to
+[limit the schema sent to the LLM](../../project-developer/schema-config.md)
+via a `schema.yaml` file, or switch to a provider with a larger context
+window (OpenAI, Anthropic, or a local Ollama model).

@@ -114,6 +114,7 @@ async def _run_ask_pipeline(
         format_example_queries,
         load_example_queries,
         load_measure_overrides,
+        load_schema_config,
         load_schema_description,
         load_time_series_config,
     )
@@ -121,7 +122,7 @@ async def _run_ask_pipeline(
     from datasight.data_profile import format_time_series_prompt_context
     from datasight.prompts import build_system_prompt
     from datasight.query_log import QueryLogger
-    from datasight.schema import format_schema_context, introspect_schema
+    from datasight.schema import filter_tables, format_schema_context, introspect_schema
     from datasight.sql_validation import build_measure_rule_map, build_schema_map
 
     llm_client = create_llm_client(
@@ -131,7 +132,31 @@ async def _run_ask_pipeline(
     )
     sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
-    tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+    schema_config = load_schema_config(None, project_dir)
+    allowed_tables: set[str] | None = None
+    if schema_config is not None:
+        allowed_tables = {
+            e["name"] for e in schema_config.get("tables", []) if e.get("name")
+        } or None
+    tables = await introspect_schema(
+        sql_runner.run_sql,
+        runner=sql_runner,
+        allowed_tables=allowed_tables,
+    )
+    if schema_config is not None:
+        tables = filter_tables(tables, schema_config)
+    from datasight.identifiers import configure_runner_identifier_quoting
+
+    configure_runner_identifier_quoting(
+        sql_runner,
+        [
+            {
+                "name": t.name,
+                "columns": [{"name": c.name} for c in t.columns],
+            }
+            for t in tables
+        ],
+    )
     user_desc = load_schema_description(None, project_dir)
     example_queries = load_example_queries(None, project_dir)
     measure_overrides = load_measure_overrides(None, project_dir)
@@ -1585,8 +1610,17 @@ def demo_time_validation(project_dir: str):
         "DuckDB or SQLite database; those are referenced directly."
     ),
 )
+@click.option(
+    "--compact-schema",
+    is_flag=True,
+    help=(
+        "Write schema.yaml with table names only. Default adds an empty "
+        "'excluded_columns: []' placeholder per table so you can fill in "
+        "glob patterns for columns to hide."
+    ),
+)
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def generate(files, project_dir, model, overwrite, table, db_path, verbose):
+def generate(files, project_dir, model, overwrite, table, db_path, compact_schema, verbose):
     """Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 
     Connects to the database, inspects tables and columns, samples
@@ -1650,6 +1684,7 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
 
     # Check for existing files early
     schema_path = Path(project_dir) / "schema_description.md"
+    schema_config_path = Path(project_dir) / "schema.yaml"
     queries_path = Path(project_dir) / "queries.yaml"
     measures_path = Path(project_dir) / "measures.yaml"
     time_series_path = Path(project_dir) / "time_series.yaml"
@@ -1657,6 +1692,8 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
         existing = []
         if schema_path.exists():
             existing.append("schema_description.md")
+        if schema_config_path.exists():
+            existing.append("schema.yaml")
         if queries_path.exists():
             existing.append("queries.yaml")
         if measures_path.exists():
@@ -1746,10 +1783,17 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
         # Filter to specified tables if --table was provided
         if table:
             table_set = {t.lower() for t in table}
+            found_lower = {t.name.lower() for t in tables}
+            missing = [t for t in table if t.lower() not in found_lower]
             tables = [t for t in tables if t.name.lower() in table_set]
             if not tables:
                 click.echo(f"Error: No matching tables found for: {', '.join(table)}", err=True)
                 sys.exit(1)
+            if missing:
+                click.echo(
+                    f"Warning: --table values not found: {', '.join(missing)}",
+                    err=True,
+                )
 
         click.echo(f"  Found {len(tables)} tables")
 
@@ -1772,9 +1816,9 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
         )
 
         parts = [block.text for block in response.content if isinstance(block, TextBlock)]
-        return "".join(parts), sql_runner, tables_info
+        return "".join(parts), sql_runner, tables_info, tables
 
-    text, sql_runner, tables_info = asyncio.run(_run())
+    text, sql_runner, tables_info, generated_tables = asyncio.run(_run())
 
     # Parse response into two files
     from datasight.generate import parse_generation_response
@@ -1788,6 +1832,15 @@ def generate(files, project_dir, model, overwrite, table, db_path, verbose):
     if schema_content:
         schema_path.write_text(schema_content + "\n", encoding="utf-8")
         written.append("schema_description.md")
+
+    schema_yaml_lines = ["tables:"]
+    for t in generated_tables:
+        schema_yaml_lines.append(f"  - name: {t.name}")
+        if not compact_schema:
+            schema_yaml_lines.append("    excluded_columns: []")
+    schema_yaml_lines.append("")
+    schema_config_path.write_text("\n".join(schema_yaml_lines), encoding="utf-8")
+    written.append("schema.yaml")
 
     if queries_content:
         queries_path.write_text(queries_content + "\n", encoding="utf-8")

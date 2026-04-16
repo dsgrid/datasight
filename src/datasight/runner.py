@@ -268,6 +268,7 @@ class PostgresRunner:
         self._psycopg = psycopg
         self._query_timeout = query_timeout
         self._connection_info = f"{host}:{port}/{dbname}" if not url else "via URL"
+        self.mixed_case_identifiers: dict[str, str] | None = None
 
         try:
             if url:
@@ -312,6 +313,10 @@ class PostgresRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("PostgresRunner is closed")
+        if self.mixed_case_identifiers:
+            from datasight.identifiers import quote_mixed_case_identifiers
+
+            sql = quote_mixed_case_identifiers(sql, self.mixed_case_identifiers)
         try:
             cursor = self._conn.execute(sql)  # ty: ignore[no-matching-overload]
             rows = cursor.fetchall()

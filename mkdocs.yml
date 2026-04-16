@@ -98,6 +98,7 @@ nav:
       - Database connections: project-developer/database-connections.md
       - Query CSV and Parquet files: project-developer/querying-files.md
       - Write a schema description: project-developer/schema-description.md
+      - Limit schema sent to the LLM: project-developer/schema-config.md
       - Create example queries: project-developer/example-queries.md
       - Verify queries across models: project-developer/verification.md
   - Tool developer:

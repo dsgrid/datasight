@@ -1963,7 +1963,7 @@ def test_run_ask_pipeline_logs_cost_entry(monkeypatch, project_dir):
         lambda settings, project_dir: FakeRunner(),
     )
 
-    async def fake_introspect_schema(run_sql, runner=None):  # noqa: ARG001
+    async def fake_introspect_schema(run_sql, runner=None, allowed_tables=None):  # noqa: ARG001
         return []
 
     monkeypatch.setattr("datasight.schema.introspect_schema", fake_introspect_schema)
@@ -2026,7 +2026,7 @@ def test_run_ask_pipeline_includes_measure_guidance_in_prompt(monkeypatch, proje
         lambda settings, project_dir: FakeRunner(),
     )
 
-    async def fake_introspect_schema(run_sql, runner=None):  # noqa: ARG001
+    async def fake_introspect_schema(run_sql, runner=None, allowed_tables=None):  # noqa: ARG001
         return [
             SimpleNamespace(
                 name="generation_hourly",
@@ -2170,7 +2170,7 @@ def test_run_ask_pipeline_uses_measure_semantics_for_energy_power_weighted_and_c
         lambda settings, project_dir: FakeRunner(),
     )
 
-    async def fake_introspect_schema(run_sql, runner=None):  # noqa: ARG001
+    async def fake_introspect_schema(run_sql, runner=None, allowed_tables=None):  # noqa: ARG001
         return [
             SimpleNamespace(
                 name="generation_hourly",
@@ -2360,7 +2360,7 @@ def test_run_ask_pipeline_session_ids_unique_within_second(monkeypatch, project_
         lambda settings, project_dir: FakeRunner(),
     )
 
-    async def fake_introspect_schema(run_sql, runner=None):  # noqa: ARG001
+    async def fake_introspect_schema(run_sql, runner=None, allowed_tables=None):  # noqa: ARG001
         return []
 
     monkeypatch.setattr("datasight.schema.introspect_schema", fake_introspect_schema)

@@ -32,6 +32,7 @@ from datasight.config import (
     format_example_queries,
     load_example_queries,
     load_measure_overrides,
+    load_schema_config,
     load_schema_description,
     load_time_series_config,
 )
@@ -74,7 +75,7 @@ from datasight.explore import (
 )
 from datasight.generate import build_generation_context, parse_generation_response
 from datasight.runner import CachingSqlRunner, SqlRunner
-from datasight.schema import format_schema_context, introspect_schema
+from datasight.schema import filter_tables, format_schema_context, introspect_schema
 from datasight.settings import Settings, capture_original_env, restore_original_env
 from datasight.sql_validation import build_measure_rule_map, build_schema_map
 
@@ -963,7 +964,19 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     # Load schema and introspect database
     user_desc = load_schema_description(os.environ.get("SCHEMA_DESCRIPTION_PATH"), project_dir)
 
-    tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+    schema_config = load_schema_config(None, project_dir)
+    allowed_tables: set[str] | None = None
+    if schema_config is not None:
+        allowed_tables = {
+            e["name"] for e in schema_config.get("tables", []) if e.get("name")
+        } or None
+    tables = await introspect_schema(
+        state.sql_runner.run_sql,
+        runner=state.sql_runner,
+        allowed_tables=allowed_tables,
+    )
+    if schema_config is not None:
+        tables = filter_tables(tables, schema_config)
     state.schema_info = [
         {
             "name": t.name,
@@ -980,6 +993,10 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
         logger.info(f"Discovered {len(tables)} tables ({total_rows:,} total rows)")
     else:
         logger.warning("No tables discovered in the database")
+
+    from datasight.identifiers import configure_runner_identifier_quoting
+
+    configure_runner_identifier_quoting(state.sql_runner, state.schema_info)
 
     state.schema_text = format_schema_context(tables, user_desc)
     state.schema_map = build_schema_map(state.schema_info)

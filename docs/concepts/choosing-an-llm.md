@@ -48,7 +48,10 @@ these move):
 
 - **GitHub Models** — free for a generous monthly quota, rate-limited.
   Great for evaluation and light use. Provides access to GPT, Llama, and
-  other open models through a single GitHub token.
+  other open models through a single GitHub token. **Note:** the free
+  tier caps requests at 8,000 tokens, which is easy to exceed on databases
+  with many tables or wide tables. If you hit context-length errors, see
+  [Limit schema sent to the LLM](../project-developer/schema-config.md).
 - **Cheap hosted tier** (Anthropic Haiku, OpenAI GPT-4o-mini / GPT-4.1-mini)
   — typical datasight sessions cost pennies to single-digit cents.
 - **Mid hosted tier** (Anthropic Sonnet, OpenAI GPT-4o) — roughly 5× the

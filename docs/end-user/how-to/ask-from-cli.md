@@ -208,6 +208,17 @@ It validates `.env`, LLM settings, database configuration,
 `schema_description.md`, `queries.yaml`, `.datasight` writability, and
 live database connectivity.
 
+## Troubleshooting
+
+### "Maximum context length exceeded" or "request too large"
+
+Your database schema is too large for the LLM's context window. This
+commonly happens on the free GitHub Models tier (capped at 8,000 tokens)
+when the database has more than ~20 tables. Ask your project developer to
+[limit the schema sent to the LLM](../../project-developer/schema-config.md)
+via a `schema.yaml` file, or switch to a provider with a larger context
+window (OpenAI, Anthropic, or a local Ollama model).
+
 ## Review the query log
 
 `datasight log` shows recent SQL queries. Logging must be enabled first —
