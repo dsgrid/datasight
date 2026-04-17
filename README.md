@@ -1,5 +1,10 @@
 # datasight
 
+> **Status: early and evolving.** This project is in active development and the
+> code is changing rapidly — APIs, CLI flags, and behavior may shift between
+> commits. Feedback and bug reports from users are very welcome; please open an
+> issue on GitHub.
+
 AI-powered data exploration with natural language.
 
 datasight connects an AI agent to your database and provides a web UI
@@ -96,3 +101,7 @@ cd frontend && npm run test:e2e
 # Build frontend for FastAPI serving
 bash scripts/build-frontend.sh
 ```
+
+## Software Record
+
+datasight is developed under NLR Software Record SWR-26-045.
