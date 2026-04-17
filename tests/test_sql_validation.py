@@ -89,46 +89,7 @@ def test_build_schema_map():
     assert "name" in smap["products"]
 
 
-def test_measure_rule_rejects_non_default_aggregation_without_explicit_request():
-    schema = {
-        "generation_fuel": {
-            "report_date",
-            "net_generation_mwh",
-            "plant_id_eia",
-            "energy_source_code",
-        },
-        "plants": {"plant_id_eia", "state"},
-    }
-    measure_rules = build_measure_rule_map(
-        [
-            {
-                "table": "generation_fuel",
-                "column": "net_generation_mwh",
-                "default_aggregation": "max",
-                "allowed_aggregations": ["sum", "avg", "min", "max"],
-            }
-        ]
-    )
-    sql = """
-        SELECT g.report_date, SUM(g.net_generation_mwh) AS wind_generation_mwh
-        FROM generation_fuel g
-        JOIN plants p USING (plant_id_eia)
-        WHERE g.energy_source_code = 'WND' AND p.state = 'CO'
-        GROUP BY g.report_date
-    """
-
-    result = validate_sql(
-        sql,
-        schema,
-        measure_rules=measure_rules,
-        user_question="make a plot of net_generation_mwh for fuel type of wind in colorado",
-    )
-
-    assert not result.valid
-    assert "default `max`" in result.error_message
-
-
-def test_measure_rule_allows_explicit_total_request_for_non_default_aggregation():
+def test_measure_rule_allows_any_aggregation_in_allowed_list():
     schema = {"generation_fuel": {"report_date", "net_generation_mwh"}}
     measure_rules = build_measure_rule_map(
         [
@@ -146,17 +107,12 @@ def test_measure_rule_allows_explicit_total_request_for_non_default_aggregation(
         GROUP BY report_date
     """
 
-    result = validate_sql(
-        sql,
-        schema,
-        measure_rules=measure_rules,
-        user_question="plot the total net_generation_mwh over time",
-    )
+    result = validate_sql(sql, schema, measure_rules=measure_rules)
 
     assert result.valid
 
 
-def test_measure_rule_rejects_disallowed_aggregation_even_when_requested():
+def test_measure_rule_rejects_disallowed_aggregation():
     schema = {"generation_fuel": {"net_generation_mwh"}}
     measure_rules = build_measure_rule_map(
         [
@@ -173,7 +129,6 @@ def test_measure_rule_rejects_disallowed_aggregation_even_when_requested():
         "SELECT SUM(net_generation_mwh) FROM generation_fuel",
         schema,
         measure_rules=measure_rules,
-        user_question="show the total net_generation_mwh",
     )
 
     assert not result.valid

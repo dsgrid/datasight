@@ -351,7 +351,6 @@ async def execute_sql_with_validation(
     schema_map: dict[str, set[str]] | None = None,
     dialect: str = "duckdb",
     measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
-    user_question: str = "",
 ) -> SqlExecutionResult:
     """Execute SQL with optional schema validation.
 
@@ -377,7 +376,6 @@ async def execute_sql_with_validation(
             schema_map,
             dialect=dialect,
             measure_rules=measure_rules,
-            user_question=user_question,
         )
         if not vr.valid:
             logger.warning(f"SQL validation failed: {vr.error_message}")
@@ -537,7 +535,6 @@ async def _execute_run_sql(
         schema_map,
         dialect,
         measure_rules=measure_rules,
-        user_question=user_question,
     )
     _log_query(query_logger, session_id, user_question, "run_sql", sql, result, turn_id=turn_id)
     meta = _build_tool_meta("run_sql", sql, result, dialect=dialect, turn_id=turn_id)
@@ -604,7 +601,6 @@ async def _execute_visualize_data(
         schema_map,
         dialect,
         measure_rules=measure_rules,
-        user_question=user_question,
     )
     _log_query(
         query_logger,

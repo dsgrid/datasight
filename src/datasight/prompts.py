@@ -110,7 +110,7 @@ _DIALECT_HINTS: dict[str, str] = {
 }
 
 
-def _dialect_hint(dialect: str) -> str:
+def dialect_hint(dialect: str) -> str:
     return _DIALECT_HINTS.get(dialect, _DIALECT_HINTS["duckdb"])
 
 
@@ -275,7 +275,7 @@ def build_system_prompt(
         SQL dialect: ``"duckdb"``, ``"postgres"``, or ``"sqlite"``.
     """
     template = _BASE_WEB_PROMPT if mode == "web" else _BASE_VERIFY_PROMPT
-    base = template.format(dialect_hint=_dialect_hint(dialect))
+    base = template.format(dialect_hint=dialect_hint(dialect))
 
     if explain_sql:
         base += (

@@ -123,9 +123,7 @@ def test_validate_sql_aggregation_resolves_via_table_alias():
         FROM generation_fuel g
         GROUP BY g.report_date
     """
-    result = validate_sql(
-        sql, SCHEMA, measure_rules=rules, user_question="show total generation over time"
-    )
+    result = validate_sql(sql, SCHEMA, measure_rules=rules)
     assert result.valid
 
 
@@ -142,7 +140,7 @@ def test_validate_sql_aggregation_without_table_qualifier_matches_single_rule():
     )
     # No table qualifier on the column — exercises the single-match fallback
     sql = "SELECT SUM(net_generation_mwh) FROM generation_fuel"
-    result = validate_sql(sql, SCHEMA, measure_rules=rules, user_question="")
+    result = validate_sql(sql, SCHEMA, measure_rules=rules)
     assert result.valid
 
 
@@ -158,7 +156,7 @@ def test_validate_sql_aggregation_deduplicates_repeated_errors():
         ]
     )
     sql = "SELECT SUM(net_generation_mwh), SUM(net_generation_mwh) FROM generation_fuel"
-    result = validate_sql(sql, SCHEMA, measure_rules=rules, user_question="")
+    result = validate_sql(sql, SCHEMA, measure_rules=rules)
     assert not result.valid
     # Should dedupe the error rather than emit two identical entries
     not_allowed_errors = [e for e in result.errors if "not allowed" in e]
@@ -183,6 +181,5 @@ def test_validate_sql_column_without_name_is_ignored():
         "SELECT COUNT(*) FROM generation_fuel",
         SCHEMA,
         measure_rules=rules,
-        user_question="",
     )
     assert result.valid

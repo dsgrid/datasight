@@ -73,7 +73,12 @@ from datasight.explore import (
     create_ephemeral_session,
     save_ephemeral_as_project,
 )
-from datasight.generate import build_generation_context, parse_generation_response
+from datasight.generate import (
+    build_generation_context,
+    parse_generation_response,
+    sample_enum_columns,
+    sample_timestamp_columns,
+)
 from datasight.runner import CachingSqlRunner, SqlRunner
 from datasight.schema import filter_tables, format_schema_context, introspect_schema
 from datasight.settings import Settings, capture_original_env, restore_original_env
@@ -2339,15 +2344,20 @@ async def generate_project(request: Request, state: AppState = Depends(get_state
                 project_name=project_name,
             )
 
-            # Step 2: Sample enum columns
+            # Step 2: Sample enum + timestamp columns
             yield _sse("status", {"step": "sampling", "message": "Sampling column values..."})
             tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
-            samples_text = await _generate_sample_enum_columns(state.sql_runner.run_sql, tables)
+            samples_text = await sample_enum_columns(state.sql_runner.run_sql, tables)
+            timestamps_text = await sample_timestamp_columns(state.sql_runner.run_sql, tables)
 
             # Step 3: Call LLM to generate documentation
             yield _sse("status", {"step": "generating", "message": "Generating documentation..."})
             system_prompt, user_msg = build_generation_context(
-                tables, state.sql_dialect, samples_text, user_description=user_description
+                tables,
+                state.sql_dialect,
+                samples_text,
+                user_description=user_description,
+                timestamps_text=timestamps_text,
             )
 
             response = await state.llm_client.create_message(
@@ -2414,13 +2424,6 @@ async def generate_project(request: Request, state: AppState = Depends(get_state
 def _sse(event: str, data: dict) -> str:
     """Format a single SSE event."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-async def _generate_sample_enum_columns(run_sql, tables):
-    """Wrapper to import and call sample_enum_columns."""
-    from datasight.generate import sample_enum_columns
-
-    return await sample_enum_columns(run_sql, tables)
 
 
 @app.get("/api/preview/{table_name}")

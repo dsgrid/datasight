@@ -9,7 +9,6 @@ executing queries.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Any
 
 try:
@@ -68,23 +67,6 @@ def build_measure_rule_map(
     return rules
 
 
-_AGGREGATION_KEYWORDS = {
-    "sum": ("sum", "total", "totaled", "cumulative", "combined"),
-    "avg": ("avg", "average", "mean"),
-    "max": ("max", "maximum", "highest", "peak"),
-    "min": ("min", "minimum", "lowest"),
-}
-
-
-def _requested_aggregations(question: str) -> set[str]:
-    lower = question.lower()
-    requested: set[str] = set()
-    for aggregation, keywords in _AGGREGATION_KEYWORDS.items():
-        if any(re.search(rf"\b{re.escape(keyword)}\b", lower) for keyword in keywords):
-            requested.add(aggregation)
-    return requested
-
-
 def _find_measure_rule(
     column: "exp.Column",
     alias_to_table: dict[str, str],
@@ -108,7 +90,6 @@ def _find_measure_rule(
 def _validate_measure_aggregations(
     tree: "exp.Expression",
     measure_rules: dict[tuple[str, str], MeasureAggregationRule],
-    user_question: str,
 ) -> list[str]:
     if not measure_rules:
         return []
@@ -123,7 +104,6 @@ def _validate_measure_aggregations(
         if alias:
             alias_to_table[alias] = table_name
 
-    requested = _requested_aggregations(user_question)
     errors: list[str] = []
     seen: set[tuple[str, str, str]] = set()
     agg_types: tuple[type[exp.Expression], ...] = (exp.Sum, exp.Avg, exp.Max, exp.Min)
@@ -150,15 +130,6 @@ def _validate_measure_aggregations(
                 f"`{rule.table}.{rule.column}`. Allowed aggregations: "
                 f"{', '.join(rule.allowed_aggregations)}."
             )
-            continue
-
-        if actual != rule.default_aggregation and actual not in requested:
-            errors.append(
-                f"Aggregation `{actual}` for project measure `{rule.table}.{rule.column}` "
-                f"conflicts with its default `{rule.default_aggregation}`. "
-                f"Use `{rule.default_aggregation}` unless the user explicitly asks for "
-                f"{actual}."
-            )
 
     return errors
 
@@ -168,7 +139,6 @@ def validate_sql(
     schema: dict[str, set[str]],
     dialect: str = "duckdb",
     measure_rules: dict[tuple[str, str], MeasureAggregationRule] | None = None,
-    user_question: str = "",
 ) -> ValidationResult:
     """Validate that table references in *sql* exist in *schema*.
 
@@ -241,7 +211,7 @@ def validate_sql(
                 f"Available tables: {', '.join(sorted(schema.keys()))}"
             )
 
-    errors.extend(_validate_measure_aggregations(tree, measure_rules or {}, user_question))
+    errors.extend(_validate_measure_aggregations(tree, measure_rules or {}))
 
     return (
         ValidationResult(valid=False, errors=errors)

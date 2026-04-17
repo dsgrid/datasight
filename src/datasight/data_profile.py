@@ -774,6 +774,8 @@ def format_measure_prompt_context(measure_data: dict[str, Any]) -> str:
     lines = [
         "\n## Inferred Measure Semantics",
         "Use these aggregation defaults unless the user explicitly asks for something else.",
+        "Any aggregation listed in `allowed` is valid for that measure — use it without second-guessing when the user asks for it.",
+        "`additive_across_time=yes` means SUM across time samples is meaningful; `additive_across_category=yes` means SUM across groups is meaningful.",
         "Do not SUM prices, rates, percentages, or factors unless the user explicitly requests that behavior.",
         "For power-like signals (for example MW load or demand), prefer AVG or MAX over time rather than SUM.",
         "When a measure includes a weight column below, prefer a weighted average instead of a plain AVG for rollups.",
@@ -798,6 +800,16 @@ def format_measure_prompt_context(measure_data: dict[str, Any]) -> str:
             else ""
         )
         expression = f", expression={item['expression']}" if item.get("expression") else ""
+        additive_time = (
+            f", additive_across_time={'yes' if item['additive_across_time'] else 'no'}"
+            if "additive_across_time" in item
+            else ""
+        )
+        additive_cat = (
+            f", additive_across_category={'yes' if item['additive_across_category'] else 'no'}"
+            if "additive_across_category" in item
+            else ""
+        )
         rollup_sql = item.get("recommended_rollup_sql") or _recommended_rollup_sql(
             _measure_sql_expression(item),
             str(item.get("default_aggregation") or "avg"),
@@ -810,7 +822,7 @@ def format_measure_prompt_context(measure_data: dict[str, Any]) -> str:
             f"{item['table']}.{item['column']}: role={item['role']}, "
             f"default={item['default_aggregation']}, "
             f"allowed={', '.join(item['allowed_aggregations'])}"
-            f"{avoid}{unit}{weight}{display_name}{fmt}{charts}{expression}{formula}. {item['reason']}"
+            f"{avoid}{additive_time}{additive_cat}{unit}{weight}{display_name}{fmt}{charts}{expression}{formula}. {item['reason']}"
         )
     return "\n".join(lines) + "\n"
 

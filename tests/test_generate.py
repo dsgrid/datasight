@@ -6,6 +6,7 @@ from datasight.generate import (
     build_generation_context,
     parse_generation_response,
     sample_enum_columns,
+    sample_timestamp_columns,
 )
 from datasight.schema import ColumnInfo, TableInfo
 
@@ -74,6 +75,28 @@ class TestBuildGenerationContext:
         assert "expert data analyst" in system
         assert "users" in user_msg
         assert "duckdb" in user_msg
+        # Dialect hints must be injected so the LLM uses DuckDB SQL syntax
+        assert "DATE_TRUNC" in user_msg or "STRFTIME" in user_msg
+
+    def test_dialect_hints_switch_with_dialect(self):
+        """SQLite and DuckDB produce distinct dialect guidance."""
+        tables = [TableInfo(name="t", columns=[], row_count=1)]
+        _, duckdb_msg = build_generation_context(tables, "duckdb", "")
+        _, sqlite_msg = build_generation_context(tables, "sqlite", "")
+
+        assert "DuckDB" in duckdb_msg
+        assert "SQLite" in sqlite_msg
+        # SQLite-specific guidance (no DATE_TRUNC) must not leak into DuckDB
+        assert "No DATE_TRUNC" not in duckdb_msg
+
+    def test_with_timestamps(self):
+        """Include timestamp range info in context."""
+        tables = [TableInfo(name="t", columns=[], row_count=10)]
+        timestamps = "**t.ts** (BIGINT): min=1776355571, max=1776426536 — integer column"
+        _, user_msg = build_generation_context(tables, "duckdb", "", timestamps_text=timestamps)
+
+        assert "Timestamp Column Ranges" in user_msg
+        assert "1776355571" in user_msg
 
     def test_with_user_description(self):
         """Include user description in context."""
@@ -153,3 +176,107 @@ class TestSampleEnumColumns:
 
         assert result == ""
         conn.close()
+
+
+class TestSampleTimestampColumns:
+    """Tests for sample_timestamp_columns."""
+
+    @pytest.mark.asyncio
+    async def test_integer_unix_timestamp(self):
+        """Integer columns named like timestamps get min/max with unit hint."""
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        conn.execute("CREATE TABLE s (id INT, timestamp BIGINT)")
+        conn.execute("INSERT INTO s VALUES (1, 1776355571), (2, 1776426536)")
+
+        async def run_sql(sql):
+            return conn.execute(sql).fetchdf()
+
+        tables = [
+            TableInfo(
+                name="s",
+                columns=[
+                    ColumnInfo(name="id", dtype="INTEGER"),
+                    ColumnInfo(name="timestamp", dtype="BIGINT"),
+                ],
+                row_count=2,
+            )
+        ]
+        result = await sample_timestamp_columns(run_sql, tables)
+
+        assert "s.timestamp" in result
+        assert "1776355571" in result
+        assert "seconds" in result  # unit hint
+        assert "s.id" not in result  # plain integer, not time-named
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_native_timestamp_column(self):
+        """TIMESTAMP columns get min/max without unit hint."""
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        conn.execute("CREATE TABLE s (created_at TIMESTAMP)")
+        conn.execute("INSERT INTO s VALUES ('2024-01-01 00:00:00'), ('2024-12-31 23:00:00')")
+
+        async def run_sql(sql):
+            return conn.execute(sql).fetchdf()
+
+        tables = [
+            TableInfo(
+                name="s",
+                columns=[ColumnInfo(name="created_at", dtype="TIMESTAMP")],
+                row_count=2,
+            )
+        ]
+        result = await sample_timestamp_columns(run_sql, tables)
+
+        assert "s.created_at" in result
+        assert "2024" in result
+        assert "epoch" not in result  # no unit hint for native timestamp
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_skips_non_temporal(self):
+        """Plain integer columns without time-suggestive names are skipped."""
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        conn.execute("CREATE TABLE s (id INT, count INT)")
+        conn.execute("INSERT INTO s VALUES (1, 100)")
+
+        async def run_sql(sql):
+            return conn.execute(sql).fetchdf()
+
+        tables = [
+            TableInfo(
+                name="s",
+                columns=[
+                    ColumnInfo(name="id", dtype="INTEGER"),
+                    ColumnInfo(name="count", dtype="INTEGER"),
+                ],
+                row_count=1,
+            )
+        ]
+        result = await sample_timestamp_columns(run_sql, tables)
+
+        assert result == ""
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_handles_query_exception(self):
+        """Query exceptions skip the column silently."""
+
+        async def run_sql(sql):
+            raise RuntimeError("boom")
+
+        tables = [
+            TableInfo(
+                name="t",
+                columns=[ColumnInfo(name="timestamp", dtype="BIGINT")],
+                row_count=0,
+            )
+        ]
+        result = await sample_timestamp_columns(run_sql, tables)
+        assert result == ""

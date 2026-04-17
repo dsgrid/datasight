@@ -12,9 +12,34 @@ import re
 import pandas as pd
 from loguru import logger
 
-from datasight.prompts import DESCRIBE_SYSTEM_PROMPT, DESCRIBE_USER_MESSAGE
+from datasight.prompts import DESCRIBE_SYSTEM_PROMPT, DESCRIBE_USER_MESSAGE, dialect_hint
 from datasight.runner import RunSql
 from datasight.schema import TableInfo, _validate_identifier, format_schema_context
+
+_TEMPORAL_TYPES = {
+    "TIMESTAMP",
+    "TIMESTAMPTZ",
+    "TIMESTAMP WITH TIME ZONE",
+    "TIMESTAMP WITHOUT TIME ZONE",
+    "DATE",
+    "DATETIME",
+    "TIME",
+}
+_INTEGER_TYPES = {
+    "BIGINT",
+    "INTEGER",
+    "INT",
+    "INT2",
+    "INT4",
+    "INT8",
+    "SMALLINT",
+    "HUGEINT",
+    "UBIGINT",
+    "UINTEGER",
+    "USMALLINT",
+    "UHUGEINT",
+}
+_TIME_NAME_HINTS = ("time", "stamp", "date", "epoch")
 
 
 async def sample_enum_columns(run_sql: RunSql, tables: list[TableInfo]) -> str:
@@ -66,6 +91,54 @@ async def sample_enum_columns(run_sql: RunSql, tables: list[TableInfo]) -> str:
     return "\n".join(lines)
 
 
+async def sample_timestamp_columns(run_sql: RunSql, tables: list[TableInfo]) -> str:
+    """Sample min/max from timestamp-like columns.
+
+    Shows the LLM the actual range of temporal columns and, for integer
+    columns with time-suggestive names, the magnitude — so it can infer
+    whether values are seconds, milliseconds, or microseconds since epoch.
+    """
+    lines: list[str] = []
+
+    for table in tables:
+        table_name = _validate_identifier(table.name)
+        for col in table.columns:
+            base_type = col.dtype.upper().split("(")[0].strip()
+            name_lower = col.name.lower()
+            is_temporal = base_type in _TEMPORAL_TYPES
+            is_numeric_time = base_type in _INTEGER_TYPES and any(
+                h in name_lower for h in _TIME_NAME_HINTS
+            )
+            if not (is_temporal or is_numeric_time):
+                continue
+            col_name = _validate_identifier(col.name)
+            try:
+                result = await run_sql(
+                    f"SELECT MIN({col_name}) AS min_v, MAX({col_name}) AS max_v "
+                    f"FROM {table_name} WHERE {col_name} IS NOT NULL"
+                )
+                if result.empty:
+                    continue
+                min_v = result.iloc[0]["min_v"]
+                max_v = result.iloc[0]["max_v"]
+                if pd.isna(min_v) or pd.isna(max_v):
+                    continue
+                suffix = ""
+                if is_numeric_time:
+                    suffix = (
+                        " — integer column; infer unit from magnitude "
+                        "(~1e9 = seconds, ~1e12 = milliseconds, "
+                        "~1e15 = microseconds since Unix epoch)"
+                    )
+                lines.append(
+                    f"**{table.name}.{col.name}** ({col.dtype}): min={min_v}, max={max_v}{suffix}"
+                )
+            except Exception:
+                continue
+
+    return "\n".join(lines)
+
+
 def _extract_scalar(df: pd.DataFrame, col: str) -> int:
     """Extract a scalar integer from a DataFrame result."""
     if df.empty:
@@ -91,6 +164,7 @@ def build_generation_context(
     sql_dialect: str,
     samples_text: str,
     user_description: str | None = None,
+    timestamps_text: str = "",
 ) -> tuple[str, str]:
     """Build the system prompt and user message for LLM documentation generation.
 
@@ -104,6 +178,9 @@ def build_generation_context(
         Output from sample_enum_columns().
     user_description:
         Optional user-provided description of the data.
+    timestamps_text:
+        Output from sample_timestamp_columns(). Helps the LLM infer epoch
+        unit and pick dialect-correct time functions.
 
     Returns
     -------
@@ -117,7 +194,16 @@ def build_generation_context(
     schema_and_samples += schema_text
     if samples_text:
         schema_and_samples += "\n\n## Sampled Column Values\n\n" + samples_text
-    schema_and_samples += f"\n\nSQL dialect: {sql_dialect}\n"
+    if timestamps_text:
+        schema_and_samples += "\n\n## Timestamp Column Ranges\n\n" + timestamps_text
+    schema_and_samples += (
+        f"\n\n## SQL Dialect: {sql_dialect}\n\n{dialect_hint(sql_dialect)}"
+        "All SQL you emit (including time-resolution patterns in "
+        "schema_description.md and every query in queries.yaml) MUST use "
+        f"functions valid in {sql_dialect}. Do not use functions from other "
+        "dialects (e.g. FROM_UNIXTIME, DATE_FORMAT, YEAR() as a function) "
+        "unless they are valid in this dialect.\n"
+    )
 
     user_msg = DESCRIBE_USER_MESSAGE.format(schema_and_samples=schema_and_samples)
     return DESCRIBE_SYSTEM_PROMPT, user_msg

@@ -2270,7 +2270,7 @@ def test_run_agent_loop_regenerates_sql_after_measure_validation_failure():
 
             tool_result_text = last_message[0]["content"]
             if "SQL validation error:" in tool_result_text:
-                assert "default `max`" in tool_result_text
+                assert "not allowed" in tool_result_text
                 return LLMResponse(
                     content=[
                         ToolUseBlock(
@@ -2308,7 +2308,7 @@ def test_run_agent_loop_regenerates_sql_after_measure_validation_failure():
                 "table": "generation_fuel",
                 "column": "net_generation_mwh",
                 "default_aggregation": "max",
-                "allowed_aggregations": ["sum", "avg", "min", "max"],
+                "allowed_aggregations": ["max"],
             }
         ]
     )
@@ -2334,7 +2334,7 @@ def test_run_agent_loop_regenerates_sql_after_measure_validation_failure():
     ]
     assert len(result.tool_results) == 2
     assert result.tool_results[0].meta["error"] is not None
-    assert "default `max`" in result.tool_results[0].meta["error"]
+    assert "not allowed" in result.tool_results[0].meta["error"]
     assert result.tool_results[1].meta["error"] is None
 
 

@@ -1749,6 +1749,7 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
         from datasight.generate import (
             build_generation_context,
             sample_enum_columns,
+            sample_timestamp_columns,
         )
         from datasight.schema import introspect_schema
 
@@ -1801,9 +1802,16 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
         click.echo("Sampling code/enum columns...")
         samples_text = await sample_enum_columns(sql_runner.run_sql, tables)
 
+        # Sample timestamp/date columns so the LLM can infer epoch units
+        # and actual time range
+        click.echo("Sampling timestamp columns...")
+        timestamps_text = await sample_timestamp_columns(sql_runner.run_sql, tables)
+
         # Build LLM prompt and call
         click.echo("Generating documentation (this may take a moment)...")
-        system_prompt, user_msg = build_generation_context(tables, sql_dialect, samples_text)
+        system_prompt, user_msg = build_generation_context(
+            tables, sql_dialect, samples_text, timestamps_text=timestamps_text
+        )
 
         from datasight.llm import TextBlock
 
