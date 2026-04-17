@@ -89,6 +89,7 @@ For production, use `POSTGRES_SSLMODE=verify-full` and consider using a
 | `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations ([guide](../end-user/reference/query-confidence-toggles.md)) |
 | `SHOW_PROVENANCE` | `false` | Show copyable run details in the web UI |
 | `SQL_CACHE_MAX_BYTES` | `1073741824` (1 GiB) | In-memory SQL result cache budget ([concept](../concepts/sql-result-cache.md)). Set to `0` to disable. |
+| `MAX_COST_USD_PER_TURN` | `1.0` | Per-question LLM spend cap (USD). The agent aborts with a visible stop message when the running estimated cost exceeds this value. Set to `none`, `off`, or `disabled` to turn off the check. |
 
 ## Project files
 

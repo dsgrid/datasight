@@ -88,6 +88,13 @@ prompted to ask rather than guess. See
 question, timing, and row count, so you can audit after the fact. See
 [Review the SQL query log](../end-user/how-to/review-query-log.md).
 
+**Per-question cost budget.** The agent tracks estimated LLM cost across
+the tool-use loop and aborts with a visible stop message once a
+configurable USD cap is reached, so a runaway loop can't silently burn
+tokens. The cap defaults to `$1.00` per question and is controlled by
+`MAX_COST_USD_PER_TURN` — see
+[Configuration reference](../reference/configuration.md).
+
 **Cross-model verification.** For high-stakes questions, the `verify`
 workflow re-runs a question across multiple LLMs and compares results.
 Disagreement is a signal to investigate. See
