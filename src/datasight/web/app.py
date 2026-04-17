@@ -512,6 +512,7 @@ class AppState:
         self._response_cache_max = 100
         self._insight_cache: dict[str, Any] = {}
         self._max_history_pairs = 10
+        self.max_cost_usd_per_turn: float | None = 1.0
         # Per-session locks to prevent concurrent chat on the same session
         self._session_locks: dict[str, asyncio.Lock] = {}
         # Lock for state-level mutations (project load, settings changes)
@@ -959,6 +960,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state.show_provenance = settings.app.show_provenance
     state._max_history_pairs = settings.app.max_history_pairs
     state._response_cache_max = settings.app.response_cache_max
+    state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
 
     log_path = os.environ.get(
         "QUERY_LOG_PATH",
@@ -1294,6 +1296,28 @@ async def generate_chat_response(
             f"cache_create={response.usage.cache_creation_input_tokens} "
             f"cache_read={response.usage.cache_read_input_tokens}"
         )
+
+        if state.max_cost_usd_per_turn is not None:
+            running_cost = build_cost_data(
+                state.model, api_calls, total_input_tokens, total_output_tokens
+            )["estimated_cost"]
+            if running_cost is not None and running_cost > state.max_cost_usd_per_turn:
+                logger.warning(
+                    f"[chat] Cost budget exceeded: ${running_cost:.4f} > "
+                    f"${state.max_cost_usd_per_turn:.2f} (api_calls={api_calls})"
+                )
+                budget_text = (
+                    f"Stopped: estimated cost ${running_cost:.2f} exceeded the "
+                    f"${state.max_cost_usd_per_turn:.2f} budget for this question. "
+                    "Try a more specific question or raise the budget."
+                )
+                evt_log.append(
+                    {"event": EventType.ASSISTANT_MESSAGE, "data": {"text": budget_text}}
+                )
+                await state.save_session(session_id)
+                yield f"event: token\ndata: {json.dumps({'text': budget_text})}\n\n"
+                yield "event: done\ndata: {}\n\n"
+                return
 
         if response.stop_reason == "tool_use":
             messages.append(
@@ -1938,6 +1962,7 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state.show_provenance = settings.app.show_provenance
         state._max_history_pairs = settings.app.max_history_pairs
         state._response_cache_max = settings.app.response_cache_max
+        state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
 
         # Create ephemeral session
         runner, tables_info = create_ephemeral_session(file_paths)

@@ -27,6 +27,22 @@ def _safe_int(value: str, default: int) -> int:
         return default
 
 
+def _safe_optional_float(value: str, default: float | None) -> float | None:
+    """Parse a float from a string, returning default if empty or invalid.
+
+    An explicit ``"none"`` / ``"off"`` / ``"disabled"`` value (case-insensitive)
+    returns ``None`` to disable the associated feature.
+    """
+    if not value:
+        return default
+    if value.strip().lower() in {"none", "off", "disabled"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 # All env vars that can be set in a project's .env file.
 # These are restored to their original shell values before loading each project.
 _PROJECT_ENV_VARS = [
@@ -218,6 +234,7 @@ class AppSettings:
     max_history_pairs: int = 10
     response_cache_max: int = 100
     sql_cache_max_bytes: int = 1 << 30  # 1 GiB; 0 disables
+    max_cost_usd_per_turn: float | None = 1.0  # None disables the per-turn LLM cost budget
 
 
 @dataclass
@@ -320,6 +337,9 @@ class Settings:
                 show_provenance=os.environ.get("SHOW_PROVENANCE", "").lower()
                 in ("1", "true", "yes"),
                 sql_cache_max_bytes=_safe_int(os.environ.get("SQL_CACHE_MAX_BYTES", ""), 1 << 30),
+                max_cost_usd_per_turn=_safe_optional_float(
+                    os.environ.get("MAX_COST_USD_PER_TURN", ""), 1.0
+                ),
             ),
         )
 
