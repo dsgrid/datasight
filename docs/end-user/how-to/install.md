@@ -40,10 +40,10 @@ Set one of these in your shell or in the project `.env`:
     Install [Ollama](https://ollama.com/), pull a tool-calling model, then:
 
     ```bash
-    ollama pull qwen3.5:35b-a3b
+    ollama pull qwen3:8b
 
     LLM_PROVIDER=ollama
-    OLLAMA_MODEL=qwen3.5:35b-a3b
+    OLLAMA_MODEL=qwen3:8b
     ```
 
 See the [Configuration reference](../../reference/configuration.md) for

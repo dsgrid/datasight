@@ -19,6 +19,7 @@ import pandas as pd
 from loguru import logger
 
 from datasight.chart import build_chart_html
+from datasight.cost import build_cost_data
 from datasight.exceptions import QueryError, QueryTimeoutError
 from datasight.llm import LLMClient, TextBlock, ToolUseBlock, serialize_content
 from datasight.prompts import WEB_TOOLS
@@ -766,6 +767,7 @@ async def run_agent_loop(
     messages: list[dict[str, Any]] | None = None,
     tools: list[dict[str, Any]] | None = None,
     max_iterations: int = 15,
+    max_cost_usd: float | None = 1.0,
 ) -> AgentResult:
     """Run the LLM agent loop to completion.
 
@@ -799,6 +801,10 @@ async def run_agent_loop(
         Optional tool definitions (defaults to WEB_TOOLS).
     max_iterations:
         Maximum number of LLM calls.
+    max_cost_usd:
+        Maximum estimated LLM cost (USD) before the loop aborts. Set to
+        ``None`` to disable the budget check. Only applied for models with
+        pricing in ``cost.MODEL_PRICING``.
 
     Returns
     -------
@@ -827,6 +833,27 @@ async def run_agent_loop(
         api_calls += 1
         total_input_tokens += response.usage.input_tokens
         total_output_tokens += response.usage.output_tokens
+
+        if max_cost_usd is not None:
+            running_cost = build_cost_data(
+                model, api_calls, total_input_tokens, total_output_tokens
+            )["estimated_cost"]
+            if running_cost is not None and running_cost > max_cost_usd:
+                logger.warning(
+                    f"Agent cost budget exceeded: ${running_cost:.4f} > ${max_cost_usd:.2f} "
+                    f"(api_calls={api_calls})"
+                )
+                return AgentResult(
+                    text=(
+                        f"Stopped: estimated cost ${running_cost:.2f} exceeded the "
+                        f"${max_cost_usd:.2f} budget for this question. Try a more "
+                        "specific question or raise the budget."
+                    ),
+                    tool_results=collected_tool_results,
+                    total_input_tokens=total_input_tokens,
+                    total_output_tokens=total_output_tokens,
+                    api_calls=api_calls,
+                )
 
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": serialize_content(response.content)})

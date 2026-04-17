@@ -141,10 +141,7 @@ EXAMPLE_QUERIES_YAML = """\
 def project_dir(tmp_path, test_duckdb_path):
     """Create a project directory with .env and config files pointing to test DB."""
     env_content = (
-        f"LLM_PROVIDER=ollama\n"
-        f"OLLAMA_MODEL=qwen3.5:35b-a3b\n"
-        f"DB_MODE=duckdb\n"
-        f"DB_PATH={test_duckdb_path}\n"
+        f"LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen3:8b\nDB_MODE=duckdb\nDB_PATH={test_duckdb_path}\n"
     )
     (tmp_path / ".env").write_text(env_content, encoding="utf-8")
     (tmp_path / "schema_description.md").write_text(SCHEMA_DESCRIPTION, encoding="utf-8")

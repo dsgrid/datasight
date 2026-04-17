@@ -41,7 +41,7 @@ For help picking a provider, see [Choosing an LLM](../concepts/choosing-an-llm.m
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `qwen3.5:35b-a3b` | Ollama model name (must support tool calling) |
+| `OLLAMA_MODEL` | `qwen3:8b` | Ollama model name (must support tool calling) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint |
 
 ### Database settings

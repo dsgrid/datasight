@@ -1348,7 +1348,7 @@ def test_doctor_fails_when_required_files_missing(tmp_path, test_duckdb_path):
     (tmp_path / ".env").write_text(
         (
             "LLM_PROVIDER=ollama\n"
-            "OLLAMA_MODEL=qwen3.5:35b-a3b\n"
+            "OLLAMA_MODEL=qwen3:8b\n"
             "DB_MODE=duckdb\n"
             f"DB_PATH={test_duckdb_path}\n"
         ),
@@ -1916,7 +1916,7 @@ def test_build_cost_data_known_model_returns_estimated_cost():
     from datasight.cost import build_cost_data
 
     data = build_cost_data(
-        "claude-sonnet-4-20250514",
+        "claude-sonnet-4-6",
         api_calls=2,
         input_tokens=1_000_000,
         output_tokens=1_000_000,
@@ -1985,7 +1985,7 @@ def test_run_ask_pipeline_logs_cost_entry(monkeypatch, project_dir):
         cli_module._run_ask_pipeline(
             question="How many orders are there?",
             settings=settings,
-            resolved_model="claude-sonnet-4-20250514",
+            resolved_model="claude-sonnet-4-6",
             project_dir=project_dir,
             sql_dialect="duckdb",
         )
@@ -2064,7 +2064,7 @@ def test_run_ask_pipeline_includes_measure_guidance_in_prompt(monkeypatch, proje
         cli_module._run_ask_pipeline(
             question="Show generation over time",
             settings=settings,
-            resolved_model="claude-sonnet-4-20250514",
+            resolved_model="claude-sonnet-4-6",
             project_dir=project_dir,
             sql_dialect="duckdb",
         )
@@ -2207,7 +2207,7 @@ def test_run_ask_pipeline_uses_measure_semantics_for_energy_power_weighted_and_c
         return await cli_module._run_ask_pipeline(
             question=question,
             settings=settings,
-            resolved_model="claude-sonnet-4-20250514",
+            resolved_model="claude-sonnet-4-6",
             project_dir=project_dir,
             sql_dialect="duckdb",
         )
@@ -2382,7 +2382,7 @@ def test_run_ask_pipeline_session_ids_unique_within_second(monkeypatch, project_
         return await cli_module._run_ask_pipeline(
             question=q,
             settings=settings,
-            resolved_model="claude-sonnet-4-20250514",
+            resolved_model="claude-sonnet-4-6",
             project_dir=project_dir,
             sql_dialect="duckdb",
         )

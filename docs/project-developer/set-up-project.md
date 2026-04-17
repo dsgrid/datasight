@@ -78,14 +78,14 @@ First, install and start [Ollama](https://ollama.com/), then pull a model
 with tool-calling support:
 
 ```bash
-ollama pull qwen3.5:35b-a3b
+ollama pull qwen3:8b
 ```
 
 Then configure `.env`:
 
 ```bash
 LLM_PROVIDER=ollama
-OLLAMA_MODEL=qwen3.5:35b-a3b
+OLLAMA_MODEL=qwen3:8b
 DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```

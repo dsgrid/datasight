@@ -176,6 +176,13 @@ class AnthropicLLMClient:
         max_tokens: int,
     ) -> LLMResponse:
         """Create a message using the Anthropic API with retries."""
+        # Mark the last tool with cache_control so the full tools array is
+        # cached alongside the system prompt. A single breakpoint at the end
+        # covers everything before it in order (tools + system).
+        cached_tools: list[dict[str, Any]] = [dict(t) for t in tools]
+        if cached_tools:
+            cached_tools[-1]["cache_control"] = {"type": "ephemeral"}
+
         last_exception: Exception | None = None
         for attempt in range(DEFAULT_MAX_RETRIES):
             try:
@@ -190,7 +197,7 @@ class AnthropicLLMClient:
                             "cache_control": {"type": "ephemeral"},
                         }
                     ],
-                    tools=tools,
+                    tools=cached_tools,
                     messages=messages,
                 )
                 break

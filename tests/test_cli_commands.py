@@ -80,7 +80,7 @@ def tv_project(tmp_path_factory) -> str:
     env_text = (project_dir / ".env").read_text(encoding="utf-8")
     if "LLM_PROVIDER" not in env_text:
         (project_dir / ".env").write_text(
-            env_text + "LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen3.5:35b-a3b\n",
+            env_text + "LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen3:8b\n",
             encoding="utf-8",
         )
 
@@ -109,7 +109,7 @@ def tv_project_isolated(tv_project, tmp_path, monkeypatch):
         "DB_MODE=duckdb\n"
         f"DB_PATH={src / 'time_validation_demo.duckdb'}\n"
         "LLM_PROVIDER=ollama\n"
-        "OLLAMA_MODEL=qwen3.5:35b-a3b\n",
+        "OLLAMA_MODEL=qwen3:8b\n",
         encoding="utf-8",
     )
     return str(dst)

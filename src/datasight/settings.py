@@ -126,7 +126,7 @@ class LLMSettings:
 
     # Ollama settings
     ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_model: str = "qwen3.5:35b-a3b"
+    ollama_model: str = "qwen3:8b"
 
     # GitHub Models settings
     github_token: str = ""
@@ -287,7 +287,7 @@ class Settings:
                 anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
                 anthropic_base_url=os.environ.get("ANTHROPIC_BASE_URL"),
                 ollama_base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-                ollama_model=os.environ.get("OLLAMA_MODEL", "qwen3.5:35b-a3b"),
+                ollama_model=os.environ.get("OLLAMA_MODEL", "qwen3:8b"),
                 github_token=os.environ.get("GITHUB_TOKEN", ""),
                 github_models_model=os.environ.get("GITHUB_MODELS_MODEL", "gpt-4o"),
                 github_models_base_url=os.environ.get(

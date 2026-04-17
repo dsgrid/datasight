@@ -11,7 +11,7 @@
 
   const MODEL_DEFAULTS: Record<string, string> = {
     anthropic: "claude-haiku-4-5-20251001",
-    ollama: "qwen3.5:35b-a3b",
+    ollama: "qwen3:8b",
     github: "gpt-4o",
     openai: "gpt-4o-mini",
   };

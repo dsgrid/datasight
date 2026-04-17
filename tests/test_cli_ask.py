@@ -1,6 +1,6 @@
 """Integration tests for the ``datasight ask`` CLI command using Ollama.
 
-These tests require a running Ollama instance with the qwen3.5:35b-a3b model.
+These tests require a running Ollama instance with the qwen3:8b model.
 They are marked with ``@pytest.mark.integration`` and can be skipped with:
 
     pytest -m "not integration"
