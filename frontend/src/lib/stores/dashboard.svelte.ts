@@ -59,6 +59,7 @@ export interface DashboardItem {
   type: DashboardItemType;
   html?: string;
   title?: string;
+  render_plotly_spec?: unknown;
   plotly_spec?: unknown;
   sql?: string;
   tool?: string;

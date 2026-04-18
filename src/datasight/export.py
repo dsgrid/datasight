@@ -11,6 +11,7 @@ import json
 import re
 from typing import Any
 
+from datasight.chart import build_chart_html
 from datasight.events import EventType
 from datasight.templating import escape_html_attr, render_template
 
@@ -123,21 +124,30 @@ def _group_events_into_blocks(
                 html = data.get("html", "")
                 rtype = data.get("type", "table")
                 # Tools are part of the current turn
-                if html and not is_turn_excluded():
+                if not is_turn_excluded():
                     if rtype == "chart":
-                        pending_events.append(
-                            {
-                                "is_chart": True,
-                                "html": escape_html_attr(html),
-                            }
-                        )
+                        spec = data.get("plotly_spec") or data.get("plotlySpec")
+                        chart_html = html
+                        if isinstance(spec, dict):
+                            chart_html = build_chart_html(
+                                spec,
+                                str(data.get("title") or "Chart"),
+                            )
+                        if chart_html:
+                            pending_events.append(
+                                {
+                                    "is_chart": True,
+                                    "html": escape_html_attr(chart_html),
+                                }
+                            )
                     else:
-                        pending_events.append(
-                            {
-                                "is_table": True,
-                                "html": html,  # Already escaped in df_to_html_table
-                            }
-                        )
+                        if html:
+                            pending_events.append(
+                                {
+                                    "is_table": True,
+                                    "html": html,  # Already escaped in df_to_html_table
+                                }
+                            )
 
             case EventType.PROVENANCE:
                 if not is_turn_excluded():

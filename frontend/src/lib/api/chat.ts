@@ -28,6 +28,8 @@ interface ToolResultData {
   type: "chart" | "table";
   html: string;
   title?: string;
+  plotly_spec?: unknown;
+  plotlySpec?: unknown;
 }
 
 interface ToolDoneData {
@@ -102,6 +104,7 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
         resultType: d.type,
         html: d.html,
         title: d.title,
+        plotlySpec: d.plotly_spec ?? d.plotlySpec,
       });
       break;
     }

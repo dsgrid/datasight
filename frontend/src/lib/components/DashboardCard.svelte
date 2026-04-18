@@ -9,6 +9,7 @@
   import type { DashboardItem } from "$lib/stores/dashboard.svelte";
   import { sanitizeHtml } from "$lib/utils/markdown";
   import { toastStore } from "$lib/stores/toast.svelte";
+  import PlotlyChart, { type PlotlyPoint } from "./PlotlyChart.svelte";
 
   interface Props {
     item: DashboardItem;
@@ -21,7 +22,6 @@
   let { item, index, onDragStart, onDragOver, onDrop }: Props = $props();
 
   let dragOver = $state(false);
-  let iframeEl = $state<HTMLIFrameElement | null>(null);
 
   let isFullscreen = $derived(dashboardStore.fullscreenCardId === item.id);
 
@@ -66,21 +66,6 @@
       })
       .join("\n"),
   );
-
-  $effect(() => {
-    const iframe = iframeEl;
-    if (!iframe) return;
-
-    async function handleChartMessage(event: MessageEvent) {
-      const sourceWindow = iframe?.contentWindow;
-      if (!sourceWindow || event.source !== sourceWindow) return;
-      if (event.data?.type !== "datasight-plotly-click") return;
-      await applyClickFilter(event.data.point);
-    }
-
-    window.addEventListener("message", handleChartMessage);
-    return () => window.removeEventListener("message", handleChartMessage);
-  });
 
   function handleTitleChange(e: Event) {
     const target = e.target as HTMLInputElement;
@@ -138,14 +123,7 @@
     return matches.length === 1 ? matches[0] : null;
   }
 
-  async function applyClickFilter(point: {
-    curveNumber?: number;
-    pointNumber?: number;
-    x?: unknown;
-    y?: unknown;
-    label?: unknown;
-    value?: unknown;
-  }) {
+  async function applyClickFilter(point: PlotlyPoint) {
     if (!item.sql) {
       toastStore.show("This card cannot be rerun with filters", "info");
       return;
@@ -168,19 +146,6 @@
     toastStore.show(`Filtered dashboard by ${column} = ${String(value)}`, "success");
   }
 
-  function syncThemeToIframe() {
-    if (!iframeEl?.contentWindow) return;
-    const theme =
-      document.documentElement.getAttribute("data-theme") || "light";
-    try {
-      iframeEl.contentWindow.postMessage(
-        { type: "theme-change", theme },
-        "*",
-      );
-    } catch {
-      // ignore
-    }
-  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -275,15 +240,15 @@
         </div>
       </div>
     {/if}
-    {#if item.type === "chart" && item.html}
-      <iframe
-        bind:this={iframeEl}
-        srcdoc={item.html}
-        sandbox="allow-scripts allow-same-origin"
-        class="w-full h-full min-h-[300px] border-0 dashboard-chart-iframe"
+    {#if item.type === "chart" && (item.html || item.render_plotly_spec)}
+      <PlotlyChart
+        html={item.html || ""}
+        plotlySpec={item.render_plotly_spec}
+        className="w-full h-full min-h-[300px] border-0 dashboard-chart-iframe"
+        iframeClassName="w-full h-full min-h-[300px] border-0 dashboard-chart-iframe"
         title={item.title || "Chart"}
-        onload={syncThemeToIframe}
-      ></iframe>
+        onPointClick={applyClickFilter}
+      />
     {:else if item.type === "table" && item.html}
       <div
         class="p-3 text-xs [&_table]:w-full [&_th]:px-2 [&_th]:py-1

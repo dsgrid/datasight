@@ -61,6 +61,7 @@
       title: event.title || "",
       sql: toolCtx?.sql,
       tool: toolCtx?.tool || (event.resultType === "chart" ? "visualize_data" : "run_sql"),
+      render_plotly_spec: event.plotlySpec,
       plotly_spec: toolCtx?.plotlySpec,
       source_meta: {
         question: "",
@@ -206,6 +207,7 @@
       {#if event.resultType === "chart"}
         <ChartResult
           html={event.html}
+          plotlySpec={event.plotlySpec}
           title={event.title}
           onPin={() => pinResult(event, toolCtx)}
           onBookmark={toolCtx

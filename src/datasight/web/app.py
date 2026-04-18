@@ -1087,10 +1087,10 @@ async def execute_tool_web(
     session_id: str = "",
     user_question: str = "",
     turn_id: str = "",
-) -> tuple[str, str | None, str | None, dict[str, Any]]:
+) -> tuple[str, str | None, str | None, dict[str, Any], dict[str, Any] | None]:
     """Execute a tool call via the shared agent module.
 
-    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html, meta).
+    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html, meta, plotly_spec).
     """
     if state.sql_runner is None:
         raise ConfigurationError("SQL runner not initialized")
@@ -1107,7 +1107,7 @@ async def execute_tool_web(
         user_question=user_question,
         turn_id=turn_id,
     )
-    return result.result_text, result.result_html, None, result.meta
+    return result.result_text, result.result_html, None, result.meta, result.plotly_spec
 
 
 def _build_tool_provenance(
@@ -1398,7 +1398,7 @@ async def generate_chat_response(
                 evt_log.append({"event": EventType.TOOL_START, "data": tool_start_data})
                 yield f"event: {EventType.TOOL_START}\ndata: {json.dumps(tool_start_data)}\n\n"
 
-                result_text, result_html, _, meta = await execute_tool_web(
+                result_text, result_html, _, meta, plotly_spec = await execute_tool_web(
                     block.name,
                     tool_input,
                     state,
@@ -1408,13 +1408,18 @@ async def generate_chat_response(
                 )
 
                 if result_html:
-                    is_chart = block.name == "visualize_data" and "<script" in (result_html or "")
+                    is_chart = block.name == "visualize_data" and plotly_spec is not None
                     result_title = tool_input.get("title", message) if is_chart else message
                     tr_data = {
-                        "html": result_html,
+                        # New chart results render from plotly_spec in the frontend. Do not stream
+                        # the full iframe HTML as well; large srcdoc payloads were the source of
+                        # intermittent blank charts during live streaming.
+                        "html": "" if is_chart else result_html,
                         "type": "chart" if is_chart else "table",
                         "title": result_title,
                     }
+                    if is_chart:
+                        tr_data["plotly_spec"] = plotly_spec
                     evt_log.append({"event": EventType.TOOL_RESULT, "data": tr_data})
                     yield f"event: {EventType.TOOL_RESULT}\ndata: {json.dumps(tr_data)}\n\n"
 

@@ -107,6 +107,14 @@ function asProvenanceData(payload: Record<string, unknown>): ProvenanceData {
       api_calls: typeof llm.api_calls === "number" ? llm.api_calls : undefined,
       input_tokens: typeof llm.input_tokens === "number" ? llm.input_tokens : undefined,
       output_tokens: typeof llm.output_tokens === "number" ? llm.output_tokens : undefined,
+      cache_creation_input_tokens:
+        typeof llm.cache_creation_input_tokens === "number"
+          ? llm.cache_creation_input_tokens
+          : undefined,
+      cache_read_input_tokens:
+        typeof llm.cache_read_input_tokens === "number"
+          ? llm.cache_read_input_tokens
+          : undefined,
       estimated_cost:
         typeof llm.estimated_cost === "number" ? llm.estimated_cost : undefined,
     },
@@ -155,6 +163,7 @@ export function replayConversationEvents(events: unknown[]): ConversationReplay 
         html: stringValue(payload.html),
         title: stringValue(payload.title),
         resultType: resultType === "chart" ? "chart" : "table",
+        plotlySpec: payload.plotly_spec ?? payload.plotlySpec,
       });
     } else if (type === "tool_done") {
       const meta = buildToolMeta(payload, lastSql, lastToolName);

@@ -100,6 +100,7 @@ export async function rerunDashboardCards(
     if (!result.html) continue;
     dashboardStore.updateItem(item.id, {
       html: result.html,
+      render_plotly_spec: result.plotly_spec ?? item.render_plotly_spec,
       plotly_spec: item.plotly_spec ?? result.plotly_spec,
       source_meta: {
         question: item.source_meta?.question || "",

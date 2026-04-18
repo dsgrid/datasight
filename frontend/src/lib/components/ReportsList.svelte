@@ -59,6 +59,7 @@
           html: result.html,
           title: result.title,
           resultType: result.type === "chart" ? "chart" : "table",
+          plotlySpec: result.plotly_spec,
         });
       } else {
         chatStore.pushMessage({
