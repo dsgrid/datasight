@@ -36,6 +36,31 @@ def test_export_basic():
     assert "iframe" in html
 
 
+def test_export_rebuilds_chart_from_plotly_spec():
+    events = [
+        {"event": "user_message", "data": {"text": "Show generation by fuel"}},
+        {
+            "event": "tool_result",
+            "data": {
+                "type": "chart",
+                "html": "",
+                "title": "Generation by Fuel",
+                "plotly_spec": {
+                    "data": [{"type": "bar", "x": ["coal"], "y": [10]}],
+                    "layout": {"title": "Generation by Fuel"},
+                },
+            },
+        },
+    ]
+
+    html = export_session_html(events, title="Spec Chart")
+
+    assert "Spec Chart" in html
+    assert "iframe" in html
+    assert "Plotly.newPlot" in html
+    assert "Generation by Fuel" in html
+
+
 def test_export_excludes_messages():
     events = _make_events()
     # Exclude the first Q/A block (index 0 = first user_message)

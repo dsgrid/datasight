@@ -19,10 +19,15 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (0.80, 4.0),
     "claude-opus-4-7": (15.0, 75.0),
-    # OpenAI (also used via GitHub Models)
+    # OpenAI
     "gpt-4o": (2.50, 10.0),
     "gpt-4o-mini": (0.15, 0.60),
 }
+
+# Providers that bill per token and are covered by ``MODEL_PRICING``. Other
+# providers (GitHub Models quota-based free tier, local Ollama) should not
+# produce a dollar estimate.
+_PROVIDERS_WITH_PRICING = {"anthropic", "openai"}
 
 
 def build_cost_data(
@@ -33,8 +38,16 @@ def build_cost_data(
     *,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    provider: str | None = None,
 ) -> dict[str, Any]:
-    """Build a cost/token summary dict for a single turn."""
+    """Build a cost/token summary dict for a single turn.
+
+    When ``provider`` is supplied and is not in :data:`_PROVIDERS_WITH_PRICING`
+    (e.g. ``"github"`` or ``"ollama"``), ``estimated_cost`` is left as
+    ``None`` even if the model name happens to be in ``MODEL_PRICING`` —
+    GitHub Models reuses OpenAI model names but is billed by quota, not
+    per-token, so pricing them against OpenAI rates is misleading.
+    """
     data: dict[str, Any] = {
         "api_calls": api_calls,
         "input_tokens": input_tokens,
@@ -43,6 +56,8 @@ def build_cost_data(
         "cache_read_input_tokens": cache_read_input_tokens,
         "estimated_cost": None,
     }
+    if provider is not None and provider not in _PROVIDERS_WITH_PRICING:
+        return data
     pricing = MODEL_PRICING.get(model)
     if pricing:
         input_cost = input_tokens * pricing[0] / 1_000_000
@@ -66,6 +81,7 @@ def log_query_cost(
     *,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    provider: str | None = None,
 ) -> None:
     """Emit a one-line loguru summary of token usage and estimated cost."""
     data = build_cost_data(
@@ -75,6 +91,7 @@ def log_query_cost(
         output_tokens,
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=cache_read_input_tokens,
+        provider=provider,
     )
     cost = data["estimated_cost"]
     cost_str = f" est_cost=${cost:.4f}" if cost is not None else ""

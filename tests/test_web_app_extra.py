@@ -148,6 +148,85 @@ def test_chat_full_run_with_real_project(
     assert "event: tool_start" in body or "tool_done" in body
 
 
+def test_chat_visualize_streams_plotly_spec_by_reference(
+    isolated_web_state: None, project_dir: str
+) -> None:
+    """Live chart SSE should avoid streaming a second full iframe payload."""
+    with TestClient(web_app.app) as client:
+        load_response = client.post("/api/projects/load", json={"path": project_dir})
+        assert load_response.json()["success"] is True
+
+        tool_response = LLMResponse(
+            content=[
+                ToolUseBlock(
+                    id="tool_1",
+                    name="visualize_data",
+                    input={
+                        "sql": (
+                            "SELECT customer_state, SUM(quantity) AS total_qty "
+                            "FROM orders GROUP BY customer_state ORDER BY customer_state"
+                        ),
+                        "plotly_spec": {
+                            "data": [
+                                {
+                                    "type": "bar",
+                                    "x": "customer_state",
+                                    "y": "total_qty",
+                                }
+                            ],
+                            "layout": {"title": "Quantity by State"},
+                        },
+                    },
+                ),
+            ],
+            stop_reason="tool_use",
+            usage=Usage(input_tokens=5, output_tokens=10),
+        )
+        final_response = LLMResponse(
+            content=[TextBlock(text="Here is the chart.")],
+            stop_reason="end_turn",
+            usage=Usage(input_tokens=3, output_tokens=5),
+        )
+        web_app._state.llm_client = _typed_stub(
+            StubLLMClient(responses=[tool_response, final_response])
+        )
+
+        chat_response = client.post(
+            "/api/chat",
+            json={"message": "Chart quantity by state", "session_id": "chart_sse"},
+        )
+
+        assert chat_response.status_code == 200
+        body = chat_response.text
+        assert '"type": "chart"' in body
+        assert '"html": ""' in body
+        assert '"plotly_spec_ref"' in body
+        assert '"x": ["CA", "FL", "NY", "TX"]' not in body
+        assert "Plotly.newPlot" not in body
+        assert "<iframe" not in body
+
+        conv = client.get("/api/conversations/chart_sse").json()
+        event_index = next(
+            idx
+            for idx, event in enumerate(conv["events"])
+            if event["event"] == "tool_result" and event["data"]["type"] == "chart"
+        )
+        spec_response = client.get(
+            f"/api/conversations/chart_sse/events/{event_index}/plotly-spec"
+        )
+        assert spec_response.status_code == 200
+        spec = spec_response.json()["plotly_spec"]
+        assert spec["data"][0]["x"] == ["CA", "FL", "NY", "TX"]
+
+        cached_response = client.post(
+            "/api/chat",
+            json={"message": "Chart quantity by state", "session_id": "chart_sse_cached"},
+        )
+        cached_body = cached_response.text
+        assert '"plotly_spec_ref"' in cached_body
+        assert '"x": ["CA", "FL", "NY", "TX"]' not in cached_body
+
+
 def test_chat_cache_hit_on_second_identical_question(
     isolated_web_state: None, project_dir: str
 ) -> None:

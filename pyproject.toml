@@ -43,6 +43,7 @@ dev = [
     "pytest-cov",
     "pytest-asyncio>=0.23,<1",
     "zensical>=0.0.31",
+    "ruff>=0.15,<1",
     "ty>=0.0.26",
     "pre-commit>=4.0,<5",
 ]
@@ -84,6 +85,15 @@ line-length = 99
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/datasight"]
+artifacts = [
+    "src/datasight/web/static/assets/*",
+    "src/datasight/web/static/datasight-icon.svg",
+    "src/datasight/web/templates/index.html",
+]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/datasight/web/static/assets" = "datasight/web/static/assets"
+[tool.hatch.build.targets.sdist]
+artifacts = [
+    "src/datasight/web/static/assets/*",
+    "src/datasight/web/static/datasight-icon.svg",
+    "src/datasight/web/templates/index.html",
+]

@@ -513,6 +513,7 @@ class AppState:
         self._insight_cache: dict[str, Any] = {}
         self._max_history_pairs = 10
         self.max_cost_usd_per_turn: float | None = 1.0
+        self.max_output_tokens: int = 4096
         # Per-session locks to prevent concurrent chat on the same session
         self._session_locks: dict[str, asyncio.Lock] = {}
         # Lock for state-level mutations (project load, settings changes)
@@ -672,12 +673,13 @@ def init_llm_client(state: AppState) -> None:
             provider=settings.llm.provider,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
+            timeout=settings.llm.timeout,
         )
         # Only update state after successful creation
         state.llm_client = client
         state.model = settings.llm.model
         state.llm_provider = settings.llm.provider
-    except LLMError as e:
+    except (LLMError, ConfigurationError) as e:
         logger.warning(f"Failed to initialize LLM client: {e}")
         # Clear client on failure to prevent stale state
         state.llm_client = None
@@ -961,6 +963,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state._max_history_pairs = settings.app.max_history_pairs
     state._response_cache_max = settings.app.response_cache_max
     state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
+    state.max_output_tokens = settings.app.max_output_tokens
 
     log_path = os.environ.get(
         "QUERY_LOG_PATH",
@@ -1087,10 +1090,10 @@ async def execute_tool_web(
     session_id: str = "",
     user_question: str = "",
     turn_id: str = "",
-) -> tuple[str, str | None, str | None, dict[str, Any]]:
+) -> tuple[str, str | None, str | None, dict[str, Any], dict[str, Any] | None]:
     """Execute a tool call via the shared agent module.
 
-    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html, meta).
+    Returns (result_text_for_llm, optional_html_for_ui, optional_chart_html, meta, plotly_spec).
     """
     if state.sql_runner is None:
         raise ConfigurationError("SQL runner not initialized")
@@ -1107,7 +1110,7 @@ async def execute_tool_web(
         user_question=user_question,
         turn_id=turn_id,
     )
-    return result.result_text, result.result_html, None, result.meta
+    return result.result_text, result.result_html, None, result.meta, result.plotly_spec
 
 
 def _build_tool_provenance(
@@ -1185,6 +1188,31 @@ def _build_turn_provenance(
     }
 
 
+def _compact_chart_tool_result_for_stream(
+    data: dict[str, Any],
+    *,
+    session_id: str,
+    event_index: int,
+    can_fetch_spec: bool,
+) -> dict[str, Any]:
+    """Replace large resolved Plotly specs with a fetchable reference for SSE."""
+    if not can_fetch_spec:
+        return data
+    if data.get("type") != "chart":
+        return data
+    if not (data.get("plotly_spec") or data.get("plotlySpec")):
+        return data
+    return {
+        "html": "",
+        "type": "chart",
+        "title": data.get("title"),
+        "plotly_spec_ref": {
+            "session_id": session_id,
+            "event_index": event_index,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Chat Generator
 # ---------------------------------------------------------------------------
@@ -1225,7 +1253,18 @@ async def generate_chat_response(
             logger.info(f"[cache] HIT for question: {message[:60]}")
             for evt in cached["events"]:
                 evt_log.append(evt)
-                yield f"event: {evt['event']}\ndata: {json.dumps(evt['data'])}\n\n"
+                event_data = evt["data"]
+                if evt["event"] == EventType.TOOL_RESULT:
+                    event_index = len(evt_log) - 1
+                    event_data = _compact_chart_tool_result_for_stream(
+                        event_data,
+                        session_id=session_id,
+                        event_index=event_index,
+                        can_fetch_spec=state.conversations is not None,
+                    )
+                    if event_data is not evt["data"]:
+                        await state.save_session(session_id)
+                yield f"event: {evt['event']}\ndata: {json.dumps(event_data)}\n\n"
             for msg in cached["messages"]:
                 messages.append(msg)
             await state.save_session(session_id)
@@ -1263,7 +1302,7 @@ async def generate_chat_response(
         try:
             response = await state.llm_client.create_message(
                 model=state.model,
-                max_tokens=4096,
+                max_tokens=state.max_output_tokens,
                 system=state.system_prompt,
                 tools=WEB_TOOLS,
                 messages=trimmed,
@@ -1313,6 +1352,7 @@ async def generate_chat_response(
                 total_output_tokens,
                 cache_creation_input_tokens=total_cache_creation_input_tokens,
                 cache_read_input_tokens=total_cache_read_input_tokens,
+                provider=state.llm_provider,
             )["estimated_cost"]
             if running_cost is not None and running_cost > state.max_cost_usd_per_turn:
                 logger.warning(
@@ -1331,6 +1371,24 @@ async def generate_chat_response(
                 yield f"event: token\ndata: {json.dumps({'text': budget_text})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 return
+
+        if response.stop_reason == "max_tokens":
+            logger.warning(
+                f"[chat] LLM response truncated at max_tokens={state.max_output_tokens} "
+                f"(model={state.model}, api_calls={api_calls})"
+            )
+            partial = "".join(b.text for b in response.content if isinstance(b, TextBlock))
+            notice = (
+                f"\n\n_Response truncated: model hit the {state.max_output_tokens}-token "
+                "output limit. Try a narrower question or raise MAX_OUTPUT_TOKENS._"
+            )
+            final_text = (partial + notice) if partial else notice.lstrip()
+            messages.append({"role": "assistant", "content": final_text})
+            evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": final_text}})
+            await state.save_session(session_id)
+            yield f"event: token\ndata: {json.dumps({'text': final_text})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+            return
 
         if response.stop_reason == "tool_use":
             messages.append(
@@ -1398,7 +1456,7 @@ async def generate_chat_response(
                 evt_log.append({"event": EventType.TOOL_START, "data": tool_start_data})
                 yield f"event: {EventType.TOOL_START}\ndata: {json.dumps(tool_start_data)}\n\n"
 
-                result_text, result_html, _, meta = await execute_tool_web(
+                result_text, result_html, _, meta, plotly_spec = await execute_tool_web(
                     block.name,
                     tool_input,
                     state,
@@ -1408,15 +1466,30 @@ async def generate_chat_response(
                 )
 
                 if result_html:
-                    is_chart = block.name == "visualize_data" and "<script" in (result_html or "")
+                    is_chart = block.name == "visualize_data" and plotly_spec is not None
                     result_title = tool_input.get("title", message) if is_chart else message
-                    tr_data = {
-                        "html": result_html,
+                    tr_data: dict[str, Any] = {
+                        # New chart results render from plotly_spec in the frontend. Do not stream
+                        # the full iframe HTML as well; large srcdoc payloads were the source of
+                        # intermittent blank charts during live streaming.
+                        "html": "" if is_chart else result_html,
                         "type": "chart" if is_chart else "table",
                         "title": result_title,
                     }
+                    if is_chart:
+                        tr_data["plotly_spec"] = plotly_spec
                     evt_log.append({"event": EventType.TOOL_RESULT, "data": tr_data})
-                    yield f"event: {EventType.TOOL_RESULT}\ndata: {json.dumps(tr_data)}\n\n"
+                    streamed_tr_data = _compact_chart_tool_result_for_stream(
+                        tr_data,
+                        session_id=session_id,
+                        event_index=len(evt_log) - 1,
+                        can_fetch_spec=state.conversations is not None,
+                    )
+                    if streamed_tr_data is not tr_data:
+                        await state.save_session(session_id)
+                    yield (
+                        f"event: {EventType.TOOL_RESULT}\ndata: {json.dumps(streamed_tr_data)}\n\n"
+                    )
 
                 if meta:
                     evt_log.append({"event": EventType.TOOL_DONE, "data": meta})
@@ -1468,6 +1541,7 @@ async def generate_chat_response(
             total_output_tokens,
             cache_creation_input_tokens=total_cache_creation_input_tokens,
             cache_read_input_tokens=total_cache_read_input_tokens,
+            provider=state.llm_provider,
         )
         cost_data = build_cost_data(
             state.model,
@@ -1476,6 +1550,7 @@ async def generate_chat_response(
             total_output_tokens,
             cache_creation_input_tokens=total_cache_creation_input_tokens,
             cache_read_input_tokens=total_cache_read_input_tokens,
+            provider=state.llm_provider,
         )
         if state.query_logger:
             state.query_logger.log_cost(
@@ -1543,6 +1618,7 @@ async def generate_chat_response(
         total_output_tokens,
         cache_creation_input_tokens=total_cache_creation_input_tokens,
         cache_read_input_tokens=total_cache_read_input_tokens,
+        provider=state.llm_provider,
     )
     cost_data = build_cost_data(
         state.model,
@@ -1551,6 +1627,7 @@ async def generate_chat_response(
         total_output_tokens,
         cache_creation_input_tokens=total_cache_creation_input_tokens,
         cache_read_input_tokens=total_cache_read_input_tokens,
+        provider=state.llm_provider,
     )
     if state.query_logger:
         state.query_logger.log_cost(
@@ -2010,6 +2087,7 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state._max_history_pairs = settings.app.max_history_pairs
         state._response_cache_max = settings.app.response_cache_max
         state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
+        state.max_output_tokens = settings.app.max_output_tokens
 
         # Create ephemeral session
         runner, tables_info = create_ephemeral_session(file_paths)
@@ -3394,6 +3472,29 @@ async def get_conversation(session_id: str, state: AppState = Depends(get_state)
         "events": data["events"],
         "title": data.get("title", "Untitled"),
         "dashboard": dashboard,
+    }
+
+
+@app.get("/api/conversations/{session_id}/events/{event_index}/plotly-spec")
+async def get_conversation_plotly_spec(
+    session_id: str,
+    event_index: int,
+    state: AppState = Depends(get_state),
+):
+    """Return the Plotly spec for a persisted chart event."""
+    validate_session_id(session_id)
+    if state.conversations is None:
+        return {"plotly_spec": None}
+    data = state.conversations.get(session_id)
+    events = data.get("events", [])
+    if event_index < 0 or event_index >= len(events):
+        return {"plotly_spec": None}
+    event = events[event_index]
+    if event.get("event") != EventType.TOOL_RESULT:
+        return {"plotly_spec": None}
+    event_data = event.get("data") or {}
+    return {
+        "plotly_spec": event_data.get("plotly_spec") or event_data.get("plotlySpec"),
     }
 
 

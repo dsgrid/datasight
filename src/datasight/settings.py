@@ -43,6 +43,16 @@ def _safe_optional_float(value: str, default: float | None) -> float | None:
         return default
 
 
+def _safe_float(value: str, default: float) -> float:
+    """Parse a float from a string, returning default if empty or invalid."""
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 # All env vars that can be set in a project's .env file.
 # These are restored to their original shell values before loading each project.
 _PROJECT_ENV_VARS = [
@@ -62,6 +72,7 @@ _PROJECT_ENV_VARS = [
     "POSTGRES_SSLMODE",
     # LLM settings
     "LLM_PROVIDER",
+    "LLM_TIMEOUT",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_BASE_URL",
@@ -84,6 +95,7 @@ _PROJECT_ENV_VARS = [
     "QUERY_LOG_PATH",
     "SQL_CACHE_MAX_BYTES",
     "MAX_COST_USD_PER_TURN",
+    "MAX_OUTPUT_TOKENS",
     # Project-specific file paths
     "SCHEMA_DESCRIPTION_PATH",
     "EXAMPLE_QUERIES_PATH",
@@ -149,12 +161,15 @@ class LLMSettings:
     # GitHub Models settings
     github_token: str = ""
     github_models_model: str = "gpt-4o"
-    github_models_base_url: str = "https://models.inference.ai.azure.com"
+    github_models_base_url: str = "https://models.github.ai/inference"
 
     # OpenAI settings
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
+
+    # Per-request HTTP timeout (seconds).
+    timeout: float = 120.0
 
     @property
     def model(self) -> str:
@@ -237,6 +252,7 @@ class AppSettings:
     response_cache_max: int = 100
     sql_cache_max_bytes: int = 1 << 30  # 1 GiB; 0 disables
     max_cost_usd_per_turn: float | None = 1.0  # None disables the per-turn LLM cost budget
+    max_output_tokens: int = 4096  # Output-token budget per LLM call
 
 
 @dataclass
@@ -316,11 +332,12 @@ class Settings:
                 github_token=os.environ.get("GITHUB_TOKEN", ""),
                 github_models_model=os.environ.get("GITHUB_MODELS_MODEL", "gpt-4o"),
                 github_models_base_url=os.environ.get(
-                    "GITHUB_MODELS_BASE_URL", "https://models.inference.ai.azure.com"
+                    "GITHUB_MODELS_BASE_URL", "https://models.github.ai/inference"
                 ),
                 openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
                 openai_model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                 openai_base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                timeout=_safe_float(os.environ.get("LLM_TIMEOUT", ""), 120.0),
             ),
             database=DatabaseSettings(
                 mode=db_mode,
@@ -348,6 +365,7 @@ class Settings:
                 max_cost_usd_per_turn=_safe_optional_float(
                     os.environ.get("MAX_COST_USD_PER_TURN", ""), 1.0
                 ),
+                max_output_tokens=_safe_int(os.environ.get("MAX_OUTPUT_TOKENS", ""), 4096),
             ),
         )
 

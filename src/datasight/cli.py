@@ -129,6 +129,7 @@ async def _run_ask_pipeline(
         provider=settings.llm.provider,
         api_key=settings.llm.api_key,
         base_url=settings.llm.base_url,
+        timeout=settings.llm.timeout,
     )
     sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
@@ -235,6 +236,8 @@ async def _run_ask_pipeline(
         session_id=session_id,
         turn_id=turn_id,
         max_cost_usd=settings.app.max_cost_usd_per_turn,
+        provider=settings.llm.provider,
+        max_tokens=settings.app.max_output_tokens,
     )
 
     # Mirror the web app: emit a turn-level cost summary so `datasight log
@@ -246,6 +249,7 @@ async def _run_ask_pipeline(
         result.total_output_tokens,
         cache_creation_input_tokens=result.total_cache_creation_input_tokens,
         cache_read_input_tokens=result.total_cache_read_input_tokens,
+        provider=settings.llm.provider,
     )
     cost_data = build_cost_data(
         resolved_model,
@@ -254,6 +258,7 @@ async def _run_ask_pipeline(
         result.total_output_tokens,
         cache_creation_input_tokens=result.total_cache_creation_input_tokens,
         cache_read_input_tokens=result.total_cache_read_input_tokens,
+        provider=settings.llm.provider,
     )
     query_logger.log_cost(
         session_id=session_id,
@@ -1085,6 +1090,7 @@ def _build_cli_provenance(
     model: str,
     dialect: str,
     project_dir: str,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     from datasight.cost import build_cost_data
 
@@ -1095,6 +1101,7 @@ def _build_cli_provenance(
         result.total_output_tokens,
         cache_creation_input_tokens=result.total_cache_creation_input_tokens,
         cache_read_input_tokens=result.total_cache_read_input_tokens,
+        provider=provider,
     )
     tools = []
     for tr in result.tool_results:
@@ -1146,6 +1153,7 @@ def _emit_cli_provenance(
     model: str,
     dialect: str,
     project_dir: str,
+    provider: str | None = None,
 ) -> None:
     provenance = _build_cli_provenance(
         question=question,
@@ -1153,6 +1161,7 @@ def _emit_cli_provenance(
         model=model,
         dialect=dialect,
         project_dir=project_dir,
+        provider=provider,
     )
     click.echo(json.dumps(provenance, indent=2), err=True)
 
@@ -1775,6 +1784,7 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
             provider=settings.llm.provider,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
+            timeout=settings.llm.timeout,
         )
 
         if sqlite_source_path is not None:
@@ -2135,6 +2145,7 @@ def verify(project_dir, model, queries_path, verbose):
             provider=settings.llm.provider,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
+            timeout=settings.llm.timeout,
         )
         sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
@@ -2455,6 +2466,7 @@ def ask(
                         model=resolved_model,
                         dialect=sql_dialect,
                         project_dir=project_dir,
+                        provider=settings.llm.provider,
                     )
                 if output_dir or entry.get("output"):
                     written = _write_batch_result_files(
@@ -2496,6 +2508,7 @@ def ask(
             model=resolved_model,
             dialect=sql_dialect,
             project_dir=project_dir,
+            provider=settings.llm.provider,
         )
     if sql_script_path:
         script_text = _build_sql_script(result, question, sql_dialect)

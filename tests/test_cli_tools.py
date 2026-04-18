@@ -2000,6 +2000,10 @@ def test_run_ask_pipeline_logs_cost_entry(monkeypatch, project_dir):
 
     env_path = Path(project_dir) / ".env"
     settings = Settings.from_env(str(env_path))
+    # Pricing is only applied for providers that bill per token. The shared
+    # project fixture uses LLM_PROVIDER=ollama, which is untracked — override
+    # to "anthropic" so the cost estimate exercises the Sonnet pricing table.
+    settings.llm.provider = "anthropic"
     asyncio.run(
         cli_module._run_ask_pipeline(
             question="How many orders are there?",

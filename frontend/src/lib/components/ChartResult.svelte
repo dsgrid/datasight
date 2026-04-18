@@ -1,6 +1,9 @@
 <script lang="ts">
+  import PlotlyChart from "./PlotlyChart.svelte";
+
   interface Props {
     html: string;
+    plotlySpec?: unknown;
     title?: string;
     onPin?: () => void;
     onBookmark?: () => void;
@@ -8,24 +11,11 @@
     onDelete?: () => void;
   }
 
-  let { html, title, onPin, onBookmark, onSaveReport, onDelete }: Props =
+  let { html, plotlySpec, title, onPin, onBookmark, onSaveReport, onDelete }: Props =
     $props();
 
-  let iframeEl = $state<HTMLIFrameElement | null>(null);
   let bookmarked = $state(false);
   let reportSaved = $state(false);
-
-  /** Sync theme into chart iframe via postMessage. */
-  function syncTheme() {
-    if (!iframeEl?.contentWindow) return;
-    const theme =
-      document.documentElement.getAttribute("data-theme") || "light";
-    try {
-      iframeEl.contentWindow.postMessage({ type: "theme-change", theme }, "*");
-    } catch {
-      // cross-origin safety
-    }
-  }
 
   function handleBookmark() {
     onBookmark?.();
@@ -80,13 +70,11 @@
     </div>
   {/if}
 
-  <iframe
-    bind:this={iframeEl}
-    sandbox="allow-scripts allow-same-origin allow-downloads"
-    srcdoc={html}
+  <PlotlyChart
+    {html}
+    {plotlySpec}
     title={title || "Chart"}
-    onload={syncTheme}
-    class="w-full h-[480px] border border-border bg-surface"
-    style="border-radius: var(--radius); box-shadow: var(--shadow);"
-  ></iframe>
+    className="w-full h-[480px] border border-border bg-surface"
+    iframeClassName="w-full h-[480px] border border-border bg-surface"
+  />
 </div>

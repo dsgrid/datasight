@@ -5,6 +5,7 @@ import { queriesStore } from "$lib/stores/queries.svelte";
 import { sessionStore } from "$lib/stores/session.svelte";
 import { settingsStore } from "$lib/stores/settings.svelte";
 import type { ProvenanceData, ToolMeta } from "$lib/stores/chat.svelte";
+import type { PlotlySpecRef } from "$lib/types/plotly";
 
 export type SSEEventType =
   | "tool_start"
@@ -28,6 +29,10 @@ interface ToolResultData {
   type: "chart" | "table";
   html: string;
   title?: string;
+  plotly_spec?: unknown;
+  plotlySpec?: unknown;
+  plotly_spec_ref?: PlotlySpecRef;
+  plotlySpecRef?: PlotlySpecRef;
 }
 
 interface ToolDoneData {
@@ -77,6 +82,36 @@ type SSEData =
   | SqlConfirmData
   | ErrorData;
 
+function isPlotlySpecRef(value: unknown): value is PlotlySpecRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const ref = value as Partial<PlotlySpecRef>;
+  return typeof ref.session_id === "string" && typeof ref.event_index === "number";
+}
+
+export async function loadPlotlySpec(ref: PlotlySpecRef): Promise<unknown> {
+  const resp = await fetch(
+    `/api/conversations/${encodeURIComponent(ref.session_id)}/events/${encodeURIComponent(String(ref.event_index))}/plotly-spec`,
+  );
+  if (!resp.ok) throw new Error(`Plotly spec fetch failed: ${resp.status}`);
+  const data = (await resp.json()) as { plotly_spec?: unknown; plotlySpec?: unknown };
+  return data.plotly_spec ?? data.plotlySpec;
+}
+
+function hydrateToolResultPlotlySpec(messageIndex: number, ref: PlotlySpecRef): void {
+  void loadPlotlySpec(ref)
+    .then((plotlySpec) => {
+      if (!plotlySpec) return;
+      const messages = [...chatStore.messages];
+      const message = messages[messageIndex];
+      if (message?.type !== "tool_result") return;
+      messages[messageIndex] = { ...message, plotlySpec };
+      chatStore.messages = messages;
+    })
+    .catch((error) => {
+      console.error("Failed to load Plotly spec:", error);
+    });
+}
+
 function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
   switch (eventType) {
     case "tool_start": {
@@ -97,12 +132,20 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
 
     case "tool_result": {
       const d = data as ToolResultData;
+      const plotlySpec = d.plotly_spec ?? d.plotlySpec;
+      const plotlySpecRef = d.plotly_spec_ref ?? d.plotlySpecRef;
+      const ref = isPlotlySpecRef(plotlySpecRef) ? plotlySpecRef : undefined;
       chatStore.pushMessage({
         type: "tool_result",
         resultType: d.type,
         html: d.html,
         title: d.title,
+        plotlySpec,
+        plotlySpecRef: ref,
       });
+      if (!plotlySpec && ref) {
+        hydrateToolResultPlotlySpec(chatStore.messages.length - 1, ref);
+      }
       break;
     }
 

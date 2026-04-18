@@ -4,7 +4,7 @@
   import { schemaStore } from "$lib/stores/schema.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import type { ChatEvent } from "$lib/stores/chat.svelte";
-  import { sendMessage } from "$lib/api/chat";
+  import { sendMessage, loadPlotlySpec } from "$lib/api/chat";
   import { summarizeDataset } from "$lib/api/summarize";
   import { addBookmark } from "$lib/api/saved";
   import { addReport } from "$lib/api/saved";
@@ -55,13 +55,22 @@
     event: ChatEvent & { type: "tool_result" },
     toolCtx: { sql: string; tool: string; plotlySpec: unknown; meta?: Record<string, unknown> } | null,
   ) {
+    let plotlySpec = event.plotlySpec;
+    if (!plotlySpec && event.plotlySpecRef) {
+      try {
+        plotlySpec = await loadPlotlySpec(event.plotlySpecRef);
+      } catch (err) {
+        console.error("Failed to load Plotly spec before pinning:", err);
+      }
+    }
     dashboardStore.addItem({
       type: event.resultType === "chart" ? "chart" : "table",
       html: event.html,
       title: event.title || "",
       sql: toolCtx?.sql,
       tool: toolCtx?.tool || (event.resultType === "chart" ? "visualize_data" : "run_sql"),
-      plotly_spec: toolCtx?.plotlySpec,
+      render_plotly_spec: plotlySpec,
+      plotly_spec: toolCtx?.plotlySpec ?? plotlySpec,
       source_meta: {
         question: "",
         resultType: event.resultType,
@@ -206,6 +215,7 @@
       {#if event.resultType === "chart"}
         <ChartResult
           html={event.html}
+          plotlySpec={event.plotlySpec}
           title={event.title}
           onPin={() => pinResult(event, toolCtx)}
           onBookmark={toolCtx

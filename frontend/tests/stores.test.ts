@@ -341,7 +341,12 @@ describe("conversation replay", () => {
       },
       {
         event: "tool_result",
-        data: { type: "chart", html: "<div>chart</div>", title: "Generation" },
+        data: {
+          type: "chart",
+          html: "<div>chart</div>",
+          title: "Generation",
+          plotly_spec: { data: [{ type: "bar", x: ["coal"], y: [10] }] },
+        },
       },
       {
         event: "tool_done",
@@ -392,6 +397,13 @@ describe("conversation replay", () => {
       "suggestions",
     ]);
     const provenance = replay.messages[5];
+    const chartResult = replay.messages[3];
+    expect(chartResult.type).toBe("tool_result");
+    if (chartResult.type === "tool_result") {
+      expect(chartResult.plotlySpec).toEqual({
+        data: [{ type: "bar", x: ["coal"], y: [10] }],
+      });
+    }
     expect(provenance.type).toBe("provenance");
     if (provenance.type === "provenance") {
       expect(provenance.provenance.model).toBe("claude-test");
