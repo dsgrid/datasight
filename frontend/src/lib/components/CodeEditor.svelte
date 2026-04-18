@@ -50,6 +50,7 @@
   let view: EditorView | null = null;
   const langCompartment = new Compartment();
   const lintCompartment = new Compartment();
+  const placeholderCompartment = new Compartment();
 
   const highlightStyle = HighlightStyle.define([
     { tag: t.keyword, color: "var(--teal)", fontWeight: "600" },
@@ -201,7 +202,7 @@
         lintCompartment.of(buildLinter()),
         syntaxHighlighting(highlightStyle),
         theme,
-        placeholder ? placeholderExt(placeholder) : [],
+        placeholderCompartment.of(placeholder ? placeholderExt(placeholder) : []),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const next = update.state.doc.toString();
@@ -239,6 +240,15 @@
         changes: { from: 0, to: view.state.doc.length, insert: value },
       });
     }
+  });
+
+  $effect(() => {
+    if (!view) return;
+    view.dispatch({
+      effects: placeholderCompartment.reconfigure(
+        placeholder ? placeholderExt(placeholder) : [],
+      ),
+    });
   });
 
   $effect(() => {

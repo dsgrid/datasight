@@ -15,6 +15,11 @@
     return result;
   });
 
+  const placeholderText = $derived.by(() => {
+    const first = schemaStore.schemaData[0]?.name ?? "my_table";
+    return `-- e.g. SELECT * FROM ${first} LIMIT 10`;
+  });
+
   let insertRequest = $state<{ text: string; nonce: number } | null>(null);
   let formatting = $state(false);
 
@@ -155,7 +160,7 @@
       onRun={runSql}
       schema={editorSchema}
       dialect={sessionStore.sqlDialect}
-      placeholder={"-- e.g. SELECT * FROM generation_fuel LIMIT 10"}
+      placeholder={placeholderText}
       {insertRequest}
       lintSql={validateSql}
     />
