@@ -11,11 +11,13 @@ This guide walks you through creating a datasight project for your database.
 ## Install datasight
 
 ```bash
-pip install git+https://github.com/dsgrid/datasight.git
+uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
 ```
 
-All database backends (DuckDB, SQLite, PostgreSQL) and LLM providers
-(Anthropic, GitHub Models, Ollama) are included.
+Don't have [uv](https://docs.astral.sh/uv/) yet? See
+[Install datasight](../end-user/how-to/install.md). All database
+backends (DuckDB, SQLite, PostgreSQL) and LLM providers (Anthropic,
+GitHub Models, Ollama) are included.
 
 ## Create a project
 

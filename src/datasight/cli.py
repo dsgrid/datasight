@@ -1077,7 +1077,7 @@ def _emit_ask_result(
                 except ImportError:
                     click.echo(
                         "Error: PNG export requires kaleido. "
-                        "Install with: pip install 'datasight[export]'",
+                        'Reinstall with: uv tool install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"',
                         err=True,
                     )
                     sys.exit(1)
@@ -1232,7 +1232,7 @@ def _write_batch_result_files(
                 except ImportError:
                     click.echo(
                         "Error: PNG export requires kaleido. "
-                        "Install with: pip install 'datasight[export]'",
+                        'Reinstall with: uv tool install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"',
                         err=True,
                     )
                     sys.exit(1)

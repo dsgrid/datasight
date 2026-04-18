@@ -18,7 +18,7 @@ and **Ollama** (local) as LLM backends.
 ## Quick start
 
 ```bash
-pip install git+https://github.com/dsgrid/datasight.git
+uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
 
 # Create a new project
 mkdir my-project && cd my-project
@@ -78,9 +78,8 @@ datasight run / datasight ask / datasight profile / datasight quality
 ## Documentation
 
 ```bash
-python -m venv .venv
+uv sync --extra dev
 . .venv/bin/activate
-pip install -e ".[dev]"
 zensical serve
 zensical build
 python scripts/generate_cli_reference.py

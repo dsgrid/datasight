@@ -55,13 +55,12 @@ mkdocs.yml          # Zensical config
 ## Development commands
 
 ```bash
-# Primary workflow: stdlib venv + editable install
-python -m venv .venv
+# Primary workflow: uv creates .venv and installs project + dev extras
+uv sync --extra dev
 . .venv/bin/activate
-pip install -e ".[dev]"
 
 # Run pre-commit hooks (ruff, ruff-format, ty, docs CLI reference drift)
-pre-commit run --all-files
+prek run --all-files
 
 # Build docs
 zensical serve      # dev server at localhost:8000

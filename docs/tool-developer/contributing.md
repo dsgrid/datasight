@@ -2,13 +2,20 @@
 
 ## Development setup
 
+The project uses [uv](https://docs.astral.sh/uv/) to manage the Python
+environment and pin dependencies via `uv.lock`. Install uv first (see the
+[uv install guide](https://docs.astral.sh/uv/getting-started/installation/)),
+then:
+
 ```bash
 git clone https://github.com/dsgrid/datasight.git
 cd datasight
-python -m venv .venv
+uv sync --extra dev
 . .venv/bin/activate
-pip install -e ".[dev]"
 ```
+
+`uv sync` creates `.venv/` automatically and installs the project plus the
+`dev` extras pinned in `uv.lock`.
 
 ## Project structure
 
@@ -67,11 +74,13 @@ The FastAPI app serves generated files from `src/datasight/web/static/` and
 
 ## Pre-commit hooks
 
-The project uses [pre-commit](https://pre-commit.com/) to run checks
-automatically on every commit. Install the hooks after cloning:
+The project uses [prek](https://github.com/j178/prek) — a drop-in replacement
+for [pre-commit](https://pre-commit.com/) — to run checks automatically on
+every commit. It reads the same `.pre-commit-config.yaml`. Install the hooks
+after cloning:
 
 ```bash
-pre-commit install
+prek install
 ```
 
 Hooks run ruff (lint + format), ruff-format, ty (type checking), and a docs CLI
@@ -81,7 +90,7 @@ format) or show you what to fix. Stage the fixes and commit again.
 To run all hooks manually against every file:
 
 ```bash
-pre-commit run --all-files
+prek run --all-files
 ```
 
 ## Code style
@@ -165,9 +174,8 @@ without a local model.
 Docs use Zensical.
 
 ```bash
-python -m venv .venv
+uv sync --extra dev
 . .venv/bin/activate
-pip install -e ".[dev]"
 zensical serve
 zensical build
 ```
