@@ -66,6 +66,56 @@ def detect_file_type(path: str) -> str | None:
     return None
 
 
+def scan_directory_for_data_files(
+    directory: str | Path,
+    *,
+    max_files: int = 100,
+) -> tuple[list[dict], bool]:
+    """Find CSV and Parquet files at the top level of ``directory``.
+
+    Hidden files (dot-prefixed) and unreadable entries are skipped. Only
+    single-file entries are returned; nested directories are ignored so the
+    regular ExploreCard can still be used for hive-partitioned layouts.
+
+    Returns
+    -------
+    Tuple of ``(files, truncated)`` where each file dict has ``path``, ``name``,
+    ``type`` (``"csv"`` or ``"parquet"``), and ``size_bytes``. ``truncated`` is
+    ``True`` when more than ``max_files`` matches were present.
+    """
+    root = Path(directory)
+    if not root.is_dir():
+        return [], False
+
+    matches: list[Path] = []
+    for entry in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if entry.name.startswith("."):
+            continue
+        if not entry.is_file():
+            continue
+        suffix = entry.suffix.lower()
+        if suffix not in (".csv", ".parquet"):
+            continue
+        matches.append(entry)
+
+    truncated = len(matches) > max_files
+    files: list[dict] = []
+    for entry in matches[:max_files]:
+        try:
+            size = entry.stat().st_size
+        except OSError:
+            continue
+        files.append(
+            {
+                "path": str(entry.resolve()),
+                "name": entry.name,
+                "type": "csv" if entry.suffix.lower() == ".csv" else "parquet",
+                "size_bytes": size,
+            }
+        )
+    return files, truncated
+
+
 def sanitize_table_name(name: str) -> str:
     """Convert a filename to a valid SQL table name.
 

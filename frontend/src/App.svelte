@@ -162,6 +162,14 @@
     sessionStore.projectLoaded = true;
     sessionStore.isEphemeralSession = true;
 
+    // Fresh session = fresh editor/chat state. Without this, SQL from a
+    // previous session (persisted in localStorage) survives into a new
+    // ephemeral session whose schema no longer matches.
+    chatStore.clear();
+    queriesStore.clear();
+    sqlEditorStore.clearAll();
+    sessionStore.sessionId = crypto.randomUUID();
+
     await Promise.allSettled([loadSchema(), loadRecipes()]);
 
     // Run pending starter

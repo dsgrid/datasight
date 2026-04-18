@@ -8,8 +8,49 @@ from datasight.explore import (
     detect_file_type,
     sanitize_table_name,
     save_ephemeral_as_project,
+    scan_directory_for_data_files,
 )
 from datasight.exceptions import ConfigurationError
+
+
+class TestScanDirectoryForDataFiles:
+    """Tests for scan_directory_for_data_files."""
+
+    def test_finds_csv_and_parquet(self, tmp_path):
+        import duckdb
+
+        (tmp_path / "alpha.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        parquet = tmp_path / "beta.parquet"
+        conn = duckdb.connect(":memory:")
+        conn.execute("CREATE TABLE t AS SELECT 1 AS a")
+        conn.execute(f"COPY t TO '{parquet}' (FORMAT PARQUET)")
+        conn.close()
+        (tmp_path / "readme.md").write_text("ignore me", encoding="utf-8")
+        (tmp_path / ".hidden.csv").write_text("skip", encoding="utf-8")
+        nested = tmp_path / "nested"
+        nested.mkdir()
+        (nested / "inner.csv").write_text("a\n1\n", encoding="utf-8")
+
+        files, truncated = scan_directory_for_data_files(tmp_path)
+
+        names = [f["name"] for f in files]
+        assert names == ["alpha.csv", "beta.parquet"]
+        types = {f["name"]: f["type"] for f in files}
+        assert types == {"alpha.csv": "csv", "beta.parquet": "parquet"}
+        assert all(f["size_bytes"] > 0 for f in files)
+        assert truncated is False
+
+    def test_missing_directory_returns_empty(self, tmp_path):
+        files, truncated = scan_directory_for_data_files(tmp_path / "does-not-exist")
+        assert files == []
+        assert truncated is False
+
+    def test_respects_max_files(self, tmp_path):
+        for i in range(5):
+            (tmp_path / f"f{i}.csv").write_text("a\n1\n", encoding="utf-8")
+        files, truncated = scan_directory_for_data_files(tmp_path, max_files=3)
+        assert len(files) == 3
+        assert truncated is True
 
 
 class TestDetectFileType:

@@ -73,6 +73,7 @@ from datasight.explore import (
     add_files_to_connection,
     create_ephemeral_session,
     save_ephemeral_as_project,
+    scan_directory_for_data_files,
 )
 from datasight.generate import (
     build_generation_context,
@@ -2459,6 +2460,25 @@ async def _write_measure_overrides_scaffold(
     measure_data = await build_measure_overview(schema_info, sql_runner.run_sql, overrides=None)
     path.write_text(format_measure_overrides_yaml(measure_data), encoding="utf-8")
     return path.name
+
+
+@app.get("/api/explore/scan-cwd")
+async def explore_scan_cwd(state: AppState = Depends(get_state)):
+    """Scan the server's working directory for CSV/Parquet files.
+
+    Returns an empty list once a project or ephemeral session is loaded so
+    the landing page only surfaces discovered files on a fresh launch.
+    """
+    if state.project_loaded:
+        return {"directory": str(Path.cwd()), "files": [], "truncated": False}
+
+    directory = Path.cwd()
+    files, truncated = scan_directory_for_data_files(directory)
+    return {
+        "directory": str(directory),
+        "files": files,
+        "truncated": truncated,
+    }
 
 
 @app.get("/api/explore/status")

@@ -763,6 +763,44 @@ def test_save_explore_project_seeds_measure_overrides(monkeypatch, tmp_path):
     assert captured["schema_info"][0]["name"] == "generation_hourly"
 
 
+def test_explore_scan_cwd_lists_data_files(monkeypatch, tmp_path):
+    """Scan endpoint returns CSV/Parquet files discovered in CWD."""
+    (tmp_path / "generation.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (tmp_path / "plants.parquet").write_bytes(b"\x00")  # fake payload; only metadata is read
+    (tmp_path / "notes.txt").write_text("ignore", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    web_app._state.project_loaded = False
+
+    with TestClient(web_app.app) as client:
+        response = client.get("/api/explore/scan-cwd")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["directory"] == str(tmp_path.resolve())
+    assert body["truncated"] is False
+    names = sorted(f["name"] for f in body["files"])
+    assert names == ["generation.csv", "plants.parquet"]
+
+
+def test_explore_scan_cwd_skips_when_project_loaded(monkeypatch, tmp_path):
+    """Once a project is loaded, the scan returns an empty list."""
+    (tmp_path / "generation.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    original_project_loaded = web_app._state.project_loaded
+    web_app._state.project_loaded = True
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/explore/scan-cwd")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["files"] == []
+
+
 def test_quality_overview_returns_profile(monkeypatch):
     """Quality overview should return deterministic quality data when loaded."""
 
