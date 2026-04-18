@@ -36,6 +36,7 @@
   let chartEl = $state<HTMLDivElement | null>(null);
   let iframeEl = $state<HTMLIFrameElement | null>(null);
   let renderError = $state("");
+  let isRendering = $state(false);
 
   let spec = $derived(asPlotlySpec(plotlySpec));
 
@@ -75,6 +76,18 @@
     };
   }
 
+  function animationFrame(): Promise<void> {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  async function waitForLayout(el: HTMLElement): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await animationFrame();
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return;
+    }
+  }
+
   function syncThemeToIframe() {
     if (!iframeEl?.contentWindow) return;
     try {
@@ -111,14 +124,20 @@
     const plotEl = chart as PlotlyElement;
 
     let cancelled = false;
+    let hasRendered = false;
     let resizeObserver: ResizeObserver | null = null;
     let themeObserver: MutationObserver | null = null;
 
     async function render() {
+      const chartNode = chart;
+      if (!chartNode) return;
       await tick();
+      await waitForLayout(chartNode);
       if (cancelled) return;
+      isRendering = true;
       try {
         const Plotly = (await import("plotly.js-dist-min")).default;
+        if (cancelled) return;
         const cloned = cloneSpec(renderSpec);
         const layout = themedLayout(cloned.layout || {}, currentTheme());
         plotEl.removeAllListeners?.("plotly_click");
@@ -129,18 +148,24 @@
           displaylogo: false,
         });
         if (cancelled) return;
+        await animationFrame();
+        if (!cancelled) Plotly.Plots?.resize(plotEl);
         plotEl.on?.("plotly_click", (evt: { points?: PlotlyPoint[] }) => {
           const point = evt?.points?.[0];
           if (point) void onPointClick?.(point);
         });
+        hasRendered = true;
         renderError = "";
       } catch (error) {
         renderError = error instanceof Error ? error.message : String(error);
+      } finally {
+        if (!cancelled) isRendering = false;
       }
     }
 
     render();
     resizeObserver = new ResizeObserver(() => {
+      if (!hasRendered) return;
       void import("plotly.js-dist-min").then(({ default: Plotly }) => {
         if (!cancelled) Plotly.Plots?.resize(plotEl);
       });
@@ -171,6 +196,11 @@
 {#if spec}
   <div class="relative {className}">
     <div bind:this={chartEl} class="w-full h-full min-h-[300px]"></div>
+    {#if isRendering}
+      <div class="absolute inset-0 flex items-center justify-center bg-surface/80 p-4 text-center">
+        <div class="text-xs text-text-secondary">Rendering chart...</div>
+      </div>
+    {/if}
     {#if renderError}
       <div class="absolute inset-0 flex items-center justify-center bg-surface/95 p-4 text-center">
         <div>
@@ -189,4 +219,8 @@
     onload={syncThemeToIframe}
     class={iframeClassName}
   ></iframe>
+{:else}
+  <div class="flex items-center justify-center {className}">
+    <div class="text-xs text-text-secondary">Loading chart...</div>
+  </div>
 {/if}

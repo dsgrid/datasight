@@ -30,6 +30,13 @@ interface ToolResultData {
   title?: string;
   plotly_spec?: unknown;
   plotlySpec?: unknown;
+  plotly_spec_ref?: PlotlySpecRef;
+  plotlySpecRef?: PlotlySpecRef;
+}
+
+interface PlotlySpecRef {
+  session_id: string;
+  event_index: number;
 }
 
 interface ToolDoneData {
@@ -79,6 +86,36 @@ type SSEData =
   | SqlConfirmData
   | ErrorData;
 
+function isPlotlySpecRef(value: unknown): value is PlotlySpecRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const ref = value as Partial<PlotlySpecRef>;
+  return typeof ref.session_id === "string" && typeof ref.event_index === "number";
+}
+
+async function loadPlotlySpec(ref: PlotlySpecRef): Promise<unknown> {
+  const resp = await fetch(
+    `/api/conversations/${encodeURIComponent(ref.session_id)}/events/${encodeURIComponent(String(ref.event_index))}/plotly-spec`,
+  );
+  if (!resp.ok) throw new Error(`Plotly spec fetch failed: ${resp.status}`);
+  const data = (await resp.json()) as { plotly_spec?: unknown; plotlySpec?: unknown };
+  return data.plotly_spec ?? data.plotlySpec;
+}
+
+function hydrateToolResultPlotlySpec(messageIndex: number, ref: PlotlySpecRef): void {
+  void loadPlotlySpec(ref)
+    .then((plotlySpec) => {
+      if (!plotlySpec) return;
+      const messages = [...chatStore.messages];
+      const message = messages[messageIndex];
+      if (message?.type !== "tool_result") return;
+      messages[messageIndex] = { ...message, plotlySpec };
+      chatStore.messages = messages;
+    })
+    .catch((error) => {
+      console.error("Failed to load Plotly spec:", error);
+    });
+}
+
 function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
   switch (eventType) {
     case "tool_start": {
@@ -99,13 +136,18 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
 
     case "tool_result": {
       const d = data as ToolResultData;
+      const plotlySpec = d.plotly_spec ?? d.plotlySpec;
+      const plotlySpecRef = d.plotly_spec_ref ?? d.plotlySpecRef;
       chatStore.pushMessage({
         type: "tool_result",
         resultType: d.type,
         html: d.html,
         title: d.title,
-        plotlySpec: d.plotly_spec ?? d.plotlySpec,
+        plotlySpec,
       });
+      if (!plotlySpec && isPlotlySpecRef(plotlySpecRef)) {
+        hydrateToolResultPlotlySpec(chatStore.messages.length - 1, plotlySpecRef);
+      }
       break;
     }
 

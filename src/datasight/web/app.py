@@ -1185,6 +1185,31 @@ def _build_turn_provenance(
     }
 
 
+def _compact_chart_tool_result_for_stream(
+    data: dict[str, Any],
+    *,
+    session_id: str,
+    event_index: int,
+    can_fetch_spec: bool,
+) -> dict[str, Any]:
+    """Replace large resolved Plotly specs with a fetchable reference for SSE."""
+    if not can_fetch_spec:
+        return data
+    if data.get("type") != "chart":
+        return data
+    if not (data.get("plotly_spec") or data.get("plotlySpec")):
+        return data
+    return {
+        "html": "",
+        "type": "chart",
+        "title": data.get("title"),
+        "plotly_spec_ref": {
+            "session_id": session_id,
+            "event_index": event_index,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Chat Generator
 # ---------------------------------------------------------------------------
@@ -1225,7 +1250,18 @@ async def generate_chat_response(
             logger.info(f"[cache] HIT for question: {message[:60]}")
             for evt in cached["events"]:
                 evt_log.append(evt)
-                yield f"event: {evt['event']}\ndata: {json.dumps(evt['data'])}\n\n"
+                event_data = evt["data"]
+                if evt["event"] == EventType.TOOL_RESULT:
+                    event_index = len(evt_log) - 1
+                    event_data = _compact_chart_tool_result_for_stream(
+                        event_data,
+                        session_id=session_id,
+                        event_index=event_index,
+                        can_fetch_spec=state.conversations is not None,
+                    )
+                    if event_data is not evt["data"]:
+                        await state.save_session(session_id)
+                yield f"event: {evt['event']}\ndata: {json.dumps(event_data)}\n\n"
             for msg in cached["messages"]:
                 messages.append(msg)
             await state.save_session(session_id)
@@ -1410,7 +1446,7 @@ async def generate_chat_response(
                 if result_html:
                     is_chart = block.name == "visualize_data" and plotly_spec is not None
                     result_title = tool_input.get("title", message) if is_chart else message
-                    tr_data = {
+                    tr_data: dict[str, Any] = {
                         # New chart results render from plotly_spec in the frontend. Do not stream
                         # the full iframe HTML as well; large srcdoc payloads were the source of
                         # intermittent blank charts during live streaming.
@@ -1421,7 +1457,17 @@ async def generate_chat_response(
                     if is_chart:
                         tr_data["plotly_spec"] = plotly_spec
                     evt_log.append({"event": EventType.TOOL_RESULT, "data": tr_data})
-                    yield f"event: {EventType.TOOL_RESULT}\ndata: {json.dumps(tr_data)}\n\n"
+                    streamed_tr_data = _compact_chart_tool_result_for_stream(
+                        tr_data,
+                        session_id=session_id,
+                        event_index=len(evt_log) - 1,
+                        can_fetch_spec=state.conversations is not None,
+                    )
+                    if streamed_tr_data is not tr_data:
+                        await state.save_session(session_id)
+                    yield (
+                        f"event: {EventType.TOOL_RESULT}\ndata: {json.dumps(streamed_tr_data)}\n\n"
+                    )
 
                 if meta:
                     evt_log.append({"event": EventType.TOOL_DONE, "data": meta})
@@ -3399,6 +3445,29 @@ async def get_conversation(session_id: str, state: AppState = Depends(get_state)
         "events": data["events"],
         "title": data.get("title", "Untitled"),
         "dashboard": dashboard,
+    }
+
+
+@app.get("/api/conversations/{session_id}/events/{event_index}/plotly-spec")
+async def get_conversation_plotly_spec(
+    session_id: str,
+    event_index: int,
+    state: AppState = Depends(get_state),
+):
+    """Return the Plotly spec for a persisted chart event."""
+    validate_session_id(session_id)
+    if state.conversations is None:
+        return {"plotly_spec": None}
+    data = state.conversations.get(session_id)
+    events = data.get("events", [])
+    if event_index < 0 or event_index >= len(events):
+        return {"plotly_spec": None}
+    event = events[event_index]
+    if event.get("event") != EventType.TOOL_RESULT:
+        return {"plotly_spec": None}
+    event_data = event.get("data") or {}
+    return {
+        "plotly_spec": event_data.get("plotly_spec") or event_data.get("plotlySpec"),
     }
 
 
