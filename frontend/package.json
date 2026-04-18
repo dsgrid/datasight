@@ -12,6 +12,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@codemirror/lang-sql": "^6.10.0",
+    "codemirror": "^6.0.2",
     "dompurify": "^3.2.4",
     "highlight.js": "^11.11.1",
     "marked": "^15.0.6",

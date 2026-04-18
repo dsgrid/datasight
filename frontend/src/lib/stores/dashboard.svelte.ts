@@ -1,7 +1,7 @@
 /** Dashboard state — pinned items, layout, fullscreen. */
 
 export type DashboardItemType = "chart" | "table" | "note" | "section";
-export type ViewMode = "chat" | "dashboard";
+export type ViewMode = "chat" | "dashboard" | "sql";
 
 export type DashboardFilterScope =
   | { type: "all" }

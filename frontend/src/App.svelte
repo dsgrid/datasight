@@ -7,6 +7,7 @@
   import Toast from "$lib/components/Toast.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import DashboardView from "$lib/components/DashboardView.svelte";
+  import SqlView from "$lib/components/SqlView.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import MeasureEditorModal from "$lib/components/MeasureEditorModal.svelte";
   import SaveProjectModal from "$lib/components/SaveProjectModal.svelte";
@@ -190,6 +191,9 @@
         sessionStore.currentProjectPath = status.path;
         sessionStore.isEphemeralSession = status.is_ephemeral;
         sessionStore.hasTimeSeries = Boolean(status.has_time_series);
+        if (status.sql_dialect) {
+          sessionStore.sqlDialect = status.sql_dialect;
+        }
         if (status.tables) {
           sessionStore.ephemeralTablesInfo = status.tables;
         }
@@ -261,6 +265,10 @@
       e.preventDefault();
       dashboardStore.currentView =
         dashboardStore.currentView === "chat" ? "dashboard" : "chat";
+    } else if (e.key === "s" || e.key === "S") {
+      e.preventDefault();
+      dashboardStore.currentView =
+        dashboardStore.currentView === "sql" ? "chat" : "sql";
     } else if (
       dashboardStore.currentView === "dashboard" &&
       ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
@@ -341,6 +349,8 @@
           }}
         />
       </div>
+    {:else if dashboardStore.currentView === "sql"}
+      <SqlView />
     {:else}
       <DashboardView />
     {/if}

@@ -4,6 +4,7 @@
   import { addBookmark } from "$lib/api/saved";
   import { toastStore } from "$lib/stores/toast.svelte";
   import { formatCost, formatDuration } from "$lib/utils/format";
+  import { highlightSql } from "$lib/utils/markdown";
 
   interface Props {
     open: boolean;
@@ -84,7 +85,7 @@
             class="query-card-sql {expandedIdx === idx ? 'expanded' : ''}"
             onclick={() => (expandedIdx = expandedIdx === idx ? null : idx)}
           >
-            <pre>{query.formatted_sql || query.sql}</pre>
+            <pre class="hljs">{@html highlightSql(query.formatted_sql || query.sql)}</pre>
           </button>
 
           <!-- Actions -->

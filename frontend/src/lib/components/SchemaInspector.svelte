@@ -1,5 +1,7 @@
 <script lang="ts">
   import { schemaStore } from "$lib/stores/schema.svelte";
+  import { dashboardStore } from "$lib/stores/dashboard.svelte";
+  import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
   import { sendMessage } from "$lib/api/chat";
   import { loadPreview, loadColumnStats } from "$lib/api/schema";
   import { getVisibleSchemaEntries } from "$lib/utils/search";
@@ -75,6 +77,10 @@
     sendMessage(
       `What values are in the ${column.name} column of ${tableName}?`,
     );
+  }
+
+  function insertIntoEditor(text: string) {
+    sqlEditorStore.pendingInsert = text;
   }
 </script>
 
@@ -156,6 +162,20 @@
               >
                 Ask
               </button>
+              {#if dashboardStore.currentView === "sql"}
+                <button
+                  class="cursor-pointer transition-all duration-150
+                    hover:text-teal hover:border-teal"
+                  style="border: 1px solid var(--border);
+                         background: color-mix(in srgb, var(--surface) 82%, var(--bg));
+                         border-radius: 999px; padding: 2px 8px; font-family: inherit;
+                         font-size: 0.67rem; color: var(--text-secondary);"
+                  onclick={() => insertIntoEditor(table.name)}
+                  title="Insert table name at cursor in SQL editor"
+                >
+                  Insert
+                </button>
+              {/if}
             </div>
 
             <!-- Preview -->
@@ -217,6 +237,21 @@
                   >
                     ask
                   </span>
+                  {#if dashboardStore.currentView === "sql"}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <span
+                      class="text-teal opacity-0 group-hover:opacity-100
+                        transition-opacity cursor-pointer"
+                      style="font-size: 0.67rem;"
+                      onclick={(e: MouseEvent) => {
+                        e.stopPropagation();
+                        insertIntoEditor(col.name);
+                      }}
+                    >
+                      insert
+                    </span>
+                  {/if}
                 </button>
 
                 <!-- Column stats -->

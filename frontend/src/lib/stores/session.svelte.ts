@@ -18,6 +18,7 @@ function createSessionStore() {
   let explorePaths = $state<string[]>([]);
   let ephemeralTablesInfo = $state<EphemeralTableInfo[]>([]);
   let hasTimeSeries = $state(false);
+  let sqlDialect = $state("duckdb");
 
   return {
     get sessionId() {
@@ -63,6 +64,12 @@ function createSessionStore() {
     set hasTimeSeries(v: boolean) {
       hasTimeSeries = v;
     },
+    get sqlDialect() {
+      return sqlDialect;
+    },
+    set sqlDialect(v: string) {
+      sqlDialect = v;
+    },
 
     /** Reset session for a new project or explore. */
     reset() {
@@ -74,6 +81,7 @@ function createSessionStore() {
       explorePaths = [];
       ephemeralTablesInfo = [];
       hasTimeSeries = false;
+      sqlDialect = "duckdb";
     },
   };
 }

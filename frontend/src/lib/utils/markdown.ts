@@ -45,3 +45,11 @@ export function renderMarkdown(text: string): string {
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html);
 }
+
+/**
+ * Highlight a SQL string and return sanitized HTML with hljs token spans.
+ */
+export function highlightSql(sqlText: string): string {
+  const highlighted = hljs.highlight(sqlText, { language: "sql" }).value;
+  return DOMPurify.sanitize(highlighted);
+}

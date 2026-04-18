@@ -13,6 +13,7 @@ export interface ProjectStatus {
   is_ephemeral: boolean;
   tables?: { name: string; source: string; row_count: number }[];
   has_time_series?: boolean;
+  sql_dialect?: string;
 }
 
 export interface ExploreResult {

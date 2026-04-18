@@ -18,6 +18,8 @@
     { key: "?", desc: "Show shortcuts" },
     { key: "N", desc: "New conversation" },
     { key: "D", desc: "Toggle chat / dashboard" },
+    { key: "S", desc: "Toggle chat / SQL editor" },
+    { key: `${mod}+Enter`, desc: "Run SQL (in editor)" },
     { key: "Escape", desc: "Exit fullscreen / close modal" },
     { key: "↑ ↓ ← →", desc: "Navigate dashboard cards" },
     { key: "Enter", desc: "Fullscreen selected card" },
