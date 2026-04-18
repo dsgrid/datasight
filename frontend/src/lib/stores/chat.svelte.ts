@@ -1,5 +1,7 @@
 /** Chat messages and streaming state. */
 
+import type { PlotlySpecRef } from "$lib/types/plotly";
+
 export type MessageRole = "user" | "assistant";
 
 export interface ToolMeta {
@@ -71,6 +73,7 @@ export type ChatEvent =
       html: string;
       title?: string;
       plotlySpec?: unknown;
+      plotlySpecRef?: PlotlySpecRef;
     }
   | { type: "tool_done"; meta: ToolMeta }
   | { type: "provenance"; provenance: ProvenanceData }

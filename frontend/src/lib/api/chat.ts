@@ -88,7 +88,7 @@ function isPlotlySpecRef(value: unknown): value is PlotlySpecRef {
   return typeof ref.session_id === "string" && typeof ref.event_index === "number";
 }
 
-async function loadPlotlySpec(ref: PlotlySpecRef): Promise<unknown> {
+export async function loadPlotlySpec(ref: PlotlySpecRef): Promise<unknown> {
   const resp = await fetch(
     `/api/conversations/${encodeURIComponent(ref.session_id)}/events/${encodeURIComponent(String(ref.event_index))}/plotly-spec`,
   );
@@ -134,15 +134,17 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
       const d = data as ToolResultData;
       const plotlySpec = d.plotly_spec ?? d.plotlySpec;
       const plotlySpecRef = d.plotly_spec_ref ?? d.plotlySpecRef;
+      const ref = isPlotlySpecRef(plotlySpecRef) ? plotlySpecRef : undefined;
       chatStore.pushMessage({
         type: "tool_result",
         resultType: d.type,
         html: d.html,
         title: d.title,
         plotlySpec,
+        plotlySpecRef: ref,
       });
-      if (!plotlySpec && isPlotlySpecRef(plotlySpecRef)) {
-        hydrateToolResultPlotlySpec(chatStore.messages.length - 1, plotlySpecRef);
+      if (!plotlySpec && ref) {
+        hydrateToolResultPlotlySpec(chatStore.messages.length - 1, ref);
       }
       break;
     }
