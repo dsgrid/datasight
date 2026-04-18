@@ -446,7 +446,7 @@ def test_add_files_to_real_project(
         client.post("/api/projects/load", json={"path": project_dir})
         resp = client.post("/api/add-files", json={"paths": [str(csv_path)]})
     body = resp.json()
-    assert body["success"] is True, f"add-files failed: {body}"
+    assert body["success"] is True
     assert any(t["name"] == "extra" for t in body["schema_info"])
 
 
