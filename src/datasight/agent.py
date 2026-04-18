@@ -751,6 +751,11 @@ class AgentResult:
     total_cache_creation_input_tokens: int = 0
     total_cache_read_input_tokens: int = 0
     api_calls: int = 0
+    retries_performed: int = 0
+    truncated: bool = False
+
+
+DEFAULT_MAX_TOKENS: int = 4096
 
 
 async def run_agent_loop(
@@ -770,6 +775,8 @@ async def run_agent_loop(
     tools: list[dict[str, Any]] | None = None,
     max_iterations: int = 15,
     max_cost_usd: float | None = 1.0,
+    provider: str = "anthropic",
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> AgentResult:
     """Run the LLM agent loop to completion.
 
@@ -805,8 +812,14 @@ async def run_agent_loop(
         Maximum number of LLM calls.
     max_cost_usd:
         Maximum estimated LLM cost (USD) before the loop aborts. Set to
-        ``None`` to disable the budget check. Only applied for models with
-        pricing in ``cost.MODEL_PRICING``.
+        ``None`` to disable the budget check. Only applied for providers
+        with pricing in ``cost.MODEL_PRICING``.
+    provider:
+        Provider name (``"anthropic"``, ``"openai"``, ``"github"``,
+        ``"ollama"``). Used to decide whether cost estimation applies —
+        GitHub Models has no per-token cost.
+    max_tokens:
+        Output-token budget per LLM call. Defaults to ``DEFAULT_MAX_TOKENS``.
 
     Returns
     -------
@@ -825,11 +838,12 @@ async def run_agent_loop(
     total_cache_creation_input_tokens = 0
     total_cache_read_input_tokens = 0
     api_calls = 0
+    retries_performed = 0
 
     for _ in range(max_iterations):
         response = await llm_client.create_message(
             model=model,
-            max_tokens=4096,
+            max_tokens=max_tokens,
             system=system_prompt,
             tools=tools,
             messages=messages,
@@ -839,6 +853,7 @@ async def run_agent_loop(
         total_output_tokens += response.usage.output_tokens
         total_cache_creation_input_tokens += response.usage.cache_creation_input_tokens
         total_cache_read_input_tokens += response.usage.cache_read_input_tokens
+        retries_performed += response.usage.retries_performed
 
         if max_cost_usd is not None:
             running_cost = build_cost_data(
@@ -848,6 +863,7 @@ async def run_agent_loop(
                 total_output_tokens,
                 cache_creation_input_tokens=total_cache_creation_input_tokens,
                 cache_read_input_tokens=total_cache_read_input_tokens,
+                provider=provider,
             )["estimated_cost"]
             if running_cost is not None and running_cost > max_cost_usd:
                 logger.warning(
@@ -866,7 +882,30 @@ async def run_agent_loop(
                     total_cache_creation_input_tokens=total_cache_creation_input_tokens,
                     total_cache_read_input_tokens=total_cache_read_input_tokens,
                     api_calls=api_calls,
+                    retries_performed=retries_performed,
                 )
+
+        if response.stop_reason == "max_tokens":
+            logger.warning(
+                f"LLM response truncated at max_tokens={max_tokens} "
+                f"(model={model}, api_calls={api_calls})"
+            )
+            text = "".join(b.text for b in response.content if isinstance(b, TextBlock))
+            notice = (
+                f"\n\n_Response truncated: model hit the {max_tokens}-token "
+                "output limit. Try a narrower question or raise max_tokens._"
+            )
+            return AgentResult(
+                text=(text + notice) if text else notice.lstrip(),
+                tool_results=collected_tool_results,
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                total_cache_creation_input_tokens=total_cache_creation_input_tokens,
+                total_cache_read_input_tokens=total_cache_read_input_tokens,
+                api_calls=api_calls,
+                retries_performed=retries_performed,
+                truncated=True,
+            )
 
         if response.stop_reason == "tool_use":
             messages.append({"role": "assistant", "content": serialize_content(response.content)})
@@ -916,6 +955,7 @@ async def run_agent_loop(
             total_cache_creation_input_tokens=total_cache_creation_input_tokens,
             total_cache_read_input_tokens=total_cache_read_input_tokens,
             api_calls=api_calls,
+            retries_performed=retries_performed,
         )
 
     return AgentResult(
@@ -926,4 +966,5 @@ async def run_agent_loop(
         total_cache_creation_input_tokens=total_cache_creation_input_tokens,
         total_cache_read_input_tokens=total_cache_read_input_tokens,
         api_calls=api_calls,
+        retries_performed=retries_performed,
     )

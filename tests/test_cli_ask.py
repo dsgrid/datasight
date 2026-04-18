@@ -10,6 +10,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -41,6 +43,7 @@ _SCRUBBED_ENV_VARS = (
     "POSTGRES_URL",
     "POSTGRES_SSLMODE",
 )
+_REQUIRED_OLLAMA_MODEL = "qwen3:8b"
 
 
 def _clean_subprocess_env() -> dict[str, str]:
@@ -72,19 +75,32 @@ def _run_ask(project_dir, question, *extra_args, timeout=180):
     return result
 
 
-def _ollama_available():
-    """Check if Ollama is reachable."""
+def _ollama_has_required_model() -> bool:
+    """Check if Ollama is reachable and has the model used by test fixtures."""
     try:
-        import urllib.request
-
-        req = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3)
-        return req.status == 200
-    except Exception:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
         return False
+
+    models = data.get("models", [])
+    if not isinstance(models, list):
+        return False
+    names = {
+        model.get("name")
+        for model in models
+        if isinstance(model, dict) and isinstance(model.get("name"), str)
+    }
+    return _REQUIRED_OLLAMA_MODEL in names
 
 
 pytestmark = pytest.mark.integration
-skip_no_ollama = pytest.mark.skipif(not _ollama_available(), reason="Ollama not running")
+skip_no_ollama = pytest.mark.skipif(
+    not _ollama_has_required_model(),
+    reason=f"Ollama model {_REQUIRED_OLLAMA_MODEL!r} is not available",
+)
 
 
 @skip_no_ollama

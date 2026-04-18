@@ -513,6 +513,7 @@ class AppState:
         self._insight_cache: dict[str, Any] = {}
         self._max_history_pairs = 10
         self.max_cost_usd_per_turn: float | None = 1.0
+        self.max_output_tokens: int = 4096
         # Per-session locks to prevent concurrent chat on the same session
         self._session_locks: dict[str, asyncio.Lock] = {}
         # Lock for state-level mutations (project load, settings changes)
@@ -677,7 +678,7 @@ def init_llm_client(state: AppState) -> None:
         state.llm_client = client
         state.model = settings.llm.model
         state.llm_provider = settings.llm.provider
-    except LLMError as e:
+    except (LLMError, ConfigurationError) as e:
         logger.warning(f"Failed to initialize LLM client: {e}")
         # Clear client on failure to prevent stale state
         state.llm_client = None
@@ -961,6 +962,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
     state._max_history_pairs = settings.app.max_history_pairs
     state._response_cache_max = settings.app.response_cache_max
     state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
+    state.max_output_tokens = settings.app.max_output_tokens
 
     log_path = os.environ.get(
         "QUERY_LOG_PATH",
@@ -1299,7 +1301,7 @@ async def generate_chat_response(
         try:
             response = await state.llm_client.create_message(
                 model=state.model,
-                max_tokens=4096,
+                max_tokens=state.max_output_tokens,
                 system=state.system_prompt,
                 tools=WEB_TOOLS,
                 messages=trimmed,
@@ -1349,6 +1351,7 @@ async def generate_chat_response(
                 total_output_tokens,
                 cache_creation_input_tokens=total_cache_creation_input_tokens,
                 cache_read_input_tokens=total_cache_read_input_tokens,
+                provider=state.llm_provider,
             )["estimated_cost"]
             if running_cost is not None and running_cost > state.max_cost_usd_per_turn:
                 logger.warning(
@@ -1367,6 +1370,24 @@ async def generate_chat_response(
                 yield f"event: token\ndata: {json.dumps({'text': budget_text})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 return
+
+        if response.stop_reason == "max_tokens":
+            logger.warning(
+                f"[chat] LLM response truncated at max_tokens={state.max_output_tokens} "
+                f"(model={state.model}, api_calls={api_calls})"
+            )
+            partial = "".join(b.text for b in response.content if isinstance(b, TextBlock))
+            notice = (
+                f"\n\n_Response truncated: model hit the {state.max_output_tokens}-token "
+                "output limit. Try a narrower question or raise MAX_OUTPUT_TOKENS._"
+            )
+            final_text = (partial + notice) if partial else notice.lstrip()
+            messages.append({"role": "assistant", "content": final_text})
+            evt_log.append({"event": EventType.ASSISTANT_MESSAGE, "data": {"text": final_text}})
+            await state.save_session(session_id)
+            yield f"event: token\ndata: {json.dumps({'text': final_text})}\n\n"
+            yield "event: done\ndata: {}\n\n"
+            return
 
         if response.stop_reason == "tool_use":
             messages.append(
@@ -1519,6 +1540,7 @@ async def generate_chat_response(
             total_output_tokens,
             cache_creation_input_tokens=total_cache_creation_input_tokens,
             cache_read_input_tokens=total_cache_read_input_tokens,
+            provider=state.llm_provider,
         )
         cost_data = build_cost_data(
             state.model,
@@ -1527,6 +1549,7 @@ async def generate_chat_response(
             total_output_tokens,
             cache_creation_input_tokens=total_cache_creation_input_tokens,
             cache_read_input_tokens=total_cache_read_input_tokens,
+            provider=state.llm_provider,
         )
         if state.query_logger:
             state.query_logger.log_cost(
@@ -1594,6 +1617,7 @@ async def generate_chat_response(
         total_output_tokens,
         cache_creation_input_tokens=total_cache_creation_input_tokens,
         cache_read_input_tokens=total_cache_read_input_tokens,
+        provider=state.llm_provider,
     )
     cost_data = build_cost_data(
         state.model,
@@ -1602,6 +1626,7 @@ async def generate_chat_response(
         total_output_tokens,
         cache_creation_input_tokens=total_cache_creation_input_tokens,
         cache_read_input_tokens=total_cache_read_input_tokens,
+        provider=state.llm_provider,
     )
     if state.query_logger:
         state.query_logger.log_cost(
@@ -2061,6 +2086,7 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state._max_history_pairs = settings.app.max_history_pairs
         state._response_cache_max = settings.app.response_cache_max
         state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
+        state.max_output_tokens = settings.app.max_output_tokens
 
         # Create ephemeral session
         runner, tables_info = create_ephemeral_session(file_paths)

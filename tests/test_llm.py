@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import anthropic
 import pytest
 
-from datasight.exceptions import LLMConnectionError, LLMError, LLMResponseError
+from datasight.exceptions import LLMConnectionError, LLMResponseError
 from datasight.llm import (
     AnthropicLLMClient,
     GitHubModelsLLMClient,
@@ -315,32 +315,17 @@ async def test_anthropic_client_api_status_error():
             )
 
 
-@pytest.mark.asyncio
-async def test_anthropic_client_missing_api_key_type_error():
-    with patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls:
-        instance = MagicMock()
-        instance.messages.create = AsyncMock(side_effect=TypeError("missing api_key argument"))
-        mock_cls.return_value = instance
+def test_create_llm_client_missing_api_key_raises_configuration_error():
+    """Factory short-circuits with a clear error when a required key is missing."""
+    from datasight.exceptions import ConfigurationError
 
-        client = AnthropicLLMClient(api_key="")
-        with pytest.raises(LLMError, match="No API key configured"):
-            await client.create_message(
-                model="claude", system="sys", messages=[], tools=[], max_tokens=100
-            )
-
-
-@pytest.mark.asyncio
-async def test_anthropic_client_other_type_error():
-    with patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls:
-        instance = MagicMock()
-        instance.messages.create = AsyncMock(side_effect=TypeError("something else"))
-        mock_cls.return_value = instance
-
-        client = AnthropicLLMClient(api_key="sk-test")
-        with pytest.raises(LLMError, match="LLM client error"):
-            await client.create_message(
-                model="claude", system="sys", messages=[], tools=[], max_tokens=100
-            )
+    for provider, env_hint in [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("github", "GITHUB_TOKEN"),
+    ]:
+        with pytest.raises(ConfigurationError, match=env_hint):
+            create_llm_client(provider, api_key="")
 
 
 def test_anthropic_client_init_connection_error():
@@ -355,7 +340,12 @@ def test_anthropic_client_init_connection_error():
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_openai_response(*, text: str | None = None, tool_calls: list[dict] | None = None):
+def _make_fake_openai_response(
+    *,
+    text: str | None = None,
+    tool_calls: list[dict] | None = None,
+    finish_reason: str = "stop",
+):
     """Build a fake OpenAI chat completion response."""
     message = MagicMock()
     message.content = text
@@ -373,10 +363,42 @@ def _make_fake_openai_response(*, text: str | None = None, tool_calls: list[dict
 
     choice = MagicMock()
     choice.message = message
+    choice.finish_reason = finish_reason
     resp = MagicMock()
     resp.choices = [choice]
     resp.usage = MagicMock(prompt_tokens=7, completion_tokens=13)
     return resp
+
+
+def _fake_openai_module() -> MagicMock:
+    """Build a mock ``openai`` module with real typed-exception classes.
+
+    The LLM client's retry loop catches typed ``openai.*`` exceptions. A bare
+    ``MagicMock`` returns ``MagicMock`` from attribute access, which is not a
+    valid exception class, so tests that want to exercise the retry path
+    must seed the fake with real exception classes.
+    """
+    import openai as real_openai
+
+    mod = MagicMock()
+    mod.APIConnectionError = real_openai.APIConnectionError
+    mod.APITimeoutError = real_openai.APITimeoutError
+    mod.RateLimitError = real_openai.RateLimitError
+    mod.InternalServerError = real_openai.InternalServerError
+    mod.APIStatusError = real_openai.APIStatusError
+    return mod
+
+
+def _openai_connection_error(message: str = "connection refused"):
+    import openai as real_openai
+
+    return real_openai.APIConnectionError(message=message, request=MagicMock())
+
+
+def _openai_status_error(message: str = "invalid api key"):
+    import openai as real_openai
+
+    return real_openai.APIStatusError(message, response=MagicMock(), body=None)
 
 
 @pytest.mark.asyncio
@@ -448,9 +470,9 @@ async def test_openai_compat_bad_tool_arguments_json():
 
 @pytest.mark.asyncio
 async def test_openai_compat_transient_error_retries_then_fails():
-    fake_module = MagicMock()
+    fake_module = _fake_openai_module()
     instance = MagicMock()
-    instance.chat.completions.create = AsyncMock(side_effect=Exception("connection refused"))
+    instance.chat.completions.create = AsyncMock(side_effect=_openai_connection_error())
     fake_module.AsyncOpenAI = MagicMock(return_value=instance)
 
     with (
@@ -466,14 +488,14 @@ async def test_openai_compat_transient_error_retries_then_fails():
 
 @pytest.mark.asyncio
 async def test_openai_compat_non_transient_error_fails_immediately():
-    fake_module = MagicMock()
+    fake_module = _fake_openai_module()
     instance = MagicMock()
-    instance.chat.completions.create = AsyncMock(side_effect=Exception("invalid api key"))
+    instance.chat.completions.create = AsyncMock(side_effect=_openai_status_error())
     fake_module.AsyncOpenAI = MagicMock(return_value=instance)
 
     with patch.dict("sys.modules", {"openai": fake_module}):
         client = OllamaLLMClient()
-        with pytest.raises(LLMConnectionError, match="invalid api key"):
+        with pytest.raises(LLMResponseError, match="invalid api key"):
             await client.create_message(
                 model="m", system="sys", messages=[], tools=[], max_tokens=50
             )
@@ -482,11 +504,11 @@ async def test_openai_compat_non_transient_error_fails_immediately():
 
 @pytest.mark.asyncio
 async def test_openai_compat_transient_then_success():
-    fake_module = MagicMock()
+    fake_module = _fake_openai_module()
     instance = MagicMock()
     instance.chat.completions.create = AsyncMock(
         side_effect=[
-            Exception("503 service unavailable"),
+            _openai_connection_error("503 service unavailable"),
             _make_fake_openai_response(text="recovered"),
         ]
     )
@@ -502,6 +524,8 @@ async def test_openai_compat_transient_then_success():
         )
         assert isinstance(result.content[0], TextBlock)
         assert result.content[0].text == "recovered"
+        # Retry counter should reflect the one intermediate failure.
+        assert result.usage.retries_performed == 1
 
 
 def test_openai_compat_missing_openai_package():
