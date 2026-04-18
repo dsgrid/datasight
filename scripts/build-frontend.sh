@@ -14,11 +14,12 @@ npm run build
 
 echo "Copying build output..."
 
+mkdir -p "$TEMPLATES_DIR" "$STATIC_DIR/assets"
+
 # Copy index.html to templates
 cp "$FRONTEND_DIR/dist/index.html" "$TEMPLATES_DIR/index.html"
 
 # Copy hashed assets to static/assets/
-mkdir -p "$STATIC_DIR/assets"
 rm -rf "$STATIC_DIR/assets/"*
 cp -r "$FRONTEND_DIR/dist/assets/"* "$STATIC_DIR/assets/"
 

@@ -47,6 +47,9 @@ frontend/               # Svelte 5 + TypeScript + Tailwind source
 ## Running locally
 
 ```bash
+# Build the generated web assets once after a clean checkout
+bash scripts/build-frontend.sh
+
 # Start with a demo project
 datasight demo ./dev-project
 cd dev-project
@@ -56,6 +59,11 @@ datasight run -v
 
 The `-v` flag enables debug logging, which shows the full LLM request/response
 cycle including tool calls.
+
+The FastAPI app serves generated files from `src/datasight/web/static/` and
+`src/datasight/web/templates/index.html`. Those files are ignored by git. Run
+`bash scripts/build-frontend.sh` after a clean checkout and whenever you want
+`datasight run` to serve a freshly built production UI.
 
 ## Pre-commit hooks
 
@@ -100,17 +108,31 @@ npm test              # Vitest unit tests
 npm run build         # Production build
 ```
 
-To build the frontend and copy the output into FastAPI's serving directories:
+For frontend development, run `datasight run` in another terminal for the API
+server, then use `npm run dev` from `frontend/`. To test the exact production
+UI served by FastAPI, build and copy the frontend output into FastAPI's serving
+directories:
 
 ```bash
 bash scripts/build-frontend.sh
 ```
+
+Release builds run this script before packaging. Hatch includes the generated
+assets in the sdist and wheel as build artifacts, so the repository stays free
+of generated frontend bundles while published packages still contain the web
+UI.
 
 ## Testing
 
 ```bash
 # Run the full Python test suite
 pytest
+
+# Run the CI-safe Python suite, excluding local Ollama integration tests
+pytest -m "not integration"
+
+# Run only tests that require a local Ollama model
+pytest -m integration
 
 # Frontend unit tests (Vitest)
 cd frontend && npm test
@@ -123,6 +145,18 @@ datasight demo ./test-project
 cd test-project
 datasight verify -v
 ```
+
+Tests marked `integration` require a running local Ollama server with the
+`qwen3:8b` model available:
+
+```bash
+ollama pull qwen3:8b
+ollama serve
+pytest -m integration
+```
+
+Keep live-provider tests behind that marker so CI can run deterministically
+without a local model.
 
 ## Documentation
 

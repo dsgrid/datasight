@@ -249,7 +249,10 @@ database queries.
 
 The frontend is built with **Svelte 5 + TypeScript + Tailwind CSS** and uses
 Vite as the build tool. Source lives in `frontend/` and is compiled to static
-assets served by FastAPI. It features:
+assets served by FastAPI. Generated assets under `src/datasight/web/static/`
+and `src/datasight/web/templates/index.html` are ignored by git; run
+`bash scripts/build-frontend.sh` after a clean checkout or before packaging to
+create them. It features:
 
 - **Sidebar** with a table browser (expandable columns) and example queries
   that filter by selected table

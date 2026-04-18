@@ -89,8 +89,14 @@ python scripts/generate_cli_reference.py
 ## Development Tests
 
 ```bash
+# Build frontend assets for FastAPI serving after a clean checkout
+bash scripts/build-frontend.sh
+
 # Python test suite
 pytest
+
+# CI-safe Python test suite, excluding tests that need local Ollama
+pytest -m "not integration"
 
 # Frontend unit tests (Vitest)
 cd frontend && npm test
@@ -98,9 +104,19 @@ cd frontend && npm test
 # Frontend E2E tests (Playwright, requires datasight run)
 cd frontend && npm run test:e2e
 
-# Build frontend for FastAPI serving
+# Rebuild frontend for FastAPI serving after frontend changes
 bash scripts/build-frontend.sh
 ```
+
+Generated web assets under `src/datasight/web/static/` and
+`src/datasight/web/templates/index.html` are not checked in. Run
+`bash scripts/build-frontend.sh` before using `datasight run` from a clean
+checkout when you want FastAPI to serve the production UI.
+
+Ollama-backed CLI tests are marked `integration` because they require a running
+local Ollama server with the `qwen3:8b` model available. CI runs `pytest -m "not
+integration"`; run `pytest -m integration` locally when you want to exercise the
+live LLM path.
 
 ## Software Record
 
