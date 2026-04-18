@@ -1460,6 +1460,8 @@ def _make_sql_result(text="answer", queries=None):
         tool_results=tool_results,
         total_input_tokens=0,
         total_output_tokens=0,
+        total_cache_creation_input_tokens=0,
+        total_cache_read_input_tokens=0,
         api_calls=0,
     )
 
