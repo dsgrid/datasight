@@ -148,7 +148,7 @@ def test_chat_full_run_with_real_project(
     assert "event: tool_start" in body or "tool_done" in body
 
 
-def test_chat_visualize_streams_plotly_spec_without_chart_html(
+def test_chat_visualize_streams_plotly_spec_by_reference(
     isolated_web_state: None, project_dir: str
 ) -> None:
     """Live chart SSE should avoid streaming a second full iframe payload."""

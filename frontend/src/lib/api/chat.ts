@@ -5,6 +5,7 @@ import { queriesStore } from "$lib/stores/queries.svelte";
 import { sessionStore } from "$lib/stores/session.svelte";
 import { settingsStore } from "$lib/stores/settings.svelte";
 import type { ProvenanceData, ToolMeta } from "$lib/stores/chat.svelte";
+import type { PlotlySpecRef } from "$lib/types/plotly";
 
 export type SSEEventType =
   | "tool_start"
@@ -32,11 +33,6 @@ interface ToolResultData {
   plotlySpec?: unknown;
   plotly_spec_ref?: PlotlySpecRef;
   plotlySpecRef?: PlotlySpecRef;
-}
-
-interface PlotlySpecRef {
-  session_id: string;
-  event_index: number;
 }
 
 interface ToolDoneData {
