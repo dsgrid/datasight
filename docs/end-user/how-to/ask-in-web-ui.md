@@ -5,6 +5,8 @@ schema, and chat with the AI. This guide covers the day-to-day question
 workflow. For the full catalog of UI controls, see the
 [web UI reference](../reference/web-ui.md).
 
+![Chat view with schema sidebar and a completed query](../../assets/screenshots/02-chat-view.png)
+
 ## Load data
 
 From the landing page you have three entry points:

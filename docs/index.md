@@ -12,6 +12,8 @@ required. Or create a curated project with schema descriptions and example
 queries for your team. Start with guided starter workflows in the web UI or
 use deterministic CLI inspection commands before involving the LLM.
 
+![datasight chat view](assets/screenshots/02-chat-view.png)
+
 ```bash
 uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
 

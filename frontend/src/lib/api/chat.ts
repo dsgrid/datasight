@@ -1,6 +1,7 @@
 /** SSE-based chat streaming. */
 
 import { chatStore } from "$lib/stores/chat.svelte";
+import { dashboardStore } from "$lib/stores/dashboard.svelte";
 import { queriesStore } from "$lib/stores/queries.svelte";
 import { sessionStore } from "$lib/stores/session.svelte";
 import { settingsStore } from "$lib/stores/settings.svelte";
@@ -289,6 +290,9 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
  * Send a chat message and process the SSE stream.
  */
 export async function sendMessage(text: string): Promise<void> {
+  if (dashboardStore.currentView !== "chat") {
+    dashboardStore.currentView = "chat";
+  }
   chatStore.pushMessage({ type: "user_message", content: text });
   chatStore.isStreaming = true;
   chatStore.currentAssistantText = "";

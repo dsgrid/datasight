@@ -4,6 +4,8 @@ The dashboard collects pinned results from your chat session into a
 responsive grid you can filter, annotate, and export as a standalone HTML
 page.
 
+![Dashboard view with pinned cards](../../assets/screenshots/05-dashboard.png)
+
 ## Pin results
 
 Every result card (table or chart) has a **Pin** button on hover. Clicking

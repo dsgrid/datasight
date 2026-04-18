@@ -52,6 +52,8 @@ datasight run
 Open <http://localhost:8084>. The sidebar shows the loaded tables, example
 queries, and deterministic inspection tools.
 
+![Landing page with starter workflows](../../assets/screenshots/01-landing.png)
+
 ## 5. Ask your first question
 
 Type a question in the chat input — try one of these:
@@ -62,6 +64,8 @@ Type a question in the chat input — try one of these:
 
 datasight writes SQL, runs it, and returns a table or an interactive chart.
 Click **Pin** on any result to add it to the dashboard.
+
+![Chart response from a chat query](../../assets/screenshots/04-chart-result.png)
 
 ## What's next
 

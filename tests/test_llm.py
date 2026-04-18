@@ -334,11 +334,10 @@ def test_create_llm_client_missing_api_key_raises_configuration_error():
             create_llm_client(provider, api_key="")
 
 
-def test_anthropic_client_init_connection_error():
-    with patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls:
-        mock_cls.side_effect = anthropic.APIConnectionError(request=MagicMock())
-        with pytest.raises(LLMConnectionError, match="Failed to initialize Anthropic"):
-            AnthropicLLMClient(api_key="sk-test")
+# NOTE: ``AsyncAnthropic.__init__`` does no network IO, so there's no
+# init-time ``APIConnectionError`` to wrap. The factory propagates any
+# ``AnthropicError`` from the constructor as-is (config problem, not
+# transient) — we don't test that since the SDK never raises it in practice.
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +391,7 @@ def _fake_openai_module() -> MagicMock:
     mod.RateLimitError = real_openai.RateLimitError
     mod.InternalServerError = real_openai.InternalServerError
     mod.APIStatusError = real_openai.APIStatusError
+    mod.AuthenticationError = real_openai.AuthenticationError
     return mod
 
 

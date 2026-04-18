@@ -381,3 +381,40 @@ form,
 ::selection {
   background: rgba(21, 168, 168, 0.25);
 }
+
+/* ── Syntax highlighting (highlight.js tokens) ── */
+
+.hljs-keyword,
+.hljs-built_in,
+.hljs-type {
+  color: var(--teal);
+  font-weight: 600;
+}
+
+.hljs-string,
+.hljs-regexp {
+  color: var(--orange);
+}
+
+.hljs-number,
+.hljs-literal {
+  color: var(--magenta);
+}
+
+.hljs-comment,
+.hljs-meta {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-attr {
+  color: var(--navy);
+}
+
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-title.function_,
+[data-theme="dark"] .hljs-attr {
+  color: var(--cream);
+}

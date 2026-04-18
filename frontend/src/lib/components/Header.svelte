@@ -177,6 +177,18 @@
           </span>
         {/if}
       </button>
+      <button
+        class="font-medium transition-all duration-150 cursor-pointer"
+        style="font-size: 0.78rem; padding: 5px 14px; border-radius: 5px;
+               font-family: inherit;
+               border: 1px solid {currentView === 'sql' ? 'var(--teal)' : 'rgba(231,225,207,0.2)'};
+               background: {currentView === 'sql' ? 'rgba(21,168,168,0.2)' : 'transparent'};
+               color: var(--cream);
+               opacity: {currentView === 'sql' ? '1' : '0.65'};"
+        onclick={() => onSwitchView?.("sql")}
+      >
+        SQL
+      </button>
     </div>
   {/if}
 
@@ -213,7 +225,7 @@
           title="SQL History"
           onclick={onToggleSqlPanel}
         >
-          SQL
+          History
         </button>
         <button
           class="btn-icon"

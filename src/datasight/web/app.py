@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
@@ -82,7 +83,7 @@ from datasight.generate import (
 from datasight.runner import CachingSqlRunner, SqlRunner
 from datasight.schema import filter_tables, format_schema_context, introspect_schema
 from datasight.settings import Settings, capture_original_env, restore_original_env
-from datasight.sql_validation import build_measure_rule_map, build_schema_map
+from datasight.sql_validation import build_measure_rule_map, build_schema_map, validate_sql
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -674,6 +675,7 @@ def init_llm_client(state: AppState) -> None:
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
             timeout=settings.llm.timeout,
+            model=settings.llm.model,
         )
         # Only update state after successful creation
         state.llm_client = client
@@ -1975,15 +1977,23 @@ async def get_current_project(state: AppState = Depends(get_state)):
             "name": "Quick Explore",
             "is_ephemeral": True,
             "tables": state.ephemeral_tables_info,
+            "sql_dialect": state.sql_dialect,
         }
     if not state.project_loaded or state.project_dir is None:
-        return {"loaded": False, "path": None, "name": None, "is_ephemeral": False}
+        return {
+            "loaded": False,
+            "path": None,
+            "name": None,
+            "is_ephemeral": False,
+            "sql_dialect": state.sql_dialect,
+        }
     return {
         "loaded": True,
         "path": state.project_dir,
         "name": get_project_name(state.project_dir),
         "is_ephemeral": False,
         "has_time_series": bool(state.time_series_configs),
+        "sql_dialect": state.sql_dialect,
     }
 
 
@@ -2685,6 +2695,90 @@ async def get_query_log(n: int = 50, state: AppState = Depends(get_state)):
     if state.query_logger is None:
         return {"entries": []}
     return {"entries": state.query_logger.read_recent(n)}
+
+
+@app.post("/api/sql-execute")
+async def sql_execute(request: Request, state: AppState = Depends(get_state)):
+    """Execute user-authored SQL from the SQL editor page."""
+    body = await request.json()
+    sql = str(body.get("sql") or "").strip()
+    session_id = str(body.get("session_id") or "")
+    if not sql:
+        return {"html": None, "row_count": 0, "elapsed_ms": 0.0, "error": "SQL is empty"}
+    if state.sql_runner is None:
+        return {"html": None, "row_count": 0, "elapsed_ms": 0.0, "error": "Database not connected"}
+
+    started = time.perf_counter()
+    try:
+        df = await state.sql_runner.run_sql(sql)
+    except Exception as e:
+        elapsed = (time.perf_counter() - started) * 1000
+        if state.query_logger is not None:
+            state.query_logger.log(
+                session_id=session_id,
+                user_question="(SQL editor)",
+                tool="sql_editor",
+                sql=sql,
+                execution_time_ms=elapsed,
+                error=str(e),
+            )
+        return {"html": None, "row_count": 0, "elapsed_ms": elapsed, "error": str(e)}
+    elapsed = (time.perf_counter() - started) * 1000
+    if state.query_logger is not None:
+        state.query_logger.log(
+            session_id=session_id,
+            user_question="(SQL editor)",
+            tool="sql_editor",
+            sql=sql,
+            execution_time_ms=elapsed,
+            row_count=int(len(df)),
+            column_count=int(len(df.columns)),
+        )
+    return {
+        "html": df_to_html_table(df),
+        "row_count": int(len(df)),
+        "elapsed_ms": elapsed,
+        "error": None,
+    }
+
+
+@app.post("/api/sql-validate")
+async def sql_validate(request: Request, state: AppState = Depends(get_state)):
+    """Validate user-authored SQL with sqlglot (table refs + parse check)."""
+    body = await request.json()
+    sql = str(body.get("sql") or "").strip()
+    if not sql:
+        return {"valid": True, "errors": []}
+    schema_map = build_schema_map(state.schema_info)
+    result = validate_sql(
+        sql,
+        schema_map,
+        dialect=state.sql_dialect,
+        measure_rules=state.measure_rules or None,
+    )
+    return {"valid": result.valid, "errors": result.errors}
+
+
+@app.post("/api/sql-format")
+async def sql_format(request: Request, state: AppState = Depends(get_state)):
+    """Pretty-print user-authored SQL with sqlglot."""
+    body = await request.json()
+    sql = str(body.get("sql") or "")
+    if not sql.strip():
+        return {"formatted": sql, "error": None}
+    try:
+        import sqlglot
+
+        statements = sqlglot.transpile(
+            sql,
+            read=state.sql_dialect,
+            write=state.sql_dialect,
+            pretty=True,
+        )
+        formatted = ";\n\n".join(statements)
+        return {"formatted": formatted, "error": None}
+    except Exception as e:
+        return {"formatted": sql, "error": str(e)}
 
 
 @app.get("/api/measures/editor")

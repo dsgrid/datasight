@@ -1,9 +1,24 @@
 <script lang="ts">
   import { chatStore } from "$lib/stores/chat.svelte";
+  import { settingsStore } from "$lib/stores/settings.svelte";
   import { sendMessage } from "$lib/api/chat";
 
   let inputValue = $state("");
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
+
+  const PROVIDER_LABELS: Record<string, string> = {
+    anthropic: "Anthropic",
+    ollama: "Ollama",
+    github: "GitHub Models",
+  };
+
+  const llmLabel = $derived.by(() => {
+    const cfg = settingsStore.llmConfig;
+    if (!cfg) return null;
+    const provider = PROVIDER_LABELS[cfg.provider] ?? cfg.provider;
+    if (!cfg.model) return provider;
+    return `${provider} · ${cfg.model}`;
+  });
 
   function autoResize() {
     if (!textareaEl) return;
@@ -95,4 +110,24 @@
       </button>
     {/if}
   </form>
+
+  {#if llmLabel}
+    <div
+      class="text-text-secondary"
+      style="margin-top: 6px; font-size: 0.68rem; text-align: center;
+             letter-spacing: 0.02em;"
+      title={settingsStore.llmConfig?.connected
+        ? "LLM connected"
+        : "LLM not connected"}
+    >
+      <span
+        style="display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+               margin-right: 6px; vertical-align: middle;
+               background: {settingsStore.llmConfig?.connected
+                 ? 'var(--teal)'
+                 : 'var(--orange)'};"
+      ></span>
+      {llmLabel}
+    </div>
+  {/if}
 </div>

@@ -9,6 +9,8 @@ Press **?** in the web UI to see the shortcuts overlay.
 | `Cmd/Ctrl+B` | Toggle sidebar |
 | `N` | New conversation |
 | `D` | Toggle chat/dashboard view |
+| `S` | Toggle chat/SQL editor view |
+| `Cmd/Ctrl+Enter` | Run the query in the SQL editor |
 | `Escape` | Close modal / blur input |
 | `?` | Show shortcuts help |
 

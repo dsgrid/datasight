@@ -3,6 +3,8 @@
 This page catalogs every panel, button, and section in the datasight web
 UI. For task-oriented walkthroughs, see the How-to guides.
 
+![Full datasight window with sidebar, chat, and header tabs](../../assets/screenshots/06-web-ui-reference.png)
+
 ## Landing page
 
 Shown when you open datasight with no project loaded.
@@ -81,9 +83,9 @@ Toggle the sidebar with the hamburger button in the header or
 |---------|--------|
 | **Hamburger** | Toggle sidebar |
 | **datasight logo / switch icon** | Open project switcher |
-| **Chat / Dashboard tabs** | Switch view (dashboard badge shows pinned count) |
+| **Chat / Dashboard / SQL tabs** | Switch view (dashboard badge shows pinned count; SQL opens the query editor) |
 | **New Chat** | Clear chat, SQL history, and dashboard |
-| **SQL button** | Open the query history panel |
+| **History button** | Open the SQL query history panel |
 | **Log button** | Toggle SQL query logging (highlights teal when on) |
 | **Export** | Enter conversation export mode |
 | **Gear icon** | Open Settings panel |
@@ -117,8 +119,9 @@ Press **Cmd/Ctrl+K** to open. Supports:
 
 ## Query history panel
 
-Click the **SQL** button in the header. Shows every SQL query executed in
-the current session with:
+Click the **History** button in the header. Shows every SQL query executed in
+the current session — from the chat agent, from the SQL editor, and from
+rerun reports — with:
 
 - tool type (SQL or Chart)
 - execution time and row count
@@ -127,6 +130,37 @@ the current session with:
 - **★** button to bookmark the query
 
 Failed queries are highlighted with an orange border.
+
+## SQL editor
+
+Select the **SQL** tab in the header (or press **S**) to open a direct
+SQL editor over the currently loaded project or explore session. Useful
+when you want to tweak a query the agent generated, or write one from
+scratch against the ephemeral DuckDB of your CSV/Parquet files without
+leaving datasight.
+
+![SQL editor view with syntax-highlighted query and history](../../assets/screenshots/03-sql-editor.png)
+
+The page contains:
+
+- a multi-line SQL input
+- a **Validate** button — runs a sqlglot parse and checks that every
+  referenced table exists in the loaded schema (no database round-trip)
+- a **Run** button — executes against the active database. **Cmd/Ctrl+Enter**
+  inside the editor runs the query as well
+- a result table with filtering, sorting, pagination, and CSV export
+- database errors and validation messages shown inline
+
+The schema (tables and columns) stays visible in the left sidebar while
+you write. Each run is also appended to the **Query history** panel so
+you can copy, rerun, or bookmark it.
+
+!!! tip
+    A typical flow: ask the agent a question in Chat, copy the generated
+    SQL from the query history, switch to the SQL tab, paste, and edit
+    — for example, broaden a `WHERE report_date >= '2024-01-01'` filter
+    or add a `GROUP BY energy_source_code` to the agent's
+    `net_generation_mwh` query.
 
 ## Result provenance
 

@@ -450,3 +450,77 @@ describe("chatStore", () => {
     expect(chatStore.lastSql).toBe("");
   });
 });
+
+describe("sqlEditorStore", () => {
+  const STORAGE_KEY = "datasight-sql-editor-text";
+
+  beforeEach(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    vi.resetModules();
+  });
+
+  it("seeds sql from localStorage on load", async () => {
+    localStorage.setItem(STORAGE_KEY, "SELECT 42");
+    const { sqlEditorStore } = await import(
+      "$lib/stores/sql_editor.svelte"
+    );
+    expect(sqlEditorStore.sql).toBe("SELECT 42");
+  });
+
+  it("defaults to empty sql when localStorage is unset", async () => {
+    const { sqlEditorStore } = await import(
+      "$lib/stores/sql_editor.svelte"
+    );
+    expect(sqlEditorStore.sql).toBe("");
+  });
+
+  it("persists sql edits to localStorage", async () => {
+    const { sqlEditorStore } = await import(
+      "$lib/stores/sql_editor.svelte"
+    );
+    sqlEditorStore.sql = "SELECT 1 FROM plants";
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("SELECT 1 FROM plants");
+  });
+
+  it("clearResult wipes result state but keeps sql text", async () => {
+    const { sqlEditorStore } = await import(
+      "$lib/stores/sql_editor.svelte"
+    );
+    sqlEditorStore.sql = "SELECT 1";
+    sqlEditorStore.resultHtml = "<table></table>";
+    sqlEditorStore.rowCount = 7;
+    sqlEditorStore.elapsedMs = 12.5;
+    sqlEditorStore.error = "boom";
+    sqlEditorStore.validationErrors = ["bad"];
+
+    sqlEditorStore.clearResult();
+
+    expect(sqlEditorStore.sql).toBe("SELECT 1");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("SELECT 1");
+    expect(sqlEditorStore.resultHtml).toBeNull();
+    expect(sqlEditorStore.rowCount).toBe(0);
+    expect(sqlEditorStore.elapsedMs).toBe(0);
+    expect(sqlEditorStore.error).toBeNull();
+    expect(sqlEditorStore.validationErrors).toEqual([]);
+  });
+
+  it("clearAll wipes sql, localStorage, and result state", async () => {
+    const { sqlEditorStore } = await import(
+      "$lib/stores/sql_editor.svelte"
+    );
+    sqlEditorStore.sql = "SELECT 1";
+    sqlEditorStore.resultHtml = "<table></table>";
+    sqlEditorStore.rowCount = 3;
+    sqlEditorStore.error = "oops";
+    sqlEditorStore.validationErrors = ["nope"];
+
+    sqlEditorStore.clearAll();
+
+    expect(sqlEditorStore.sql).toBe("");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("");
+    expect(sqlEditorStore.resultHtml).toBeNull();
+    expect(sqlEditorStore.rowCount).toBe(0);
+    expect(sqlEditorStore.error).toBeNull();
+    expect(sqlEditorStore.validationErrors).toEqual([]);
+  });
+});

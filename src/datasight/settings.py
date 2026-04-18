@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from dotenv import load_dotenv
 
@@ -131,6 +131,10 @@ def restore_original_env() -> None:
             os.environ.pop(var, None)
 
 
+# Keep this Literal in sync with ``datasight.llm.SUPPORTED_PROVIDERS``. The
+# runtime validation below is driven by ``SUPPORTED_PROVIDERS``; this Literal
+# exists only for static typing and must be updated by hand when a provider
+# is added or removed (Python can't derive Literals from a runtime set).
 LLMProvider = Literal["anthropic", "ollama", "github", "openai"]
 DBMode = Literal["duckdb", "sqlite", "postgres", "flightsql"]
 
@@ -286,23 +290,18 @@ class Settings:
         if env_path:
             load_dotenv(env_path, override=override)
 
-        # Parse and validate LLM provider
+        # Validate LLM provider against the factory's registry so both sides
+        # stay in sync. ``cast`` is safe after the membership check above:
+        # the raw string matches one of the ``LLMProvider`` literal values.
+        from datasight.llm import SUPPORTED_PROVIDERS
+
         llm_provider_raw = os.environ.get("LLM_PROVIDER", "anthropic")
-        match llm_provider_raw:
-            case "anthropic":
-                llm_provider: LLMProvider = "anthropic"
-            case "ollama":
-                llm_provider = "ollama"
-            case "github":
-                llm_provider = "github"
-            case "openai":
-                llm_provider = "openai"
-            case _:
-                valid_providers = "anthropic, ollama, github, openai"
-                raise ConfigurationError(
-                    f"Invalid LLM_PROVIDER: {llm_provider_raw!r}. "
-                    f"Valid providers: {valid_providers}"
-                )
+        if llm_provider_raw not in SUPPORTED_PROVIDERS:
+            valid_providers = ", ".join(sorted(SUPPORTED_PROVIDERS))
+            raise ConfigurationError(
+                f"Invalid LLM_PROVIDER: {llm_provider_raw!r}. Valid providers: {valid_providers}"
+            )
+        llm_provider = cast("LLMProvider", llm_provider_raw)
 
         # Normalize DB_MODE (accept 'local' as alias for 'duckdb')
         db_mode_raw = os.environ.get("DB_MODE", "duckdb")

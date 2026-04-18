@@ -76,6 +76,7 @@ def test_ui_boot_contract_when_unloaded(isolated_web_state: None) -> None:
         "path": None,
         "name": None,
         "is_ephemeral": False,
+        "sql_dialect": "duckdb",
     }
     assert schema_response.json() == {"tables": []}
     assert queries_response.json() == {"queries": []}
@@ -127,6 +128,7 @@ def test_ui_boot_contract_when_project_loaded(isolated_web_state: None, project_
         "name": Path(project_path).name,
         "is_ephemeral": False,
         "has_time_series": False,
+        "sql_dialect": "duckdb",
     }
 
     schema = schema_response.json()["tables"]

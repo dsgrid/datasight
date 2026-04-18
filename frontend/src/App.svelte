@@ -7,6 +7,7 @@
   import Toast from "$lib/components/Toast.svelte";
   import ChatView from "$lib/components/ChatView.svelte";
   import DashboardView from "$lib/components/DashboardView.svelte";
+  import SqlView from "$lib/components/SqlView.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import MeasureEditorModal from "$lib/components/MeasureEditorModal.svelte";
   import SaveProjectModal from "$lib/components/SaveProjectModal.svelte";
@@ -21,6 +22,7 @@
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
   import { chatStore } from "$lib/stores/chat.svelte";
   import { queriesStore } from "$lib/stores/queries.svelte";
+  import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
   import { paletteStore } from "$lib/stores/palette.svelte";
   import { getProjectStatus } from "$lib/api/projects";
   import { loadSettings, loadLlmConfig } from "$lib/api/settings";
@@ -173,6 +175,32 @@
   async function onProjectLoaded(path: string) {
     fromLanding = true;
     sessionStore.isEphemeralSession = false;
+
+    // Project switch = fresh conversation. The target project has its own
+    // .env (LLM provider, API key) and its own on-disk conversation/dashboard
+    // store, so keeping project1's chat messages/session would mix contexts
+    // and the agent's system prompt would reference stale schema.
+    chatStore.clear();
+    queriesStore.clear();
+    dashboardStore.clear();
+    sqlEditorStore.clearAll();
+    sessionStore.sessionId = crypto.randomUUID();
+    dashboardStore.currentView = "chat";
+    exportMode = false;
+    exportExcludeIndices = new Set();
+
+    // Re-read per-project config the backend reloaded from project2's .env.
+    const [, , statusResult] = await Promise.allSettled([
+      loadSettings(),
+      loadLlmConfig(),
+      getProjectStatus(),
+    ]);
+    if (statusResult.status === "fulfilled") {
+      const status = statusResult.value;
+      if (status.sql_dialect) sessionStore.sqlDialect = status.sql_dialect;
+      sessionStore.hasTimeSeries = Boolean(status.has_time_series);
+    }
+
     await onProjectReady(path);
   }
 
@@ -190,6 +218,9 @@
         sessionStore.currentProjectPath = status.path;
         sessionStore.isEphemeralSession = status.is_ephemeral;
         sessionStore.hasTimeSeries = Boolean(status.has_time_series);
+        if (status.sql_dialect) {
+          sessionStore.sqlDialect = status.sql_dialect;
+        }
         if (status.tables) {
           sessionStore.ephemeralTablesInfo = status.tables;
         }
@@ -261,6 +292,10 @@
       e.preventDefault();
       dashboardStore.currentView =
         dashboardStore.currentView === "chat" ? "dashboard" : "chat";
+    } else if (e.key === "s" || e.key === "S") {
+      e.preventDefault();
+      dashboardStore.currentView =
+        dashboardStore.currentView === "sql" ? "chat" : "sql";
     } else if (
       dashboardStore.currentView === "dashboard" &&
       ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
@@ -341,6 +376,8 @@
           }}
         />
       </div>
+    {:else if dashboardStore.currentView === "sql"}
+      <SqlView />
     {:else}
       <DashboardView />
     {/if}
