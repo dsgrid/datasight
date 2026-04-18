@@ -2250,7 +2250,13 @@ async def add_files_endpoint(request: Request, state: AppState = Depends(get_sta
             conn = runner._conn
         elif isinstance(runner, DuckDBRunner):
             db_path = runner._database_path
+            # Cached DataFrames can keep DuckDB buffers alive and block a
+            # read-write reopen of the same file; drop them before closing.
+            state.clear_sql_cache()
             runner.close()
+            import gc
+
+            gc.collect()
             conn = _duckdb.connect(db_path, read_only=False)
             reopen_readonly = True
 

@@ -64,7 +64,7 @@ Other export formats:
 # Plotly JSON spec (for embedding in notebooks or other tools)
 datasight ask "Generation by fuel type" --chart-format json -o chart.json
 
-# Static PNG image (requires: pip install "datasight[export]")
+# Static PNG image (requires the [export] extra — see the install guide)
 datasight ask "Solar generation by state" --chart-format png -o solar-map.png
 ```
 

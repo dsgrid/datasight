@@ -2,8 +2,8 @@
 
 If your data lives on an HPC filesystem, the simplest setup is to run
 datasight itself on a compute node and query it from your laptop. No
-Flight SQL server, no extra infrastructure — just `pip install` on the
-HPC and an SSH tunnel if you want the browser UI.
+Flight SQL server, no extra infrastructure — just install datasight on
+the HPC and an SSH tunnel if you want the browser UI.
 
 For a multi-user shared backend or a non-DuckDB engine, see
 [Connect to a remote Flight SQL backend](connect-flight-sql.md)
@@ -19,16 +19,18 @@ the agent client-side.
 
 ## 1. Install datasight on the HPC
 
-From the login node, create a venv (or conda env) and install:
+From the login node, create a [uv](https://docs.astral.sh/uv/)
+environment and install:
 
 ```bash
-python -m venv ~/datasight-env
+uv venv ~/datasight-env
 source ~/datasight-env/bin/activate
-pip install git+https://github.com/dsgrid/datasight.git
+uv pip install git+https://github.com/dsgrid/datasight.git
 ```
 
-Install once from the login node; compute nodes share the same
-filesystem.
+If uv isn't available, install it first with
+`curl -LsSf https://astral.sh/uv/install.sh | sh`. Install once from
+the login node; compute nodes share the same filesystem.
 
 ## 2. Allocate a compute node
 

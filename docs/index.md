@@ -13,7 +13,7 @@ queries for your team. Start with guided starter workflows in the web UI or
 use deterministic CLI inspection commands before involving the LLM.
 
 ```bash
-pip install git+https://github.com/dsgrid/datasight.git
+uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
 
 # Explore files instantly — no project setup needed
 datasight run

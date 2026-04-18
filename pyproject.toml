@@ -45,7 +45,7 @@ dev = [
     "zensical>=0.0.31",
     "ruff>=0.15,<1",
     "ty>=0.0.26",
-    "pre-commit>=4.0,<5",
+    "prek>=0.2,<1",
 ]
 
 [project.scripts]

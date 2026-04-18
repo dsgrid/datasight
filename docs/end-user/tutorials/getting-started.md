@@ -10,9 +10,11 @@ TEMPO](tempo.md) or [Try the time-validation demo](time-validation.md).
 ## 1. Install
 
 ```bash
-pip install git+https://github.com/dsgrid/datasight.git
+uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
 ```
 
+Don't have [uv](https://docs.astral.sh/uv/) yet? See
+[Install datasight](../how-to/install.md) for the one-line installer.
 This includes DuckDB, SQLite, PostgreSQL, Anthropic, GitHub Models, and
 Ollama — no extras needed.
 
@@ -74,6 +76,7 @@ Click **Pin** on any result to add it to the dashboard.
   file and start asking.
 
 !!! note "PNG chart export"
-    The `datasight ask --chart-format png` CLI command needs an additional
-    package: `pip install 'datasight[export]'`. The web UI uses interactive
-    HTML charts and does not need this.
+    The `datasight ask --chart-format png` CLI command needs the optional
+    export extra. Reinstall with:
+    `uv tool install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"`.
+    The web UI uses interactive HTML charts and does not need this.

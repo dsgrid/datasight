@@ -12,8 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13"
 
@@ -25,20 +25,20 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Python project
-        run: pip install -e ".[dev]"
+        run: uv sync --extra dev --frozen
 
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
 
       - name: Run Ruff lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Check Ruff formatting
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Run ty
-        run: ty check
+        run: uv run ty check
 
       - name: Check frontend types
         run: npm run check
@@ -49,8 +49,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13"
 
@@ -64,7 +64,7 @@ jobs:
       - name: Install Python project
         run: |
           mkdir -p src/datasight/web/static/assets
-          pip install -e ".[dev]"
+          uv sync --extra dev --frozen
 
       - name: Install frontend dependencies
         run: npm ci
@@ -83,13 +83,13 @@ jobs:
 
       - name: Run Playwright E2E tests
         run: |
-          datasight run &
+          uv run datasight run &
           for i in $(seq 1 30); do curl -s http://localhost:8084 > /dev/null && break; sleep 1; done
           npm run test:e2e
         working-directory: frontend
 
       - name: Run Python tests
-        run: pytest -q -m "not integration" --cov=datasight --cov-report=xml:coverage.xml
+        run: uv run pytest -q -m "not integration" --cov=datasight --cov-report=xml:coverage.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4.2.0
