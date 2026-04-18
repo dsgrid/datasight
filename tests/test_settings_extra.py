@@ -111,10 +111,10 @@ class TestLLMProviderBranches:
         assert s.llm.provider == "github"
         assert s.llm.api_key == "gt"
 
-    def test_unknown_provider_falls_back_to_anthropic(self, monkeypatch):
+    def test_unknown_provider_raises(self, monkeypatch):
         monkeypatch.setenv("LLM_PROVIDER", "mystery-llm")
-        s = Settings.from_env()
-        assert s.llm.provider == "anthropic"
+        with pytest.raises(ConfigurationError, match="Invalid LLM_PROVIDER"):
+            Settings.from_env()
 
 
 # ---------------------------------------------------------------------------

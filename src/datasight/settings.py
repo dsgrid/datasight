@@ -82,6 +82,8 @@ _PROJECT_ENV_VARS = [
     "CLARIFY_SQL",
     "SHOW_PROVENANCE",
     "QUERY_LOG_PATH",
+    "SQL_CACHE_MAX_BYTES",
+    "MAX_COST_USD_PER_TURN",
     # Project-specific file paths
     "SCHEMA_DESCRIPTION_PATH",
     "EXAMPLE_QUERIES_PATH",
@@ -271,14 +273,20 @@ class Settings:
         # Parse and validate LLM provider
         llm_provider_raw = os.environ.get("LLM_PROVIDER", "anthropic")
         match llm_provider_raw:
+            case "anthropic":
+                llm_provider: LLMProvider = "anthropic"
             case "ollama":
-                llm_provider: LLMProvider = "ollama"
+                llm_provider = "ollama"
             case "github":
                 llm_provider = "github"
             case "openai":
                 llm_provider = "openai"
             case _:
-                llm_provider = "anthropic"
+                valid_providers = "anthropic, ollama, github, openai"
+                raise ConfigurationError(
+                    f"Invalid LLM_PROVIDER: {llm_provider_raw!r}. "
+                    f"Valid providers: {valid_providers}"
+                )
 
         # Normalize DB_MODE (accept 'local' as alias for 'duckdb')
         db_mode_raw = os.environ.get("DB_MODE", "duckdb")

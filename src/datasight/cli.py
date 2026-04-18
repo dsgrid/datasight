@@ -234,15 +234,26 @@ async def _run_ask_pipeline(
         query_logger=query_logger,
         session_id=session_id,
         turn_id=turn_id,
+        max_cost_usd=settings.app.max_cost_usd_per_turn,
     )
 
     # Mirror the web app: emit a turn-level cost summary so `datasight log
     # --cost` reflects CLI usage too.
     log_query_cost(
-        resolved_model, result.api_calls, result.total_input_tokens, result.total_output_tokens
+        resolved_model,
+        result.api_calls,
+        result.total_input_tokens,
+        result.total_output_tokens,
+        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+        cache_read_input_tokens=result.total_cache_read_input_tokens,
     )
     cost_data = build_cost_data(
-        resolved_model, result.api_calls, result.total_input_tokens, result.total_output_tokens
+        resolved_model,
+        result.api_calls,
+        result.total_input_tokens,
+        result.total_output_tokens,
+        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+        cache_read_input_tokens=result.total_cache_read_input_tokens,
     )
     query_logger.log_cost(
         session_id=session_id,
@@ -250,6 +261,8 @@ async def _run_ask_pipeline(
         api_calls=result.api_calls,
         input_tokens=result.total_input_tokens,
         output_tokens=result.total_output_tokens,
+        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+        cache_read_input_tokens=result.total_cache_read_input_tokens,
         estimated_cost=cost_data.get("estimated_cost"),
         turn_id=turn_id,
     )
@@ -1076,7 +1089,12 @@ def _build_cli_provenance(
     from datasight.cost import build_cost_data
 
     cost_data = build_cost_data(
-        model, result.api_calls, result.total_input_tokens, result.total_output_tokens
+        model,
+        result.api_calls,
+        result.total_input_tokens,
+        result.total_output_tokens,
+        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+        cache_read_input_tokens=result.total_cache_read_input_tokens,
     )
     tools = []
     for tr in result.tool_results:

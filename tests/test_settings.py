@@ -84,6 +84,20 @@ class TestEnvIsolation:
         # Project A's key should be gone
         assert os.environ.get("ANTHROPIC_API_KEY") is None
 
+    def test_project_cost_and_cache_settings_dont_leak(self):
+        """Project-specific cost/cache controls should be restored on switch."""
+        for var in ("MAX_COST_USD_PER_TURN", "SQL_CACHE_MAX_BYTES"):
+            os.environ.pop(var, None)
+        capture_original_env()
+
+        os.environ["MAX_COST_USD_PER_TURN"] = "none"
+        os.environ["SQL_CACHE_MAX_BYTES"] = "0"
+
+        restore_original_env()
+
+        assert os.environ.get("MAX_COST_USD_PER_TURN") is None
+        assert os.environ.get("SQL_CACHE_MAX_BYTES") is None
+
     @pytest.fixture(autouse=True)
     def cleanup_env(self):
         """Clean up env vars after each test."""

@@ -1928,6 +1928,23 @@ def test_build_cost_data_known_model_returns_estimated_cost():
     assert data["estimated_cost"] == 18.0
 
 
+def test_build_cost_data_counts_anthropic_cache_tokens():
+    from datasight.cost import build_cost_data
+
+    data = build_cost_data(
+        "claude-sonnet-4-6",
+        api_calls=1,
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_creation_input_tokens=1_000_000,
+        cache_read_input_tokens=1_000_000,
+    )
+    assert data["cache_creation_input_tokens"] == 1_000_000
+    assert data["cache_read_input_tokens"] == 1_000_000
+    # $3 input + $3.75 cache write + $0.30 cache read.
+    assert data["estimated_cost"] == 7.05
+
+
 def test_build_cost_data_unknown_model_returns_none_cost():
     from datasight.cost import build_cost_data
 

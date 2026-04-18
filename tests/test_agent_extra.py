@@ -271,6 +271,35 @@ async def test_run_agent_loop_with_tool_use(test_duckdb_path):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_loop_cost_budget_counts_cache_tokens(test_duckdb_path):
+    runner = DuckDBRunner(test_duckdb_path)
+    fake = _FakeLLMClient(
+        responses=[
+            LLMResponse(
+                content=[TextBlock(text="expensive")],
+                stop_reason="end_turn",
+                usage=Usage(
+                    input_tokens=0,
+                    output_tokens=0,
+                    cache_creation_input_tokens=1_000_000,
+                ),
+            )
+        ]
+    )
+    result = await run_agent_loop(
+        question="q",
+        llm_client=fake,
+        model="claude-sonnet-4-6",
+        system_prompt="p",
+        run_sql=runner.run_sql,
+        max_cost_usd=1.0,
+    )
+    runner.close()
+    assert "exceeded" in result.text
+    assert result.total_cache_creation_input_tokens == 1_000_000
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_max_iterations(test_duckdb_path):
     runner = DuckDBRunner(test_duckdb_path)
 

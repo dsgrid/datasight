@@ -748,6 +748,8 @@ class AgentResult:
     tool_results: list[ToolResult] = field(default_factory=list)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cache_creation_input_tokens: int = 0
+    total_cache_read_input_tokens: int = 0
     api_calls: int = 0
 
 
@@ -820,6 +822,8 @@ async def run_agent_loop(
     collected_tool_results: list[ToolResult] = []
     total_input_tokens = 0
     total_output_tokens = 0
+    total_cache_creation_input_tokens = 0
+    total_cache_read_input_tokens = 0
     api_calls = 0
 
     for _ in range(max_iterations):
@@ -833,10 +837,17 @@ async def run_agent_loop(
         api_calls += 1
         total_input_tokens += response.usage.input_tokens
         total_output_tokens += response.usage.output_tokens
+        total_cache_creation_input_tokens += response.usage.cache_creation_input_tokens
+        total_cache_read_input_tokens += response.usage.cache_read_input_tokens
 
         if max_cost_usd is not None:
             running_cost = build_cost_data(
-                model, api_calls, total_input_tokens, total_output_tokens
+                model,
+                api_calls,
+                total_input_tokens,
+                total_output_tokens,
+                cache_creation_input_tokens=total_cache_creation_input_tokens,
+                cache_read_input_tokens=total_cache_read_input_tokens,
             )["estimated_cost"]
             if running_cost is not None and running_cost > max_cost_usd:
                 logger.warning(
@@ -852,6 +863,8 @@ async def run_agent_loop(
                     tool_results=collected_tool_results,
                     total_input_tokens=total_input_tokens,
                     total_output_tokens=total_output_tokens,
+                    total_cache_creation_input_tokens=total_cache_creation_input_tokens,
+                    total_cache_read_input_tokens=total_cache_read_input_tokens,
                     api_calls=api_calls,
                 )
 
@@ -900,6 +913,8 @@ async def run_agent_loop(
             tool_results=collected_tool_results,
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
+            total_cache_creation_input_tokens=total_cache_creation_input_tokens,
+            total_cache_read_input_tokens=total_cache_read_input_tokens,
             api_calls=api_calls,
         )
 
@@ -908,5 +923,7 @@ async def run_agent_loop(
         tool_results=collected_tool_results,
         total_input_tokens=total_input_tokens,
         total_output_tokens=total_output_tokens,
+        total_cache_creation_input_tokens=total_cache_creation_input_tokens,
+        total_cache_read_input_tokens=total_cache_read_input_tokens,
         api_calls=api_calls,
     )

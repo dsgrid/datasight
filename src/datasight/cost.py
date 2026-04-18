@@ -26,29 +26,61 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
 
 
 def build_cost_data(
-    model: str, api_calls: int, input_tokens: int, output_tokens: int
+    model: str,
+    api_calls: int,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
 ) -> dict[str, Any]:
     """Build a cost/token summary dict for a single turn."""
     data: dict[str, Any] = {
         "api_calls": api_calls,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
         "estimated_cost": None,
     }
     pricing = MODEL_PRICING.get(model)
     if pricing:
         input_cost = input_tokens * pricing[0] / 1_000_000
         output_cost = output_tokens * pricing[1] / 1_000_000
-        data["estimated_cost"] = round(input_cost + output_cost, 6)
+        # Anthropic prompt-cache writes are billed at 1.25x input price and
+        # cache reads at 0.1x input price for the ephemeral cache used here.
+        cache_creation_cost = cache_creation_input_tokens * pricing[0] * 1.25 / 1_000_000
+        cache_read_cost = cache_read_input_tokens * pricing[0] * 0.1 / 1_000_000
+        data["estimated_cost"] = round(
+            input_cost + output_cost + cache_creation_cost + cache_read_cost,
+            6,
+        )
     return data
 
 
-def log_query_cost(model: str, api_calls: int, input_tokens: int, output_tokens: int) -> None:
+def log_query_cost(
+    model: str,
+    api_calls: int,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+) -> None:
     """Emit a one-line loguru summary of token usage and estimated cost."""
-    data = build_cost_data(model, api_calls, input_tokens, output_tokens)
+    data = build_cost_data(
+        model,
+        api_calls,
+        input_tokens,
+        output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
     cost = data["estimated_cost"]
     cost_str = f" est_cost=${cost:.4f}" if cost is not None else ""
     logger.info(
         f"[tokens] QUERY TOTAL: api_calls={api_calls} "
-        f"input={input_tokens} output={output_tokens}{cost_str}"
+        f"input={input_tokens} output={output_tokens} "
+        f"cache_create={cache_creation_input_tokens} cache_read={cache_read_input_tokens}"
+        f"{cost_str}"
     )

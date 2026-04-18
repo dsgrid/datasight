@@ -1157,6 +1157,8 @@ def _build_turn_provenance(
     api_calls: int,
     input_tokens: int,
     output_tokens: int,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
 ) -> dict[str, Any]:
     """Build provenance payload for a completed assistant turn."""
     warnings = [
@@ -1175,6 +1177,8 @@ def _build_turn_provenance(
             "api_calls": api_calls,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation_input_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
             "estimated_cost": cost_data.get("estimated_cost"),
         },
         "warnings": warnings,
@@ -1243,6 +1247,8 @@ async def generate_chat_response(
 
     total_input_tokens = 0
     total_output_tokens = 0
+    total_cache_creation_input_tokens = 0
+    total_cache_read_input_tokens = 0
     api_calls = 0
 
     for _ in range(max_iterations):
@@ -1290,6 +1296,8 @@ async def generate_chat_response(
         api_calls += 1
         total_input_tokens += response.usage.input_tokens
         total_output_tokens += response.usage.output_tokens
+        total_cache_creation_input_tokens += response.usage.cache_creation_input_tokens
+        total_cache_read_input_tokens += response.usage.cache_read_input_tokens
         logger.info(
             f"[tokens] call={api_calls} "
             f"input={response.usage.input_tokens} output={response.usage.output_tokens} "
@@ -1299,7 +1307,12 @@ async def generate_chat_response(
 
         if state.max_cost_usd_per_turn is not None:
             running_cost = build_cost_data(
-                state.model, api_calls, total_input_tokens, total_output_tokens
+                state.model,
+                api_calls,
+                total_input_tokens,
+                total_output_tokens,
+                cache_creation_input_tokens=total_cache_creation_input_tokens,
+                cache_read_input_tokens=total_cache_read_input_tokens,
             )["estimated_cost"]
             if running_cost is not None and running_cost > state.max_cost_usd_per_turn:
                 logger.warning(
@@ -1448,9 +1461,21 @@ async def generate_chat_response(
             yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
             await asyncio.sleep(0.015)
 
-        log_query_cost(state.model, api_calls, total_input_tokens, total_output_tokens)
+        log_query_cost(
+            state.model,
+            api_calls,
+            total_input_tokens,
+            total_output_tokens,
+            cache_creation_input_tokens=total_cache_creation_input_tokens,
+            cache_read_input_tokens=total_cache_read_input_tokens,
+        )
         cost_data = build_cost_data(
-            state.model, api_calls, total_input_tokens, total_output_tokens
+            state.model,
+            api_calls,
+            total_input_tokens,
+            total_output_tokens,
+            cache_creation_input_tokens=total_cache_creation_input_tokens,
+            cache_read_input_tokens=total_cache_read_input_tokens,
         )
         if state.query_logger:
             state.query_logger.log_cost(
@@ -1459,6 +1484,8 @@ async def generate_chat_response(
                 api_calls=api_calls,
                 input_tokens=total_input_tokens,
                 output_tokens=total_output_tokens,
+                cache_creation_input_tokens=total_cache_creation_input_tokens,
+                cache_read_input_tokens=total_cache_read_input_tokens,
                 estimated_cost=cost_data.get("estimated_cost"),
                 turn_id=turn_id,
             )
@@ -1474,6 +1501,8 @@ async def generate_chat_response(
             api_calls=api_calls,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
+            cache_creation_input_tokens=total_cache_creation_input_tokens,
+            cache_read_input_tokens=total_cache_read_input_tokens,
         )
         evt_log.append({"event": EventType.PROVENANCE, "data": provenance})
         await state.save_session(session_id)
@@ -1507,8 +1536,22 @@ async def generate_chat_response(
             yield f"event: {EventType.SUGGESTIONS}\ndata: {json.dumps({'suggestions': suggestions})}\n\n"
         return
 
-    log_query_cost(state.model, api_calls, total_input_tokens, total_output_tokens)
-    cost_data = build_cost_data(state.model, api_calls, total_input_tokens, total_output_tokens)
+    log_query_cost(
+        state.model,
+        api_calls,
+        total_input_tokens,
+        total_output_tokens,
+        cache_creation_input_tokens=total_cache_creation_input_tokens,
+        cache_read_input_tokens=total_cache_read_input_tokens,
+    )
+    cost_data = build_cost_data(
+        state.model,
+        api_calls,
+        total_input_tokens,
+        total_output_tokens,
+        cache_creation_input_tokens=total_cache_creation_input_tokens,
+        cache_read_input_tokens=total_cache_read_input_tokens,
+    )
     if state.query_logger:
         state.query_logger.log_cost(
             session_id=session_id,
@@ -1516,6 +1559,8 @@ async def generate_chat_response(
             api_calls=api_calls,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
+            cache_creation_input_tokens=total_cache_creation_input_tokens,
+            cache_read_input_tokens=total_cache_read_input_tokens,
             estimated_cost=cost_data.get("estimated_cost"),
             turn_id=turn_id,
         )
@@ -1530,6 +1575,8 @@ async def generate_chat_response(
         api_calls=api_calls,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
+        cache_creation_input_tokens=total_cache_creation_input_tokens,
+        cache_read_input_tokens=total_cache_read_input_tokens,
     )
     evt_log.append({"event": EventType.PROVENANCE, "data": provenance})
     await state.save_session(session_id)

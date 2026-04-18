@@ -65,6 +65,8 @@ class QueryLogger:
         api_calls: int,
         input_tokens: int,
         output_tokens: int,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
         estimated_cost: float | None = None,
         turn_id: str | None = None,
     ) -> None:
@@ -78,6 +80,8 @@ class QueryLogger:
             "api_calls": api_calls,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_creation_input_tokens": cache_creation_input_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
             "estimated_cost": estimated_cost,
         }
         try:
