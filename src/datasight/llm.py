@@ -196,10 +196,11 @@ class AnthropicLLMClient:
         }
         if base_url:
             kwargs["base_url"] = base_url
-        try:
-            self._client = anthropic.AsyncAnthropic(**kwargs)
-        except anthropic.APIConnectionError as e:
-            raise LLMConnectionError(f"Failed to initialize Anthropic client: {e}") from e
+        # ``AsyncAnthropic.__init__`` does argument validation but no network
+        # IO, so there is no transient failure to guard against here. Any
+        # ``AnthropicError`` raised would be a config problem (e.g. bad
+        # api_key shape) and propagates directly to the caller.
+        self._client = anthropic.AsyncAnthropic(**kwargs)
 
     async def create_message(
         self,
@@ -251,6 +252,13 @@ class AnthropicLLMClient:
                     messages=anthropic_messages,
                 )
                 break
+            except anthropic.AuthenticationError as e:
+                # Auth failures are a configuration problem, not a transient
+                # API error — retrying won't fix a missing/invalid key.
+                logger.exception("Anthropic authentication error")
+                raise ConfigurationError(
+                    f"Anthropic authentication failed — check ANTHROPIC_API_KEY: {e}"
+                ) from e
             except anthropic.APIConnectionError as e:
                 if is_last:
                     logger.exception("Anthropic connection error (final attempt)")
@@ -336,6 +344,30 @@ class AnthropicLLMClient:
 # ---------------------------------------------------------------------------
 
 
+def _stringify_tool_result_content(raw: Any) -> str:
+    """Coerce an Anthropic-style ``tool_result.content`` payload to a string.
+
+    Anthropic allows ``tool_result.content`` to be either a string or a list
+    of content blocks (text, image, etc.). The OpenAI chat ``tool`` message
+    only accepts a string, so list-shaped payloads are flattened: text
+    blocks are concatenated, and anything else is JSON-serialized so we
+    don't silently drop information downstream.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for block in raw:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+            else:
+                parts.append(json.dumps(block, default=str))
+        return "\n".join(parts)
+    return json.dumps(raw, default=str)
+
+
 def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Anthropic-style tool definitions to OpenAI function-calling format."""
     result: list[dict[str, Any]] = []
@@ -382,7 +414,7 @@ def _convert_messages_to_openai(
                         {
                             "role": "tool",
                             "tool_call_id": item["tool_use_id"],
-                            "content": item.get("content", ""),
+                            "content": _stringify_tool_result_content(item.get("content")),
                         }
                     )
                 elif block_type == "text":
@@ -439,6 +471,13 @@ def _convert_messages_to_openai(
 class _OpenAICompatibleClient:
     """Base class for LLM clients using OpenAI-compatible APIs."""
 
+    # Subclasses set this to ``False`` to treat ``APITimeoutError`` as a
+    # fatal ``LLMConnectionError`` instead of retrying it. Default keeps the
+    # historical retry-on-timeout behavior for hosted backends (OpenAI,
+    # GitHub Models) where a timeout usually means a transient network
+    # hiccup. See ``OllamaLLMClient`` for the opposite trade-off.
+    _retry_on_timeout: bool = True
+
     def __init__(
         self, base_url: str, api_key: str = "ollama", timeout: float = DEFAULT_LLM_TIMEOUT
     ):
@@ -488,15 +527,7 @@ class _OpenAICompatibleClient:
             _convert_tools_to_openai(tools),
         )
 
-        # Typed transient errors for this SDK. Anything not in this tuple is
-        # treated as fatal and raised immediately.
         oa = self._openai
-        transient_errors: tuple[type[BaseException], ...] = (
-            oa.APIConnectionError,
-            oa.APITimeoutError,
-            oa.RateLimitError,
-            oa.InternalServerError,
-        )
 
         response = None
         retries = 0
@@ -519,14 +550,62 @@ class _OpenAICompatibleClient:
                         temperature=0,
                     )
                 break
-            except transient_errors as e:
+            except oa.AuthenticationError as e:
+                # Auth failures are a configuration problem — don't retry.
+                # AuthenticationError is a subclass of APIStatusError so this
+                # branch must come before the generic status-error branch.
+                logger.exception("OpenAI-compatible authentication error")
+                raise ConfigurationError(
+                    f"Authentication failed — check the API key for this provider: {e}"
+                ) from e
+            except oa.APITimeoutError as e:
+                # ``APITimeoutError`` is a subclass of ``APIConnectionError``,
+                # so this specific branch must come first when subclasses
+                # disable timeout retries (e.g. Ollama, where a local model
+                # that's slow on this call will also be slow on the retry).
+                if is_last or not self._retry_on_timeout:
+                    logger.exception("OpenAI-compatible API timeout (final attempt)")
+                    raise LLMConnectionError(f"API request timed out: {e}") from e
+                retries += 1
+                delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    f"OpenAI-compatible API timeout "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
+                    f"retrying in {delay:.1f}s: {e}"
+                )
+                await asyncio.sleep(delay)
+            except oa.APIConnectionError as e:
                 if is_last:
-                    logger.exception("OpenAI-compatible API error (final attempt)")
+                    logger.exception("OpenAI-compatible connection error (final attempt)")
                     raise LLMConnectionError(f"API request failed: {e}") from e
                 retries += 1
                 delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
-                    f"OpenAI-compatible API error "
+                    f"OpenAI-compatible connection error "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
+                    f"retrying in {delay:.1f}s: {e}"
+                )
+                await asyncio.sleep(delay)
+            except oa.RateLimitError as e:
+                if is_last:
+                    logger.exception("OpenAI-compatible rate limit (final attempt)")
+                    raise LLMResponseError(f"API rate limit exceeded: {e}") from e
+                retries += 1
+                delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    f"OpenAI-compatible rate limit "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
+                    f"retrying in {delay:.1f}s"
+                )
+                await asyncio.sleep(delay)
+            except oa.InternalServerError as e:
+                if is_last:
+                    logger.exception("OpenAI-compatible 5xx error (final attempt)")
+                    raise LLMResponseError(f"API server error: {e}") from e
+                retries += 1
+                delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    f"OpenAI-compatible server error "
                     f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
                     f"retrying in {delay:.1f}s: {e}"
                 )
@@ -580,6 +659,10 @@ class _OpenAICompatibleClient:
             stop = "tool_use"
         else:
             stop = "end_turn"
+        # ``cache_creation_input_tokens`` / ``cache_read_input_tokens`` are
+        # left at the ``Usage`` defaults (0) — OpenAI-compatible APIs don't
+        # report prompt-cache metadata the way Anthropic does, so there's
+        # nothing to populate here.
         usage = Usage(
             input_tokens=response.usage.prompt_tokens if response.usage else 0,
             output_tokens=response.usage.completion_tokens if response.usage else 0,
@@ -594,6 +677,13 @@ class _OpenAICompatibleClient:
 
 class OllamaLLMClient(_OpenAICompatibleClient):
     """LLM client backed by Ollama's OpenAI-compatible API."""
+
+    # Local inference timeouts almost always mean "this model is slow on
+    # this prompt," not "transient network blip." Retrying with exponential
+    # backoff compounds the wait (e.g. 120s + 1s + 120s + 2s + 120s across
+    # three attempts) before the caller sees the failure. Better to fail
+    # fast and let the user pick a smaller model or raise ``LLM_TIMEOUT``.
+    _retry_on_timeout = False
 
     def __init__(
         self,
@@ -695,7 +785,9 @@ class _ProviderSpec:
 
 # Order is not significant; dict keys are the provider names accepted by the
 # public factory. Adding a new provider is a one-place change: register it
-# here and handle it in the ``match`` below.
+# here, handle it in the ``match`` below, and add it to the ``LLMProvider``
+# Literal in ``datasight.settings`` (kept in sync with ``SUPPORTED_PROVIDERS``
+# below).
 _PROVIDERS: dict[str, _ProviderSpec] = {
     "anthropic": _ProviderSpec(
         label="Anthropic",
@@ -719,12 +811,19 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
     ),
 }
 
+# Public snapshot of provider names the factory accepts. Used by
+# ``datasight.settings`` for runtime validation so the provider list lives in
+# one place.
+SUPPORTED_PROVIDERS: frozenset[str] = frozenset(_PROVIDERS)
+
 
 def create_llm_client(
     provider: str,
     api_key: str = "",
     base_url: str | None = None,
     timeout: float = DEFAULT_LLM_TIMEOUT,
+    *,
+    model: str | None = None,
 ) -> LLMClient:
     """Create an LLM client for the given provider.
 
@@ -738,6 +837,10 @@ def create_llm_client(
         Optional custom base URL.
     timeout:
         Per-request timeout in seconds.
+    model:
+        Optional model name used only for the startup log line. Does not
+        affect client behavior — the model is still selected per call via
+        ``create_message``.
 
     Returns
     -------
@@ -763,10 +866,11 @@ def create_llm_client(
         )
 
     url = base_url or spec.default_base_url
+    model_suffix = f" (model={model})" if model else ""
     if url:
-        logger.info(f"Using {spec.label} LLM backend: {url}")
+        logger.info(f"Using {spec.label} LLM backend: {url}{model_suffix}")
     else:
-        logger.info(f"Using {spec.label} LLM backend")
+        logger.info(f"Using {spec.label} LLM backend{model_suffix}")
 
     match provider:
         case "ollama":

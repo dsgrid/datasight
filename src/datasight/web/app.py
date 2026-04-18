@@ -675,6 +675,7 @@ def init_llm_client(state: AppState) -> None:
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
             timeout=settings.llm.timeout,
+            model=settings.llm.model,
         )
         # Only update state after successful creation
         state.llm_client = client
