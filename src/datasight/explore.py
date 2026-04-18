@@ -88,10 +88,19 @@ def scan_directory_for_data_files(
         return [], False
 
     matches: list[Path] = []
-    for entry in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+    try:
+        entries = sorted(root.iterdir(), key=lambda p: p.name.lower())
+    except OSError as e:
+        logger.warning(f"Unable to list {root}: {e}")
+        return [], False
+
+    for entry in entries:
         if entry.name.startswith("."):
             continue
-        if not entry.is_file():
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
             continue
         suffix = entry.suffix.lower()
         if suffix not in (".csv", ".parquet"):

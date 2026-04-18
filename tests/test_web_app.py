@@ -766,14 +766,18 @@ def test_save_explore_project_seeds_measure_overrides(monkeypatch, tmp_path):
 def test_explore_scan_cwd_lists_data_files(monkeypatch, tmp_path):
     """Scan endpoint returns CSV/Parquet files discovered in CWD."""
     (tmp_path / "generation.csv").write_text("a,b\n1,2\n", encoding="utf-8")
-    (tmp_path / "plants.parquet").write_bytes(b"\x00")  # fake payload; only metadata is read
+    (tmp_path / "plants.parquet").write_bytes(b"\x00")  # existence + stat() only
     (tmp_path / "notes.txt").write_text("ignore", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
+    original_project_loaded = web_app._state.project_loaded
     web_app._state.project_loaded = False
 
-    with TestClient(web_app.app) as client:
-        response = client.get("/api/explore/scan-cwd")
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.get("/api/explore/scan-cwd")
+    finally:
+        web_app._state.project_loaded = original_project_loaded
 
     assert response.status_code == 200
     body = response.json()
