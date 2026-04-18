@@ -22,6 +22,7 @@
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
   import { chatStore } from "$lib/stores/chat.svelte";
   import { queriesStore } from "$lib/stores/queries.svelte";
+  import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
   import { paletteStore } from "$lib/stores/palette.svelte";
   import { getProjectStatus } from "$lib/api/projects";
   import { loadSettings, loadLlmConfig } from "$lib/api/settings";
@@ -182,6 +183,7 @@
     chatStore.clear();
     queriesStore.clear();
     dashboardStore.clear();
+    sqlEditorStore.clearAll();
     sessionStore.sessionId = crypto.randomUUID();
     dashboardStore.currentView = "chat";
     exportMode = false;
