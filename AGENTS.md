@@ -59,7 +59,7 @@ mkdocs.yml          # Zensical config
 uv sync --extra dev
 . .venv/bin/activate
 
-# Run pre-commit hooks (ruff, ruff-format, ty, docs CLI reference drift)
+# Run prek hooks (ruff, ruff-format, ty, docs CLI reference drift)
 prek run --all-files
 
 # Build docs
