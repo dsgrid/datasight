@@ -16,7 +16,11 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13"
-          enable-cache: true
+          # Cache disabled: the post-job prune step hits the GitHub Actions
+          # cache service and fails the whole job when that service is
+          # unhealthy. Install is fast enough without the cache that
+          # reliability wins over the ~30s speedup.
+          enable-cache: false
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -54,7 +58,11 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.13"
-          enable-cache: true
+          # Cache disabled: the post-job prune step hits the GitHub Actions
+          # cache service and fails the whole job when that service is
+          # unhealthy. Install is fast enough without the cache that
+          # reliability wins over the ~30s speedup.
+          enable-cache: false
 
       - name: Set up Node
         uses: actions/setup-node@v4
