@@ -129,6 +129,7 @@ async def _run_ask_pipeline(
         provider=settings.llm.provider,
         api_key=settings.llm.api_key,
         base_url=settings.llm.base_url,
+        timeout=settings.llm.timeout,
     )
     sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
@@ -1783,6 +1784,7 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
             provider=settings.llm.provider,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
+            timeout=settings.llm.timeout,
         )
 
         if sqlite_source_path is not None:
@@ -2143,6 +2145,7 @@ def verify(project_dir, model, queries_path, verbose):
             provider=settings.llm.provider,
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
+            timeout=settings.llm.timeout,
         )
         sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 

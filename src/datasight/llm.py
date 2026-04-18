@@ -7,11 +7,11 @@ Provides a common async interface for interacting with different LLM providers
 Streaming note
 --------------
 The ``LLMClient`` Protocol only defines non-streaming ``create_message``.
-The web UI's token-level SSE streaming path is implemented directly against
-the Anthropic SDK in ``datasight.web.app``; for non-Anthropic providers the
-web UI falls back to a single-shot request plus word-splitting on the
-server side. Adding cross-provider streaming would require per-backend
-streaming adapters; until then, ``create_message`` is the contract.
+All callers — including the web UI's SSE path in ``datasight.web.app`` —
+drive the agent loop through ``create_message`` and emit SSE events around
+whole responses. Adding true token-level streaming would require
+per-backend streaming adapters added to the Protocol; until then,
+``create_message`` is the contract every provider implements.
 """
 
 from __future__ import annotations
@@ -33,8 +33,10 @@ from datasight.exceptions import (
 # Default timeout for LLM API calls (seconds).
 DEFAULT_LLM_TIMEOUT: float = 120.0
 
-# Retry configuration for transient LLM failures.
-DEFAULT_MAX_RETRIES: int = 3
+# Retry configuration for transient LLM failures. ``DEFAULT_MAX_ATTEMPTS``
+# is the total call budget (one initial call + up to N-1 retries), not the
+# number of retries after the first failure.
+DEFAULT_MAX_ATTEMPTS: int = 3
 DEFAULT_RETRY_BASE_DELAY: float = 1.0  # seconds, doubled each retry
 
 
@@ -67,6 +69,12 @@ class Usage:
     output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+
+
+@dataclass
+class CallStats:
+    """Per-call LLM client telemetry that isn't token usage."""
+
     retries_performed: int = 0
 
 
@@ -83,6 +91,7 @@ class LLMResponse:
     content: list[TextBlock | ToolUseBlock]
     stop_reason: StopReason
     usage: Usage = field(default_factory=Usage)
+    call_stats: CallStats = field(default_factory=CallStats)
 
 
 ContentBlock = TextBlock | ToolUseBlock
@@ -199,14 +208,21 @@ class AnthropicLLMClient:
         # Mark the last tool with cache_control so the full tools array is
         # cached alongside the system prompt. A single breakpoint at the end
         # covers everything before it in order (tools + system).
+        #
+        # Tool ORDER is load-bearing: Anthropic's prompt cache keys off the
+        # exact serialized prefix, so callers must pass tools in a stable
+        # order across turns or we silently lose the cache hit. Shallow-copy
+        # each tool dict so stamping cache_control here doesn't mutate the
+        # caller's list; we only add a top-level key, so sharing nested
+        # structures like input_schema is safe.
         cached_tools: list[dict[str, Any]] = [dict(t) for t in tools]
         if cached_tools:
             cached_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
         response = None
         retries = 0
-        for attempt in range(DEFAULT_MAX_RETRIES):
-            is_last = attempt == DEFAULT_MAX_RETRIES - 1
+        for attempt in range(DEFAULT_MAX_ATTEMPTS):
+            is_last = attempt == DEFAULT_MAX_ATTEMPTS - 1
             try:
                 response = await self._client.messages.create(
                     model=model,
@@ -230,7 +246,8 @@ class AnthropicLLMClient:
                 retries += 1
                 delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
-                    f"Anthropic connection error (attempt {attempt + 1}/{DEFAULT_MAX_RETRIES}), "
+                    f"Anthropic connection error "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
                     f"retrying in {delay:.1f}s: {e}"
                 )
                 await asyncio.sleep(delay)
@@ -241,15 +258,31 @@ class AnthropicLLMClient:
                 retries += 1
                 delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
-                    f"Anthropic rate limit (attempt {attempt + 1}/{DEFAULT_MAX_RETRIES}), "
+                    f"Anthropic rate limit "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
                     f"retrying in {delay:.1f}s"
+                )
+                await asyncio.sleep(delay)
+            except anthropic.InternalServerError as e:
+                if is_last:
+                    logger.exception("Anthropic 5xx error (final attempt)")
+                    raise LLMResponseError(f"Anthropic API error: {e}") from e
+                retries += 1
+                delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    f"Anthropic server error "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
+                    f"retrying in {delay:.1f}s: {e}"
                 )
                 await asyncio.sleep(delay)
             except anthropic.APIStatusError as e:
                 logger.exception("Anthropic API error")
                 raise LLMResponseError(f"Anthropic API error: {e}") from e
 
-        assert response is not None  # break above guarantees this
+        if response is None:
+            raise LLMResponseError(
+                "Anthropic client exhausted retries without returning a response"
+            )
 
         content: list[ContentBlock] = []
         for block in response.content:
@@ -277,9 +310,13 @@ class AnthropicLLMClient:
             cache_creation_input_tokens=getattr(response.usage, "cache_creation_input_tokens", 0)
             or 0,
             cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
-            retries_performed=retries,
         )
-        return LLMResponse(content=content, stop_reason=stop, usage=usage)
+        return LLMResponse(
+            content=content,
+            stop_reason=stop,
+            usage=usage,
+            call_stats=CallStats(retries_performed=retries),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -318,9 +355,17 @@ def _convert_messages_to_openai(
             out.append({"role": "user", "content": content})
 
         elif role == "user" and isinstance(content, list):
-            # Tool results
+            # User turn may carry tool_result blocks (one OpenAI "tool"
+            # message per block) and/or plain text blocks (a single "user"
+            # message). We emit them in input order so conversation state
+            # stays consistent.
+            text_parts: list[str] = []
             for item in content:
-                if isinstance(item, dict) and item.get("type") == "tool_result":
+                if not isinstance(item, dict):
+                    logger.debug(f"Skipping non-dict user content block: {type(item).__name__}")
+                    continue
+                block_type = item.get("type")
+                if block_type == "tool_result":
                     out.append(
                         {
                             "role": "tool",
@@ -328,29 +373,44 @@ def _convert_messages_to_openai(
                             "content": item.get("content", ""),
                         }
                     )
+                elif block_type == "text":
+                    text_parts.append(item.get("text", ""))
+                else:
+                    logger.debug(f"Skipping unexpected user content block type: {block_type!r}")
+            if text_parts:
+                out.append({"role": "user", "content": "\n".join(text_parts)})
 
         elif role == "assistant" and isinstance(content, str):
             out.append({"role": "assistant", "content": content})
 
         elif role == "assistant" and isinstance(content, list):
             # Assistant message with potential tool calls
-            text_parts: list[str] = []
+            text_parts = []
             tool_calls: list[dict[str, Any]] = []
             for block in content:
-                if isinstance(block, dict):
-                    if block.get("type") == "text":
-                        text_parts.append(block["text"])
-                    elif block.get("type") == "tool_use":
-                        tool_calls.append(
-                            {
-                                "id": block["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": block["name"],
-                                    "arguments": json.dumps(block["input"]),
-                                },
-                            }
-                        )
+                if not isinstance(block, dict):
+                    logger.debug(
+                        f"Skipping non-dict assistant content block: {type(block).__name__}"
+                    )
+                    continue
+                block_type = block.get("type")
+                if block_type == "text":
+                    text_parts.append(block["text"])
+                elif block_type == "tool_use":
+                    tool_calls.append(
+                        {
+                            "id": block["id"],
+                            "type": "function",
+                            "function": {
+                                "name": block["name"],
+                                "arguments": json.dumps(block["input"]),
+                            },
+                        }
+                    )
+                else:
+                    logger.debug(
+                        f"Skipping unexpected assistant content block type: {block_type!r}"
+                    )
 
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if text_parts:
@@ -394,7 +454,7 @@ class _OpenAICompatibleClient:
         self._openai = openai
         try:
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
-        except Exception as e:
+        except openai.OpenAIError as e:
             raise LLMConnectionError(f"Failed to initialize OpenAI client: {e}") from e
 
     async def create_message(
@@ -422,8 +482,8 @@ class _OpenAICompatibleClient:
 
         response = None
         retries = 0
-        for attempt in range(DEFAULT_MAX_RETRIES):
-            is_last = attempt == DEFAULT_MAX_RETRIES - 1
+        for attempt in range(DEFAULT_MAX_ATTEMPTS):
+            is_last = attempt == DEFAULT_MAX_ATTEMPTS - 1
             try:
                 response = await self._client.chat.completions.create(
                     model=model,
@@ -440,7 +500,8 @@ class _OpenAICompatibleClient:
                 retries += 1
                 delay = DEFAULT_RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
-                    f"OpenAI-compatible API error (attempt {attempt + 1}/{DEFAULT_MAX_RETRIES}), "
+                    f"OpenAI-compatible API error "
+                    f"(attempt {attempt + 1}/{DEFAULT_MAX_ATTEMPTS}), "
                     f"retrying in {delay:.1f}s: {e}"
                 )
                 await asyncio.sleep(delay)
@@ -448,7 +509,10 @@ class _OpenAICompatibleClient:
                 logger.exception("OpenAI-compatible API error")
                 raise LLMResponseError(f"API error: {e}") from e
 
-        assert response is not None  # break above guarantees this
+        if response is None:
+            raise LLMResponseError(
+                "OpenAI-compatible client exhausted retries without returning a response"
+            )
 
         choice = response.choices[0]
         content: list[ContentBlock] = []
@@ -472,18 +536,27 @@ class _OpenAICompatibleClient:
             )
 
         finish = getattr(choice, "finish_reason", None)
-        if tool_calls:
-            stop: StopReason = "tool_use"
-        elif finish == "length":
-            stop = "max_tokens"
+        # ``finish_reason == "length"`` outranks ``tool_use`` here: a
+        # truncated tool_call payload is worse than a plain text cutoff
+        # (unparseable JSON / half an argument), so surface max_tokens so
+        # the agent can show the truncation notice instead of running a
+        # broken tool call.
+        if finish == "length":
+            stop: StopReason = "max_tokens"
+        elif tool_calls:
+            stop = "tool_use"
         else:
             stop = "end_turn"
         usage = Usage(
             input_tokens=response.usage.prompt_tokens if response.usage else 0,
             output_tokens=response.usage.completion_tokens if response.usage else 0,
-            retries_performed=retries,
         )
-        return LLMResponse(content=content, stop_reason=stop, usage=usage)
+        return LLMResponse(
+            content=content,
+            stop_reason=stop,
+            usage=usage,
+            call_stats=CallStats(retries_performed=retries),
+        )
 
 
 class OllamaLLMClient(_OpenAICompatibleClient):
@@ -574,15 +647,43 @@ class OpenAILLMClient(_OpenAICompatibleClient):
 # ---------------------------------------------------------------------------
 
 
-# Providers that require a user-supplied API key. Ollama runs locally and
-# accepts any placeholder key.
-_PROVIDERS_REQUIRING_KEY = {"anthropic", "openai", "github"}
+@dataclass(frozen=True)
+class _ProviderSpec:
+    """Single source of truth for a provider entry in the factory.
 
-# Env-var hints used in the missing-key error message.
-_PROVIDER_API_KEY_HINT = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "github": "GITHUB_TOKEN",
+    ``api_key_env`` is ``None`` for providers that don't need a user key
+    (Ollama runs locally and accepts any placeholder).
+    """
+
+    label: str
+    default_base_url: str | None
+    api_key_env: str | None
+
+
+# Order is not significant; dict keys are the provider names accepted by the
+# public factory. Adding a new provider is a one-place change: register it
+# here and handle it in the ``match`` below.
+_PROVIDERS: dict[str, _ProviderSpec] = {
+    "anthropic": _ProviderSpec(
+        label="Anthropic",
+        default_base_url=None,
+        api_key_env="ANTHROPIC_API_KEY",
+    ),
+    "openai": _ProviderSpec(
+        label="OpenAI",
+        default_base_url=OPENAI_BASE_URL,
+        api_key_env="OPENAI_API_KEY",
+    ),
+    "github": _ProviderSpec(
+        label="GitHub Models",
+        default_base_url=GITHUB_MODELS_BASE_URL,
+        api_key_env="GITHUB_TOKEN",
+    ),
+    "ollama": _ProviderSpec(
+        label="Ollama",
+        default_base_url="http://localhost:11434/v1",
+        api_key_env=None,
+    ),
 }
 
 
@@ -618,31 +719,34 @@ def create_llm_client(
     ValueError:
         If ``provider`` is not recognized.
     """
-    if provider in _PROVIDERS_REQUIRING_KEY and not api_key:
-        env_var = _PROVIDER_API_KEY_HINT[provider]
+    spec = _PROVIDERS.get(provider)
+    if spec is None:
+        raise ValueError(f"Unknown LLM provider: {provider}")
+
+    if spec.api_key_env is not None and not api_key:
         raise ConfigurationError(
             f"No API key configured for provider {provider!r}. "
-            f"Set {env_var} or configure the LLM connection."
+            f"Set {spec.api_key_env} or configure the LLM connection."
         )
+
+    url = base_url or spec.default_base_url
+    if url:
+        logger.info(f"Using {spec.label} LLM backend: {url}")
+    else:
+        logger.info(f"Using {spec.label} LLM backend")
 
     match provider:
         case "ollama":
-            url = base_url or "http://localhost:11434/v1"
-            logger.info(f"Using Ollama LLM backend: {url}")
+            # url is non-None: Ollama has a default_base_url.
+            assert url is not None
             return OllamaLLMClient(base_url=url, timeout=timeout)
         case "github":
-            url = base_url or GITHUB_MODELS_BASE_URL
-            logger.info(f"Using GitHub Models LLM backend: {url}")
+            assert url is not None
             return GitHubModelsLLMClient(api_key=api_key, base_url=url, timeout=timeout)
         case "openai":
-            url = base_url or OPENAI_BASE_URL
-            logger.info(f"Using OpenAI LLM backend: {url}")
+            assert url is not None
             return OpenAILLMClient(api_key=api_key, base_url=url, timeout=timeout)
         case "anthropic":
-            if base_url:
-                logger.info(f"Using Anthropic LLM backend: {base_url}")
-            else:
-                logger.info("Using Anthropic LLM backend")
-            return AnthropicLLMClient(api_key=api_key, base_url=base_url, timeout=timeout)
-        case _:
+            return AnthropicLLMClient(api_key=api_key, base_url=url, timeout=timeout)
+        case _:  # pragma: no cover — guarded by _PROVIDERS lookup above
             raise ValueError(f"Unknown LLM provider: {provider}")

@@ -10,7 +10,9 @@ import pytest
 
 from datasight.exceptions import LLMConnectionError, LLMResponseError
 from datasight.llm import (
+    DEFAULT_MAX_ATTEMPTS,
     AnthropicLLMClient,
+    CallStats,
     GitHubModelsLLMClient,
     LLMResponse,
     OllamaLLMClient,
@@ -249,6 +251,8 @@ async def test_anthropic_client_connection_error_retries_then_fails():
             await client.create_message(
                 model="claude", system="sys", messages=[], tools=[], max_tokens=100
             )
+        # Retries are actually exercised, not skipped.
+        assert instance.messages.create.await_count == DEFAULT_MAX_ATTEMPTS
 
 
 @pytest.mark.asyncio
@@ -294,6 +298,8 @@ async def test_anthropic_client_rate_limit_retries_then_fails():
             await client.create_message(
                 model="claude", system="sys", messages=[], tools=[], max_tokens=100
             )
+        # Rate-limit retries should also exhaust the attempt budget.
+        assert instance.messages.create.await_count == DEFAULT_MAX_ATTEMPTS
 
 
 @pytest.mark.asyncio
@@ -484,6 +490,8 @@ async def test_openai_compat_transient_error_retries_then_fails():
             await client.create_message(
                 model="m", system="sys", messages=[], tools=[], max_tokens=50
             )
+        # Entire attempt budget should be consumed before giving up.
+        assert instance.chat.completions.create.await_count == DEFAULT_MAX_ATTEMPTS
 
 
 @pytest.mark.asyncio
@@ -525,7 +533,7 @@ async def test_openai_compat_transient_then_success():
         assert isinstance(result.content[0], TextBlock)
         assert result.content[0].text == "recovered"
         # Retry counter should reflect the one intermediate failure.
-        assert result.usage.retries_performed == 1
+        assert result.call_stats.retries_performed == 1
 
 
 def test_openai_compat_missing_openai_package():
@@ -545,8 +553,11 @@ def test_openai_compat_missing_openai_package():
 
 
 def test_openai_compat_init_failure():
-    fake_module = MagicMock()
-    fake_module.AsyncOpenAI = MagicMock(side_effect=RuntimeError("init fail"))
+    import openai as real_openai
+
+    fake_module = _fake_openai_module()
+    fake_module.OpenAIError = real_openai.OpenAIError
+    fake_module.AsyncOpenAI = MagicMock(side_effect=real_openai.OpenAIError("init fail"))
     with patch.dict("sys.modules", {"openai": fake_module}):
         with pytest.raises(LLMConnectionError, match="Failed to initialize OpenAI"):
             OllamaLLMClient()
@@ -630,3 +641,168 @@ def test_usage_defaults():
 def test_llm_response_default_usage():
     r = LLMResponse(content=[TextBlock(text="x")], stop_reason="end_turn")
     assert isinstance(r.usage, Usage)
+    assert isinstance(r.call_stats, CallStats)
+    assert r.call_stats.retries_performed == 0
+
+
+# ---------------------------------------------------------------------------
+# Truncation (max_tokens) handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_anthropic_client_max_tokens_stop_reason():
+    """Anthropic stop_reason == 'max_tokens' surfaces as StopReason max_tokens."""
+    with patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls:
+        instance = MagicMock()
+        instance.messages.create = AsyncMock(
+            return_value=_make_fake_anthropic_response(
+                text="partial answer", stop_reason="max_tokens"
+            )
+        )
+        mock_cls.return_value = instance
+
+        client = AnthropicLLMClient(api_key="sk-test")
+        result = await client.create_message(
+            model="claude", system="sys", messages=[], tools=[], max_tokens=100
+        )
+        assert result.stop_reason == "max_tokens"
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_finish_length_maps_to_max_tokens():
+    """OpenAI finish_reason == 'length' surfaces as StopReason max_tokens."""
+    fake_module = MagicMock()
+    instance = MagicMock()
+    instance.chat.completions.create = AsyncMock(
+        return_value=_make_fake_openai_response(text="cut off", finish_reason="length")
+    )
+    fake_module.AsyncOpenAI = MagicMock(return_value=instance)
+
+    with patch.dict("sys.modules", {"openai": fake_module}):
+        client = OllamaLLMClient()
+        result = await client.create_message(
+            model="m", system="sys", messages=[], tools=[], max_tokens=50
+        )
+        assert result.stop_reason == "max_tokens"
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_length_with_tool_calls_prefers_max_tokens():
+    """When both length truncation and tool_calls happen, truncation wins so
+    the agent shows the truncation notice instead of executing a possibly
+    half-serialized tool call."""
+    fake_module = MagicMock()
+    instance = MagicMock()
+    instance.chat.completions.create = AsyncMock(
+        return_value=_make_fake_openai_response(
+            text=None,
+            tool_calls=[{"id": "c1", "name": "run_sql", "arguments": json.dumps({"sql": "X"})}],
+            finish_reason="length",
+        )
+    )
+    fake_module.AsyncOpenAI = MagicMock(return_value=instance)
+
+    with patch.dict("sys.modules", {"openai": fake_module}):
+        client = OllamaLLMClient()
+        result = await client.create_message(
+            model="m",
+            system="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"name": "run_sql"}],
+            max_tokens=50,
+        )
+        assert result.stop_reason == "max_tokens"
+
+
+# ---------------------------------------------------------------------------
+# Anthropic prompt-caching
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_anthropic_client_sets_cache_control_on_last_tool():
+    """The final tool entry carries an ephemeral cache breakpoint, which
+    covers all tools + system prompt. Tool order is load-bearing for cache
+    stability; this test guards the invariant."""
+    with patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls:
+        instance = MagicMock()
+        instance.messages.create = AsyncMock(return_value=_make_fake_anthropic_response(text="ok"))
+        mock_cls.return_value = instance
+
+        tools = [
+            {"name": "run_sql", "description": "run", "input_schema": {"type": "object"}},
+            {"name": "make_chart", "description": "chart", "input_schema": {"type": "object"}},
+        ]
+
+        client = AnthropicLLMClient(api_key="sk-test")
+        await client.create_message(
+            model="claude", system="sys", messages=[], tools=tools, max_tokens=100
+        )
+
+        await_args = instance.messages.create.await_args
+        assert await_args is not None
+        sent_tools = await_args.kwargs["tools"]
+        assert sent_tools[-1]["name"] == "make_chart"
+        assert sent_tools[-1]["cache_control"] == {"type": "ephemeral"}
+        # Earlier tools do NOT carry cache_control (single breakpoint covers all).
+        assert "cache_control" not in sent_tools[0]
+        # Original caller's tool list must not have been mutated.
+        assert "cache_control" not in tools[-1]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_client_retries_on_5xx():
+    """InternalServerError should be retried (not raised as an
+    LLMResponseError on the first failure)."""
+    import anthropic as real_anthropic
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 503
+    mock_resp.headers = {}
+    server_err = real_anthropic.InternalServerError(
+        "upstream overloaded", response=mock_resp, body=None
+    )
+
+    with (
+        patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls,
+        patch("datasight.llm.asyncio.sleep", new=AsyncMock()),
+    ):
+        instance = MagicMock()
+        instance.messages.create = AsyncMock(
+            side_effect=[server_err, _make_fake_anthropic_response(text="recovered")]
+        )
+        mock_cls.return_value = instance
+
+        client = AnthropicLLMClient(api_key="sk-test")
+        result = await client.create_message(
+            model="claude", system="sys", messages=[], tools=[], max_tokens=100
+        )
+        assert isinstance(result.content[0], TextBlock)
+        assert result.content[0].text == "recovered"
+        assert result.call_stats.retries_performed == 1
+
+
+# ---------------------------------------------------------------------------
+# User-turn conversion edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_convert_messages_to_openai_user_mixed_text_and_tool_result():
+    """User turns that carry both text and tool_result blocks should
+    preserve the text as a user message alongside the tool messages."""
+    msgs = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "42"},
+                {"type": "text", "text": "follow-up question"},
+            ],
+        }
+    ]
+    result = _convert_messages_to_openai("sys", msgs)
+    assert result[0] == {"role": "system", "content": "sys"}
+    # Tool message emitted in input order.
+    assert result[1] == {"role": "tool", "tool_call_id": "t1", "content": "42"}
+    # Text preserved as a user message.
+    assert result[2] == {"role": "user", "content": "follow-up question"}

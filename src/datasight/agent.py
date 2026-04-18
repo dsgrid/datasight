@@ -853,7 +853,7 @@ async def run_agent_loop(
         total_output_tokens += response.usage.output_tokens
         total_cache_creation_input_tokens += response.usage.cache_creation_input_tokens
         total_cache_read_input_tokens += response.usage.cache_read_input_tokens
-        retries_performed += response.usage.retries_performed
+        retries_performed += response.call_stats.retries_performed
 
         if max_cost_usd is not None:
             running_cost = build_cost_data(

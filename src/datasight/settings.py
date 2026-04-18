@@ -43,6 +43,16 @@ def _safe_optional_float(value: str, default: float | None) -> float | None:
         return default
 
 
+def _safe_float(value: str, default: float) -> float:
+    """Parse a float from a string, returning default if empty or invalid."""
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 # All env vars that can be set in a project's .env file.
 # These are restored to their original shell values before loading each project.
 _PROJECT_ENV_VARS = [
@@ -62,6 +72,7 @@ _PROJECT_ENV_VARS = [
     "POSTGRES_SSLMODE",
     # LLM settings
     "LLM_PROVIDER",
+    "LLM_TIMEOUT",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_BASE_URL",
@@ -156,6 +167,9 @@ class LLMSettings:
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
+
+    # Per-request HTTP timeout (seconds).
+    timeout: float = 120.0
 
     @property
     def model(self) -> str:
@@ -323,6 +337,7 @@ class Settings:
                 openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
                 openai_model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                 openai_base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                timeout=_safe_float(os.environ.get("LLM_TIMEOUT", ""), 120.0),
             ),
             database=DatabaseSettings(
                 mode=db_mode,
