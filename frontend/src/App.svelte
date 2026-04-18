@@ -174,6 +174,31 @@
   async function onProjectLoaded(path: string) {
     fromLanding = true;
     sessionStore.isEphemeralSession = false;
+
+    // Project switch = fresh conversation. The target project has its own
+    // .env (LLM provider, API key) and its own on-disk conversation/dashboard
+    // store, so keeping project1's chat messages/session would mix contexts
+    // and the agent's system prompt would reference stale schema.
+    chatStore.clear();
+    queriesStore.clear();
+    dashboardStore.clear();
+    sessionStore.sessionId = crypto.randomUUID();
+    dashboardStore.currentView = "chat";
+    exportMode = false;
+    exportExcludeIndices = new Set();
+
+    // Re-read per-project config the backend reloaded from project2's .env.
+    const [, , statusResult] = await Promise.allSettled([
+      loadSettings(),
+      loadLlmConfig(),
+      getProjectStatus(),
+    ]);
+    if (statusResult.status === "fulfilled") {
+      const status = statusResult.value;
+      if (status.sql_dialect) sessionStore.sqlDialect = status.sql_dialect;
+      sessionStore.hasTimeSeries = Boolean(status.has_time_series);
+    }
+
     await onProjectReady(path);
   }
 
