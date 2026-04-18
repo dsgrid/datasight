@@ -80,6 +80,7 @@ pytest -q tests/test_web_ui_smoke.py
 cd frontend
 npm install
 npm run dev           # Vite dev server on :5173 (proxies /api to :8084)
+npm run check         # Svelte + TypeScript checks
 npm test              # Vitest unit tests (47 tests)
 npm run build         # Production build
 
@@ -93,7 +94,7 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 
 - **ruff** — Python lint + format. Auto-fixes on failure; re-stage and commit.
 - **ruff-format** — Python formatting.
-- **ty** — Python type checking. Excludes `src/datasight/llm.py`. Optional imports (like `psycopg`) need `# ty: ignore[unresolved-import]`.
+- **ty** — Python type checking. Optional imports (like `psycopg`) need `# ty: ignore[unresolved-import]`.
 - **docs CLI reference drift** — Ensures `docs/reference/cli.md` stays aligned with the current Click command tree.
 
 ## Code conventions
@@ -123,10 +124,11 @@ Docs use **Zensical**. Key details:
 ## CI and release workflows
 
 `.github/workflows/ci.yml` runs on push/PR to `main`:
-1. Builds frontend via `scripts/build-frontend.sh` (npm ci + vite build + copy to FastAPI dirs)
-2. Runs Vitest unit tests (`npm test`)
-3. Installs Playwright Chromium and runs E2E tests against a live `datasight run` server
-4. Runs pytest with coverage, excluding `integration` tests, and uploads `coverage.xml` to Codecov
+1. Runs Ruff lint, Ruff format check, ty type checking, and Svelte/TypeScript checks
+2. Builds frontend via `scripts/build-frontend.sh` (npm ci + vite build + copy to FastAPI dirs)
+3. Runs Vitest unit tests (`npm test`)
+4. Installs Playwright Chromium and runs E2E tests against a live `datasight run` server
+5. Runs pytest with coverage, excluding `integration` tests, and uploads `coverage.xml` to Codecov
 
 `.github/workflows/gh-pages.yml` deploys Zensical documentation to GitHub Pages
 on pushes to `main`.

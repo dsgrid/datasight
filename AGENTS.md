@@ -83,6 +83,7 @@ pytest -q tests/test_web_ui_smoke.py
 cd frontend
 npm install
 npm run dev           # Vite dev server on :5173 (proxies /api to :8084)
+npm run check         # Svelte + TypeScript checks
 npm test              # Vitest unit tests
 npm run build         # Production build
 
@@ -96,7 +97,7 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 
 - **ruff** — Python lint + format. Auto-fixes on failure; re-stage and commit.
 - **ruff-format** — Python formatting.
-- **ty** — Python type checking. Excludes `src/datasight/llm.py`. Optional imports (like `psycopg`) need `# ty: ignore[unresolved-import]`.
+- **ty** — Python type checking. Optional imports (like `psycopg`) need `# ty: ignore[unresolved-import]`.
 - **docs CLI reference drift** — Ensures `docs/reference/cli.md` stays aligned with the current Click command tree.
 
 ## Code conventions
@@ -107,7 +108,7 @@ Hooks run automatically on commit. Don't skip them — fix issues instead.
 
 ## CI and release workflows
 
-- `.github/workflows/ci.yml` builds the frontend, runs Vitest, runs Playwright E2E tests against `datasight run`, runs pytest with coverage, and uploads `coverage.xml` to Codecov.
+- `.github/workflows/ci.yml` runs a Ruff/ty/frontend type-check lint job, builds the frontend, runs Vitest, runs Playwright E2E tests against `datasight run`, runs pytest with coverage, and uploads `coverage.xml` to Codecov.
 - `.github/workflows/gh-pages.yml` builds and deploys Zensical documentation to GitHub Pages on pushes to `main`.
 - `.github/workflows/release.yml` runs on `v*` tags, builds frontend assets, builds Python sdist/wheel distributions, creates a GitHub release, and publishes to PyPI. Hatch includes the generated frontend files as build artifacts, so do not commit bundled frontend output.
 - **Keyboard shortcuts**: Must not conflict with browser shortcuts. Use plain keys (like `n`, `/`, `?`) guarded by `isInput` check, or `Cmd/Ctrl+key` combos that browsers don't claim.

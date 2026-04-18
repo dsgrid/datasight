@@ -19,10 +19,16 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import anthropic
+from anthropic.types import MessageParam, TextBlockParam, ToolUnionParam
 from loguru import logger
+from openai.types.chat import (
+    ChatCompletionMessageFunctionToolCall,
+    ChatCompletionMessageParam,
+    ChatCompletionToolUnionParam,
+)
 
 from datasight.exceptions import (
     ConfigurationError,
@@ -218,6 +224,18 @@ class AnthropicLLMClient:
         cached_tools: list[dict[str, Any]] = [dict(t) for t in tools]
         if cached_tools:
             cached_tools[-1]["cache_control"] = {"type": "ephemeral"}
+        anthropic_tools = cast("list[ToolUnionParam]", cached_tools)
+        anthropic_messages = cast("list[MessageParam]", messages)
+        anthropic_system = [
+            cast(
+                TextBlockParam,
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            )
+        ]
 
         response = None
         retries = 0
@@ -228,15 +246,9 @@ class AnthropicLLMClient:
                     model=model,
                     max_tokens=max_tokens,
                     temperature=0,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    tools=cached_tools,
-                    messages=messages,
+                    system=anthropic_system,
+                    tools=anthropic_tools,
+                    messages=anthropic_messages,
                 )
                 break
             except anthropic.APIConnectionError as e:
@@ -467,8 +479,14 @@ class _OpenAICompatibleClient:
         max_tokens: int,
     ) -> LLMResponse:
         """Create a message using the OpenAI-compatible API with retries."""
-        openai_messages = _convert_messages_to_openai(system, messages)
-        openai_tools = _convert_tools_to_openai(tools)
+        openai_messages = cast(
+            "list[ChatCompletionMessageParam]",
+            _convert_messages_to_openai(system, messages),
+        )
+        openai_tools = cast(
+            "list[ChatCompletionToolUnionParam]",
+            _convert_tools_to_openai(tools),
+        )
 
         # Typed transient errors for this SDK. Anything not in this tuple is
         # treated as fatal and raised immediately.
@@ -485,13 +503,21 @@ class _OpenAICompatibleClient:
         for attempt in range(DEFAULT_MAX_ATTEMPTS):
             is_last = attempt == DEFAULT_MAX_ATTEMPTS - 1
             try:
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    messages=openai_messages,
-                    tools=openai_tools if openai_tools else None,
-                    max_tokens=max_tokens,
-                    temperature=0,
-                )
+                if openai_tools:
+                    response = await self._client.chat.completions.create(
+                        model=model,
+                        messages=openai_messages,
+                        tools=openai_tools,
+                        max_tokens=max_tokens,
+                        temperature=0,
+                    )
+                else:
+                    response = await self._client.chat.completions.create(
+                        model=model,
+                        messages=openai_messages,
+                        max_tokens=max_tokens,
+                        temperature=0,
+                    )
                 break
             except transient_errors as e:
                 if is_last:
@@ -522,15 +548,22 @@ class _OpenAICompatibleClient:
 
         tool_calls = choice.message.tool_calls or []
         for tc in tool_calls:
+            tool_call_type = getattr(tc, "type", "function")
+            if isinstance(tool_call_type, str) and tool_call_type != "function":
+                logger.warning(f"Skipping unsupported OpenAI tool call type: {tool_call_type}")
+                continue
+            function_call = cast(ChatCompletionMessageFunctionToolCall, tc)
             try:
-                args = json.loads(tc.function.arguments)
+                args = json.loads(function_call.function.arguments)
             except (json.JSONDecodeError, TypeError):
-                logger.warning(f"Failed to parse tool arguments: {tc.function.arguments}")
+                logger.warning(
+                    f"Failed to parse tool arguments: {function_call.function.arguments}"
+                )
                 args = {}
             content.append(
                 ToolUseBlock(
-                    id=tc.id,
-                    name=tc.function.name,
+                    id=function_call.id,
+                    name=function_call.function.name,
                     input=args,
                 )
             )

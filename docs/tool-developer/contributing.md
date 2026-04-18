@@ -93,6 +93,7 @@ formatting, and [ty](https://docs.astral.sh/ty/) for type checking.
 # Run manually
 ruff check src/
 ruff format src/
+ty check
 ```
 
 ## Frontend
@@ -104,6 +105,7 @@ Vite as the build tool. Source lives in `frontend/`.
 cd frontend
 npm install
 npm run dev           # Vite dev server on :5173 (proxies /api to :8084)
+npm run check         # Svelte + TypeScript checks
 npm test              # Vitest unit tests
 npm run build         # Production build
 ```
