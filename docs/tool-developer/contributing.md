@@ -185,3 +185,42 @@ When you change Click commands or help text, regenerate the static CLI docs:
 ```bash
 python scripts/generate_cli_reference.py
 ```
+
+### Regenerating UI screenshots
+
+Screenshots embedded in the docs live in `docs/assets/screenshots/` and are
+captured by a dedicated Playwright spec at `frontend/e2e/screenshots.spec.ts`.
+They're excluded from the regular `npm run test:e2e` run (via
+`--grep-invert screenshots`) because they need a project-loaded server and
+specific UI state.
+
+Regenerate when the UI changes in a way that makes the committed images stale.
+
+1. Start a server with a demo project in one terminal:
+
+    ```bash
+    datasight demo eia-generation ~/datasight-eia-demo
+    datasight run --project-dir ~/datasight-eia-demo
+    ```
+
+2. In the live browser, run a chart-producing query (e.g. *"Show monthly
+   generation by fuel type as a line chart"*) and pin at least one card to
+   the dashboard. The capture spec loads the first saved conversation for the
+   chart screenshot, and reads dashboard state for the dashboard screenshot.
+
+3. Run the capture spec in a second terminal:
+
+    ```bash
+    cd frontend
+    npm run capture-screenshots
+    ```
+
+    To regenerate a single view, filter by test name:
+
+    ```bash
+    npm run capture-screenshots -- --grep chart-result
+    ```
+
+All tests capture in dark mode at a fixed 1280×800 viewport for visual
+consistency. The `landing` test intercepts `GET /api/project` so it renders
+the no-project landing page even against a server that has a project loaded.

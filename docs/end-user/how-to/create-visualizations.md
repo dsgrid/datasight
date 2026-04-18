@@ -3,6 +3,8 @@
 datasight can create any chart type that Plotly.js supports. Just describe
 what you want in plain English.
 
+![Interactive Plotly chart rendered in the chat view](../../assets/screenshots/04-chart-result.png)
+
 ## Basic charts
 
 For standard visualizations, simply ask:

@@ -3,6 +3,8 @@
 This page catalogs every panel, button, and section in the datasight web
 UI. For task-oriented walkthroughs, see the How-to guides.
 
+![Full datasight window with sidebar, chat, and header tabs](../../assets/screenshots/06-web-ui-reference.png)
+
 ## Landing page
 
 Shown when you open datasight with no project loaded.
@@ -136,6 +138,8 @@ SQL editor over the currently loaded project or explore session. Useful
 when you want to tweak a query the agent generated, or write one from
 scratch against the ephemeral DuckDB of your CSV/Parquet files without
 leaving datasight.
+
+![SQL editor view with syntax-highlighted query and history](../../assets/screenshots/03-sql-editor.png)
 
 The page contains:
 

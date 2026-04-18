@@ -9,7 +9,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test --grep-invert screenshots",
+    "capture-screenshots": "playwright test --grep screenshots"
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",
