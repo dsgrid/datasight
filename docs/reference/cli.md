@@ -54,6 +54,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 **Subcommands**
 
 - `init`: Create blank datasight project template files.
+- `config`: Manage user-global datasight configuration.
 - `demo`: Create ready-to-run demo projects with sample datasets.
 - `generate`: Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 - `run`: Start the datasight web UI.
@@ -100,6 +101,54 @@ datasight init [OPTIONS] [PROJECT_DIR]
 | --- | --- |
 | `PROJECT_DIR` |   |
 | `--overwrite` | Overwrite existing files. |
+
+### `datasight config`
+
+Manage user-global datasight configuration.
+
+The user-global config file (~/.config/datasight/.env) holds API
+keys and tokens shared across every datasight project. Per-project
+.env files override its values, so each project can still pick its
+own LLM provider, model, and database.
+
+Examples:
+
+    datasight config init
+    datasight config show
+
+```bash
+datasight config [OPTIONS] COMMAND [ARGS]...
+```
+
+**Subcommands**
+
+- `init`: Create the user-global config file (~/.config/datasight/.env).
+- `show`: Show the resolved datasight configuration and where it loaded from.
+
+#### `datasight config init`
+
+Create the user-global config file (~/.config/datasight/.env).
+
+Stores API keys and tokens in one place so per-project .env files only
+need to set provider, model, and database settings.
+
+```bash
+datasight config init [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--overwrite` | Overwrite the existing global config file. |
+
+#### `datasight config show`
+
+Show the resolved datasight configuration and where it loaded from.
+
+```bash
+datasight config show [OPTIONS]
+```
 
 ### `datasight demo`
 

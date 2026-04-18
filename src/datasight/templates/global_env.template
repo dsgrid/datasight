@@ -1,0 +1,23 @@
+# datasight user-global configuration
+#
+# This file holds API keys and tokens shared across all datasight projects.
+# Per-project .env files in each project directory take precedence over the
+# values here, so you can keep credentials in one place and let each project
+# pick its own LLM provider, model, and database.
+#
+# Edit this file to fill in the keys you actually use, then delete the lines
+# you don't need. See: https://datasight.readthedocs.io/en/latest/reference/configuration.html
+
+# --- Anthropic ---
+# ANTHROPIC_API_KEY=sk-ant-...
+# Optional: Azure AI Foundry endpoint
+# ANTHROPIC_BASE_URL=https://your-resource.services.ai.azure.com/anthropic
+
+# --- OpenAI ---
+# OPENAI_API_KEY=sk-...
+# Optional: Azure OpenAI or corporate gateway
+# OPENAI_BASE_URL=https://api.openai.com/v1
+
+# --- GitHub Models ---
+# GITHUB_TOKEN=ghp_...
+# GITHUB_MODELS_BASE_URL=https://models.github.ai/inference

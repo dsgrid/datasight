@@ -1,7 +1,40 @@
 # Configuration reference
 
-datasight is configured via environment variables, typically in a `.env` file
-in the project directory. CLI flags override `.env` values.
+datasight is configured via environment variables, loaded from two `.env`
+files: a per-project `.env` in the project directory, and an optional
+**user-global** `.env` shared across every project. CLI flags override both.
+
+## Global vs project config
+
+Most users want to store API keys and tokens **once**, not in every project.
+Run:
+
+```bash
+datasight config init
+```
+
+…to create `~/.config/datasight/.env` (honors `XDG_CONFIG_HOME`) from a
+template. Put credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and
+`GITHUB_TOKEN` there. Then each project's `.env` only needs to set provider,
+model, and database — for example:
+
+```bash
+# project .env
+LLM_PROVIDER=openai
+OPENAI_MODEL=gpt-4o
+DB_MODE=duckdb
+DB_PATH=./my_database.duckdb
+```
+
+Per-project values **override** the global file, so you can still pin a
+specific API key or model on a single project when needed.
+
+To inspect which provider, model, and database you'd connect to right now —
+and which config files were loaded — run:
+
+```bash
+datasight config show
+```
 
 ## Environment variables
 
@@ -121,6 +154,7 @@ project directory. This is created automatically and should be added to
 Settings are resolved in this order (highest priority first):
 
 1. CLI flags (`--port`, `--db-mode`, `--db-path`, `--model`)
-2. Environment variables
+2. Environment variables (shell exports)
 3. `.env` file in the project directory
-4. Built-in defaults
+4. User-global `.env` (`~/.config/datasight/.env`)
+5. Built-in defaults

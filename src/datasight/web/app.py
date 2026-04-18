@@ -83,7 +83,12 @@ from datasight.generate import (
 )
 from datasight.runner import CachingSqlRunner, SqlRunner
 from datasight.schema import filter_tables, format_schema_context, introspect_schema
-from datasight.settings import Settings, capture_original_env, restore_original_env
+from datasight.settings import (
+    Settings,
+    capture_original_env,
+    load_global_env,
+    restore_original_env,
+)
 from datasight.sql_validation import build_measure_rule_map, build_schema_map, validate_sql
 
 # ---------------------------------------------------------------------------
@@ -1058,8 +1063,11 @@ async def _startup() -> None:
     from dotenv import load_dotenv
 
     load_dotenv()
+    load_global_env(override=False)
 
-    # Capture env after root .env is loaded as baseline for project switching
+    # Capture env after root + global .env are loaded as baseline for project
+    # switching. Global API keys persist across switches; project values are
+    # dropped when restore_original_env() runs.
     capture_original_env()
 
     init_llm_client(_state)

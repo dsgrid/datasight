@@ -106,12 +106,38 @@ _PROJECT_ENV_VARS = [
 _original_env: dict[str, str] = {}
 
 
+def global_env_path() -> Path:
+    """Return the path to the user-global ``.env`` file.
+
+    Honors ``XDG_CONFIG_HOME`` and falls back to ``~/.config/datasight/.env``.
+    The file is not required to exist.
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "datasight" / ".env"
+
+
+def load_global_env(*, override: bool = False) -> bool:
+    """Load the user-global ``.env`` file (e.g. ``~/.config/datasight/.env``).
+
+    Intended for storing API keys/tokens that span projects. Returns True if
+    the file exists and was loaded, False otherwise.
+    """
+    path = global_env_path()
+    if not path.exists():
+        return False
+    load_dotenv(path, override=override)
+    return True
+
+
 def capture_original_env() -> None:
     """Capture the current environment as the baseline for project switching.
 
-    Call this AFTER loading the root .env file but BEFORE loading any
-    project-specific .env files. This establishes the baseline that
-    restore_original_env() will restore to.
+    Call this AFTER loading both the user-global ``.env`` and any root
+    ``.env`` file, but BEFORE loading any project-specific ``.env`` files.
+    The captured snapshot becomes the baseline that restore_original_env()
+    restores to — so global API keys persist across project switches while
+    project-specific overrides are dropped.
     """
     global _original_env
     _original_env = {var: os.environ[var] for var in _PROJECT_ENV_VARS if var in os.environ}
