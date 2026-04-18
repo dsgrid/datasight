@@ -2749,7 +2749,12 @@ async def sql_validate(request: Request, state: AppState = Depends(get_state)):
     if not sql:
         return {"valid": True, "errors": []}
     schema_map = build_schema_map(state.schema_info)
-    result = validate_sql(sql, schema_map, dialect=state.sql_dialect)
+    result = validate_sql(
+        sql,
+        schema_map,
+        dialect=state.sql_dialect,
+        measure_rules=state.measure_rules or None,
+    )
     return {"valid": result.valid, "errors": result.errors}
 
 

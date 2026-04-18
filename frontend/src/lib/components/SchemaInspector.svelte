@@ -238,15 +238,23 @@
                     ask
                   </span>
                   {#if dashboardStore.currentView === "sql"}
-                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <span
+                      role="button"
+                      tabindex="0"
+                      aria-label={`Insert ${col.name} into SQL editor`}
                       class="text-teal opacity-0 group-hover:opacity-100
-                        transition-opacity cursor-pointer"
+                        focus:opacity-100 transition-opacity cursor-pointer"
                       style="font-size: 0.67rem;"
                       onclick={(e: MouseEvent) => {
                         e.stopPropagation();
                         insertIntoEditor(col.name);
+                      }}
+                      onkeydown={(e: KeyboardEvent) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          insertIntoEditor(col.name);
+                        }
                       }}
                     >
                       insert

@@ -1391,6 +1391,138 @@ def test_run_report_returns_plotly_spec(monkeypatch):
     assert body["plotly_spec"]["data"][0]["type"] == "bar"
 
 
+def test_sql_execute_returns_error_for_empty_sql():
+    """Empty SQL should short-circuit before the runner is touched."""
+    original_project_loaded = web_app._state.project_loaded
+    original_sql_runner = web_app._state.sql_runner
+
+    web_app._state.project_loaded = True
+    web_app._state.sql_runner = _typed_stub(object())
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post("/api/sql-execute", json={"sql": "   "})
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.sql_runner = original_sql_runner
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error"] == "SQL is empty"
+    assert body["html"] is None
+    assert body["row_count"] == 0
+
+
+def test_sql_execute_runs_query_and_returns_html():
+    """Successful execution should return row_count, elapsed, and rendered HTML."""
+
+    class StubRunner:
+        async def run_sql(self, sql):  # noqa: ARG002
+            return pd.DataFrame({"plant_id": [1, 2], "mwh": [10.0, 20.0]})
+
+    original_project_loaded = web_app._state.project_loaded
+    original_sql_runner = web_app._state.sql_runner
+    original_query_logger = web_app._state.query_logger
+
+    web_app._state.project_loaded = True
+    web_app._state.sql_runner = _typed_stub(StubRunner())
+    web_app._state.query_logger = None
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/sql-execute",
+                json={"sql": "SELECT plant_id, mwh FROM plants", "session_id": "t"},
+            )
+    finally:
+        web_app._state.project_loaded = original_project_loaded
+        web_app._state.sql_runner = original_sql_runner
+        web_app._state.query_logger = original_query_logger
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error"] is None
+    assert body["row_count"] == 2
+    assert body["html"] is not None
+    assert "plant_id" in body["html"]
+
+
+def test_sql_validate_returns_parse_error():
+    """Malformed SQL should come back with valid=False and a parse error."""
+    original_schema_info = web_app._state.schema_info
+    original_sql_dialect = web_app._state.sql_dialect
+
+    web_app._state.schema_info = [
+        {"name": "plants", "row_count": 0, "columns": [{"name": "plant_id", "dtype": "INT"}]}
+    ]
+    web_app._state.sql_dialect = "duckdb"
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/sql-validate",
+                json={"sql": "SELECT FROM WHERE"},
+            )
+    finally:
+        web_app._state.schema_info = original_schema_info
+        web_app._state.sql_dialect = original_sql_dialect
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["errors"]
+    assert "parse error" in body["errors"][0].lower()
+
+
+def test_sql_validate_accepts_empty_sql():
+    """Empty SQL should report as valid without invoking sqlglot."""
+    with TestClient(web_app.app) as client:
+        response = client.post("/api/sql-validate", json={"sql": ""})
+
+    assert response.status_code == 200
+    assert response.json() == {"valid": True, "errors": []}
+
+
+def test_sql_format_pretty_prints_sql():
+    """sqlglot should pretty-print valid SQL without an error."""
+    original_sql_dialect = web_app._state.sql_dialect
+    web_app._state.sql_dialect = "duckdb"
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/sql-format",
+                json={"sql": "select a,b from t where a=1"},
+            )
+    finally:
+        web_app._state.sql_dialect = original_sql_dialect
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error"] is None
+    assert body["formatted"].strip() != ""
+    assert body["formatted"].upper().count("SELECT") >= 1
+
+
+def test_sql_format_reports_parse_errors():
+    """Unparseable SQL should echo input back with a non-null error."""
+    original_sql_dialect = web_app._state.sql_dialect
+    web_app._state.sql_dialect = "duckdb"
+
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post(
+                "/api/sql-format",
+                json={"sql": "SELECT FROM WHERE"},
+            )
+    finally:
+        web_app._state.sql_dialect = original_sql_dialect
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["error"] is not None
+
+
 async def _fake_overview(schema_info, run_sql):  # noqa: ARG001
     return {
         "table_count": len(schema_info),

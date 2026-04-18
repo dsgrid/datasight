@@ -7,7 +7,7 @@
     syntaxHighlighting,
   } from "@codemirror/language";
   import { tags as t } from "@lezer/highlight";
-  import { sql, StandardSQL, PostgreSQL } from "@codemirror/lang-sql";
+  import { sql, StandardSQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
   import { linter, type Diagnostic } from "@codemirror/lint";
   import {
     autocompletion,
@@ -65,6 +65,7 @@
 
   function dialectFor(d: string) {
     if (d === "postgres") return PostgreSQL;
+    if (d === "sqlite") return SQLite;
     return StandardSQL;
   }
 
