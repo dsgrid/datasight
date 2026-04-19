@@ -7,6 +7,7 @@ import pytest
 
 from datasight.schema import (
     _get_row_count,
+    _quote_identifier,
     _validate_identifier,
     introspect_schema,
 )
@@ -24,6 +25,23 @@ def test_validate_identifier_rejects_unsafe():
 
 def test_validate_identifier_allows_safe_characters():
     assert _validate_identifier("my_table.schema-1") == "my_table.schema-1"
+
+
+def test_quote_identifier_wraps_plain_name():
+    assert _quote_identifier("users") == '"users"'
+
+
+def test_quote_identifier_allows_spaces():
+    assert _quote_identifier("Host Name") == '"Host Name"'
+
+
+def test_quote_identifier_escapes_embedded_quote():
+    assert _quote_identifier('weird"name') == '"weird""name"'
+
+
+def test_quote_identifier_rejects_newline():
+    with pytest.raises(ValueError, match="Unsafe identifier"):
+        _quote_identifier("bad\nname")
 
 
 # ---------------------------------------------------------------------------

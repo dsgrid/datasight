@@ -153,6 +153,35 @@ class TestSampleEnumColumns:
         conn.close()
 
     @pytest.mark.asyncio
+    async def test_samples_column_names_with_spaces(self):
+        """Column names with spaces (common in CSV headers) must not crash."""
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        conn.execute('CREATE TABLE t ("Host Name" VARCHAR, "Host Status" VARCHAR)')
+        conn.execute("INSERT INTO t VALUES ('web1', 'up'), ('web2', 'down'), ('web1', 'up')")
+
+        async def run_sql(sql):
+            return conn.execute(sql).fetchdf()
+
+        tables = [
+            TableInfo(
+                name="t",
+                columns=[
+                    ColumnInfo(name="Host Name", dtype="VARCHAR"),
+                    ColumnInfo(name="Host Status", dtype="VARCHAR"),
+                ],
+                row_count=3,
+            )
+        ]
+        result = await sample_enum_columns(run_sql, tables)
+
+        assert "t.Host Name" in result
+        assert "t.Host Status" in result
+        assert "up" in result
+        conn.close()
+
+    @pytest.mark.asyncio
     async def test_skips_high_cardinality(self):
         """Skip columns with > 50 distinct values."""
         import duckdb
@@ -262,6 +291,31 @@ class TestSampleTimestampColumns:
         result = await sample_timestamp_columns(run_sql, tables)
 
         assert result == ""
+        conn.close()
+
+    @pytest.mark.asyncio
+    async def test_samples_timestamp_column_with_space_in_name(self):
+        """Timestamp column names with spaces must not crash sampling."""
+        import duckdb
+
+        conn = duckdb.connect(":memory:")
+        conn.execute('CREATE TABLE s ("Created At" TIMESTAMP)')
+        conn.execute("INSERT INTO s VALUES ('2024-01-01 00:00:00'), ('2024-12-31 23:00:00')")
+
+        async def run_sql(sql):
+            return conn.execute(sql).fetchdf()
+
+        tables = [
+            TableInfo(
+                name="s",
+                columns=[ColumnInfo(name="Created At", dtype="TIMESTAMP")],
+                row_count=2,
+            )
+        ]
+        result = await sample_timestamp_columns(run_sql, tables)
+
+        assert "s.Created At" in result
+        assert "2024" in result
         conn.close()
 
     @pytest.mark.asyncio

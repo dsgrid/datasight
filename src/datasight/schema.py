@@ -292,6 +292,18 @@ def _validate_identifier(name: str) -> str:
     return name
 
 
+def _quote_identifier(name: str) -> str:
+    """Return a double-quoted SQL identifier safe to embed in a query.
+
+    Escapes embedded double quotes by doubling them per the SQL standard.
+    Rejects names containing characters that cannot be safely represented
+    inside a quoted identifier (null bytes, newlines).
+    """
+    if any(c in name for c in ("\x00", "\n", "\r")):
+        raise ValueError(f"Unsafe identifier: {name!r}")
+    return '"' + name.replace('"', '""') + '"'
+
+
 async def _get_columns(
     run_sql: RunSql, table: str, *, prefer_sqlite: bool = False
 ) -> list[ColumnInfo]:

@@ -14,7 +14,7 @@ from loguru import logger
 
 from datasight.prompts import DESCRIBE_SYSTEM_PROMPT, DESCRIBE_USER_MESSAGE, dialect_hint
 from datasight.runner import RunSql
-from datasight.schema import TableInfo, _validate_identifier, format_schema_context
+from datasight.schema import TableInfo, _quote_identifier, format_schema_context
 
 _TEMPORAL_TYPES = {
     "TIMESTAMP",
@@ -63,12 +63,18 @@ async def sample_enum_columns(run_sql: RunSql, tables: list[TableInfo]) -> str:
     string_types = {"VARCHAR", "TEXT", "CHAR", "STRING", "NVARCHAR", "BPCHAR", "NAME"}
 
     for table in tables:
-        table_name = _validate_identifier(table.name)
+        try:
+            table_name = _quote_identifier(table.name)
+        except ValueError:
+            continue
         for col in table.columns:
             base_type = col.dtype.upper().split("(")[0].strip()
             if base_type not in string_types:
                 continue
-            col_name = _validate_identifier(col.name)
+            try:
+                col_name = _quote_identifier(col.name)
+            except ValueError:
+                continue
             try:
                 count_result = await run_sql(
                     f"SELECT COUNT(DISTINCT {col_name}) AS n FROM {table_name}"
@@ -101,7 +107,10 @@ async def sample_timestamp_columns(run_sql: RunSql, tables: list[TableInfo]) -> 
     lines: list[str] = []
 
     for table in tables:
-        table_name = _validate_identifier(table.name)
+        try:
+            table_name = _quote_identifier(table.name)
+        except ValueError:
+            continue
         for col in table.columns:
             base_type = col.dtype.upper().split("(")[0].strip()
             name_lower = col.name.lower()
@@ -111,7 +120,10 @@ async def sample_timestamp_columns(run_sql: RunSql, tables: list[TableInfo]) -> 
             )
             if not (is_temporal or is_numeric_time):
                 continue
-            col_name = _validate_identifier(col.name)
+            try:
+                col_name = _quote_identifier(col.name)
+            except ValueError:
+                continue
             try:
                 result = await run_sql(
                     f"SELECT MIN({col_name}) AS min_v, MAX({col_name}) AS max_v "

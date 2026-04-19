@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from datasight.schema import _quote_identifier
+
 try:
     import sqlglot
     from sqlglot import exp
@@ -364,10 +366,6 @@ class ApplyResult:
     error: str | None = None
 
 
-def _quote_duckdb_identifier(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
 def _list_attached_tables(conn) -> set[str]:
     rows = conn.execute(
         "SELECT table_name FROM information_schema.tables "
@@ -462,15 +460,15 @@ async def apply_template(
                 if source_table in resolved_sources:
                     continue
                 conn.execute(
-                    f"CREATE VIEW {_quote_duckdb_identifier(source_table)} "
-                    f"AS SELECT * FROM base.main.{_quote_duckdb_identifier(source_table)}"
+                    f"CREATE VIEW {_quote_identifier(source_table)} "
+                    f"AS SELECT * FROM base.main.{_quote_identifier(source_table)}"
                 )
 
         for name, path in resolved_sources.items():
             escaped = str(path).replace("'", "''")
             try:
                 conn.execute(
-                    f"CREATE OR REPLACE VIEW {_quote_duckdb_identifier(name)} "
+                    f"CREATE OR REPLACE VIEW {_quote_identifier(name)} "
                     f"AS SELECT * FROM read_parquet('{escaped}')"
                 )
             except duckdb.Error as err:
