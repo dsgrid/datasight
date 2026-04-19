@@ -9,7 +9,7 @@ This page helps you pick one without reading every provider's pricing page.
 | Your situation | Start with |
 |---|---|
 | Trying datasight for the first time, non-sensitive data | **Anthropic Claude Haiku** or **OpenAI GPT-4o-mini** |
-| Want zero cost, don't mind rate limits | **GitHub Models** (free tier) |
+| Want zero cost, don't mind rate limits | **GitHub Models** (free tier, recommended over Ollama for most users) |
 | Already have an OpenAI key | **OpenAI** (`gpt-4o-mini` or `gpt-4.1-mini`) |
 | Data is sensitive and must not leave your network | **Local Ollama** (laptop or HPC GPU node) |
 | Data is sensitive but you have a secure hosted endpoint | **Anthropic on Bedrock** or **Azure OpenAI** (custom `base_url`) |
@@ -93,9 +93,11 @@ So a Llama 3.1 8B model fits in ~5 GB VRAM at 4-bit, a 70B model needs
 | NVIDIA laptop GPU, 8 GB VRAM | 7–8B at 4-bit |
 | NVIDIA laptop GPU, 16 GB VRAM | 13B at 4-bit |
 
-For datasight's SQL-generation workload, an 8B model (e.g. Llama 3.1 8B
-or Qwen 2.5 Coder 7B) is a reasonable floor. Smaller models often
-struggle with realistic schemas.
+For datasight's SQL-generation workload, `qwen2.5:7b` is the recommended
+starting point for CLI queries (`datasight ask`). For the web UI with
+visualizations, step up to `qwen2.5:14b` — the 7B model struggles with
+the more complex multi-step agent interactions required for chart
+generation. Smaller models often struggle with realistic schemas.
 
 ### On an HPC GPU node
 
@@ -120,7 +122,9 @@ your laptop browser).
 ### When hosted beats local
 
 A hosted cheap-tier call (Haiku or GPT-4o-mini) often produces better
-SQL than a locally-run 8B model, at a fraction of a cent. Don't reach
+SQL than a locally-run 8B model, at a fraction of a cent. GitHub Models
+offers a free tier that handles the full datasight feature set —
+including visualizations — better than most local models. Don't reach
 for local models just to avoid hosted costs — reach for them when data
 sensitivity or offline use requires it.
 
@@ -161,9 +165,9 @@ OPENAI_API_KEY=sk-...
 LLM_PROVIDER=github
 GITHUB_TOKEN=ghp-...
 
-# Ollama (local)
+# Ollama (local — use for cost/data-security reasons)
 LLM_PROVIDER=ollama
-OLLAMA_MODEL=llama3.1:8b
+OLLAMA_MODEL=qwen2.5:7b      # CLI queries; use qwen2.5:14b for web UI with viz
 ```
 
 A secure hosted endpoint (Bedrock, Azure OpenAI, corporate proxy) is

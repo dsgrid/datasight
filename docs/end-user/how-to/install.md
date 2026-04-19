@@ -60,11 +60,18 @@ shell. Pick one of:
     Install [Ollama](https://ollama.com/), pull a tool-calling model, then:
 
     ```bash
-    ollama pull qwen3:8b
+    ollama pull qwen2.5:7b
 
     LLM_PROVIDER=ollama
-    OLLAMA_MODEL=qwen3:8b
+    OLLAMA_MODEL=qwen2.5:7b
     ```
+
+    `qwen2.5:7b` is a good starting point for CLI queries (`datasight ask`).
+    For the web UI with visualizations, `qwen2.5:14b` handles the more
+    complex agent interactions better. For the best experience overall,
+    consider [GitHub Models](https://github.com/marketplace/models) (free
+    tier) — only use Ollama when cost or data-security requirements demand
+    keeping inference local.
 
 See the [Configuration reference](../../reference/configuration.md) for
 every supported variable.

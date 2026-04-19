@@ -158,10 +158,10 @@ datasight verify -v
 ```
 
 Tests marked `integration` require a running local Ollama server with the
-`qwen3:8b` model available:
+`qwen2.5:7b` model available:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen2.5:7b
 ollama serve
 pytest -m integration
 ```

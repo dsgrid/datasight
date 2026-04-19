@@ -99,17 +99,22 @@ First, install and start [Ollama](https://ollama.com/), then pull a model
 with tool-calling support:
 
 ```bash
-ollama pull qwen3:8b
+ollama pull qwen2.5:7b
 ```
 
 Then configure `.env`:
 
 ```bash
 LLM_PROVIDER=ollama
-OLLAMA_MODEL=qwen3:8b
+OLLAMA_MODEL=qwen2.5:7b
 DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
+
+`qwen2.5:7b` works well for CLI queries. For the web UI with visualizations,
+use `qwen2.5:14b` (`ollama pull qwen2.5:14b`). For the best experience,
+consider GitHub Models (free tier) instead — only use Ollama when cost or
+data-security requirements demand local inference.
 
 **Using SQLite or PostgreSQL?** Set `DB_MODE` accordingly:
 

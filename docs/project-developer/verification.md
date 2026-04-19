@@ -111,7 +111,7 @@ Run the same suite against different models to compare reliability:
 datasight verify --model claude-sonnet-4-6
 datasight verify --model claude-haiku-4-5-20251001
 LLM_PROVIDER=github datasight verify --model gpt-4o
-LLM_PROVIDER=ollama datasight verify --model qwen3:8b
+LLM_PROVIDER=ollama datasight verify --model qwen2.5:7b
 ```
 
 ## Writing deterministic queries

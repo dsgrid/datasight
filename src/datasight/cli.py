@@ -2545,6 +2545,8 @@ def ask(
     settings, resolved_model = _resolve_settings(project_dir, model)
     _validate_settings_for_llm(settings)
 
+    click.echo(f"Using {settings.llm.provider} model: {resolved_model}")
+
     resolved_db_path = _resolve_db_path(settings, project_dir)
     if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
         click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
