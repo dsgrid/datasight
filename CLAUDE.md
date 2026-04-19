@@ -6,7 +6,7 @@ datasight is an AI-powered data exploration tool. Users ask questions in natural
 
 ## Tech stack
 
-- **Python 3.13+**, built with Hatchling (`pyproject.toml`)
+- **Python 3.11+**, built with Hatchling (`pyproject.toml`). CI tests on 3.13 only.
 - **FastAPI + uvicorn** for the web server with SSE streaming
 - **Svelte 5 + TypeScript + Tailwind CSS** frontend — built with Vite, served by FastAPI
 - **LLM backends**: Anthropic (default), GitHub Models, Ollama — all via a common `LLMClient` abstraction in `datasight.llm`

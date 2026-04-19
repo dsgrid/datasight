@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datasight"
-version = "0.2.0"
+version = "0.3.0"
 description = "AI-powered data exploration with natural language"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,11 @@ dev = [
     "ty>=0.0.26",
     "prek>=0.2,<1",
 ]
+
+[project.urls]
+Repository = "https://github.com/dsgrid/datasight"
+Documentation = "https://dsgrid.github.io/datasight/"
+Issues = "https://github.com/dsgrid/datasight/issues"
 
 [project.scripts]
 datasight = "datasight.cli:cli"
