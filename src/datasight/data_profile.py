@@ -8,10 +8,7 @@ import yaml
 from loguru import logger
 
 from datasight.runner import RunSql
-
-
-def _quote_identifier(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
+from datasight.schema import _quote_identifier
 
 
 def _is_date_dtype(dtype: str) -> bool:
