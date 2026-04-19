@@ -76,6 +76,23 @@ export async function getExploreStatus(): Promise<{
   return fetchJson("/api/explore/status");
 }
 
+export interface ScannedDataFile {
+  path: string;
+  name: string;
+  type: "csv" | "parquet";
+  size_bytes: number;
+}
+
+export interface ScanCwdResult {
+  directory: string;
+  files: ScannedDataFile[];
+  truncated: boolean;
+}
+
+export async function scanCwdForDataFiles(): Promise<ScanCwdResult> {
+  return fetchJson<ScanCwdResult>("/api/explore/scan-cwd");
+}
+
 export async function checkProjectPath(
   path: string,
 ): Promise<{ exists: boolean; files: string[] }> {

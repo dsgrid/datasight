@@ -39,7 +39,7 @@ from datasight.audit_report import (
 from datasight.distribution import build_distribution_overview
 from datasight.integrity import build_integrity_overview
 from datasight.llm import create_llm_client
-from datasight.settings import Settings
+from datasight.settings import Settings, global_env_path, load_global_env
 from datasight.validation import build_validation_report, load_validation_config
 
 
@@ -67,8 +67,13 @@ def _resolve_settings(
     -------
     Tuple of (settings, resolved_model).
     """
+    from dotenv import load_dotenv
+
     env_path = os.path.join(project_dir, ".env")
-    settings = Settings.from_env(env_path if os.path.exists(env_path) else None)
+    if os.path.exists(env_path):
+        load_dotenv(env_path, override=False)
+    load_global_env(override=False)
+    settings = Settings.from_env()
 
     # Apply model override if provided
     resolved_model = model_override if model_override else settings.llm.model
@@ -1321,6 +1326,8 @@ def _prepare_web_runtime(
     elif os.path.exists(".env"):
         load_dotenv(".env", override=False)
 
+    load_global_env(override=False)
+
     if configure_logging:
         level = "DEBUG" if verbose else "INFO"
         logger.remove()
@@ -1400,12 +1407,117 @@ def init(project_dir: str, overwrite: bool):
 
     click.echo()
     click.echo("Next steps:")
-    click.echo("  1. Edit .env with your API key and database path")
-    click.echo("  2. Edit schema_description.md to describe your data")
-    click.echo("  3. Edit queries.yaml with example questions")
-    click.echo("  4. Or let datasight draft files from data:")
+    click.echo("  1. Store API keys once in ~/.config/datasight/.env:")
+    click.echo("     datasight config init")
+    click.echo("  2. Edit .env with your database path and (optional) provider/model")
+    click.echo("  3. Edit schema_description.md to describe your data")
+    click.echo("  4. Edit queries.yaml with example questions")
+    click.echo("  5. Or let datasight draft files from data:")
     click.echo("     datasight generate <database-or-files> --overwrite")
-    click.echo("  5. Run: datasight run")
+    click.echo("  6. Run: datasight run")
+
+
+@cli.group(
+    epilog=_epilog(
+        """
+        The user-global config file (~/.config/datasight/.env) holds API
+        keys and tokens shared across every datasight project. Per-project
+        .env files override its values, so each project can still pick its
+        own LLM provider, model, and database.
+
+        Examples:
+
+            datasight config init
+            datasight config show
+        """
+    )
+)
+def config():
+    """Manage user-global datasight configuration."""
+
+
+@config.command(name="init")
+@click.option("--overwrite", is_flag=True, help="Overwrite the existing global config file.")
+def config_init(overwrite: bool):
+    """Create the user-global config file (~/.config/datasight/.env).
+
+    Stores API keys and tokens in one place so per-project .env files only
+    need to set provider, model, and database settings.
+    """
+
+    dest = global_env_path()
+    if dest.exists() and not overwrite:
+        click.echo(f"Global config already exists: {dest}")
+        click.echo("Use --overwrite to replace it.")
+        return
+
+    template_path = Path(__file__).parent / "templates" / "global_env.template"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(template_path, dest)
+
+    click.echo(f"Created: {dest}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(f"  1. Edit {dest} and uncomment the API keys you use")
+    click.echo("  2. In each project, .env only needs DB_MODE/DB_PATH and")
+    click.echo("     (optionally) LLM_PROVIDER and the matching model variable")
+
+
+@config.command(name="show")
+def config_show():
+    """Show the resolved datasight configuration and where it loaded from."""
+    from dotenv import load_dotenv
+
+    from datasight.recent_projects import validate_project_dir
+
+    cwd = Path.cwd().resolve()
+    is_valid, _ = validate_project_dir(str(cwd))
+    project_dir = cwd if is_valid else None
+
+    project_env = (project_dir / ".env") if project_dir else None
+    global_env = global_env_path()
+
+    if project_env and project_env.exists():
+        load_dotenv(project_env, override=False)
+    load_global_env(override=False)
+    settings = Settings.from_env()
+
+    def mask(secret: str) -> str:
+        if not secret:
+            return "(not set)"
+        return f"…{secret[-4:]}" if len(secret) > 4 else "****"
+
+    click.echo("Config files:")
+    click.echo(f"  Global:  {global_env} {'(exists)' if global_env.exists() else '(missing)'}")
+    if project_env:
+        exists = "(exists)" if project_env.exists() else "(missing)"
+        click.echo(f"  Project: {project_env} {exists}")
+    else:
+        click.echo("  Project: (no datasight project detected in CWD)")
+
+    click.echo()
+    click.echo("LLM:")
+    click.echo(f"  provider: {settings.llm.provider}")
+    click.echo(f"  model:    {settings.llm.model}")
+    if settings.llm.base_url:
+        click.echo(f"  base_url: {settings.llm.base_url}")
+    click.echo(f"  api_key:  {mask(settings.llm.api_key)}")
+
+    click.echo()
+    click.echo("Database:")
+    click.echo(f"  mode: {settings.database.mode}")
+    if settings.database.mode in ("duckdb", "sqlite"):
+        click.echo(f"  path: {settings.database.path}")
+    elif settings.database.mode == "postgres":
+        if settings.database.postgres_url:
+            click.echo(f"  url:  {settings.database.postgres_url}")
+        else:
+            click.echo(
+                f"  host: {settings.database.postgres_host}:{settings.database.postgres_port}"
+            )
+            click.echo(f"  db:   {settings.database.postgres_database}")
+    elif settings.database.mode == "flightsql":
+        click.echo(f"  uri:  {settings.database.flight_uri}")
 
 
 @cli.group(

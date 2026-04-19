@@ -2,6 +2,7 @@
   import StarterGrid from "./StarterGrid.svelte";
   import ExploreCard from "./ExploreCard.svelte";
   import ProjectCard from "./ProjectCard.svelte";
+  import DiscoveredFilesCard from "./DiscoveredFilesCard.svelte";
 
   interface Props {
     onProjectLoaded: (path: string) => void;
@@ -60,6 +61,9 @@
         AI-powered database exploration with natural language
       </p>
     </div>
+
+    <!-- Auto-discovered files in CWD -->
+    <DiscoveredFilesCard {onExplored} onError={handleExploreError} />
 
     <!-- Starter Grid -->
     <StarterGrid />

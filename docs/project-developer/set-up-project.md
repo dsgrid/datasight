@@ -19,6 +19,24 @@ Don't have [uv](https://docs.astral.sh/uv/) yet? See
 backends (DuckDB, SQLite, PostgreSQL) and LLM providers (Anthropic,
 GitHub Models, Ollama) are included.
 
+## Store API keys once (recommended)
+
+If you haven't already, create a user-global config file for your API keys
+and tokens. You only do this once per machine:
+
+```bash
+datasight config init
+```
+
+This writes `~/.config/datasight/.env` (honors `XDG_CONFIG_HOME`). Edit it
+and uncomment the credentials you actually use — `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, and/or `GITHUB_TOKEN`. Every datasight project on this
+machine will pick up these values automatically, so each project's `.env`
+only has to set provider, model, and database. Per-project `.env` values
+still override the global file when you need a different key for one
+project. See [Configuration reference](../reference/configuration.md) for
+the full precedence rules.
+
 ## Create a project
 
 ```bash
@@ -42,14 +60,17 @@ This creates four template files:
 
 ## Configure
 
-Edit `.env` with your database path and LLM settings. For guidance on
-picking a provider — data sensitivity, cost tiers, local vs hosted —
-see [Choosing an LLM](../concepts/choosing-an-llm.md).
+Edit `.env` with your database path and LLM settings. The examples below
+assume you've already run `datasight config init` and put your API keys in
+`~/.config/datasight/.env`. If not, you can also paste the key directly
+into the project `.env` — both work. For guidance on picking a provider —
+data sensitivity, cost tiers, local vs hosted — see
+[Choosing an LLM](../concepts/choosing-an-llm.md).
 
 **Option A — Anthropic (cloud API):**
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...
+# LLM_PROVIDER=anthropic is the default
 DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
 ```
@@ -58,7 +79,6 @@ DB_PATH=./my_database.duckdb
 
 ```bash
 LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o-mini
 DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
@@ -68,7 +88,6 @@ DB_PATH=./my_database.duckdb
 
 ```bash
 LLM_PROVIDER=github
-GITHUB_TOKEN=ghp_...
 GITHUB_MODELS_MODEL=gpt-4o
 DB_MODE=duckdb
 DB_PATH=./my_database.duckdb
@@ -240,7 +259,7 @@ options, and diagnostics.
 
 ```mermaid
 flowchart TB
-    A[datasight run] --> B[Load .env]
+    A[datasight run] --> B[Load .env: project values override global]
     B --> C[Connect to database]
     C --> D[Introspect schema]
     D --> E[Load schema_description.md]

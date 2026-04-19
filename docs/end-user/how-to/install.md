@@ -17,7 +17,10 @@ Models, and Ollama support.
 
 ## Configure an LLM provider
 
-Set one of these in your shell or in the project `.env`:
+Run `datasight config init` to create `~/.config/datasight/.env`, then add
+your API key there — every project on this machine will pick it up.
+Alternatively, paste the key into the project `.env` or export it in your
+shell. Pick one of:
 
 === "Anthropic"
 
