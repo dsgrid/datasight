@@ -16,6 +16,7 @@
     completionStatus,
   } from "@codemirror/autocomplete";
   import { basicSetup } from "codemirror";
+  import { contextualColumnSource } from "$lib/utils/sql-completion";
 
   interface InsertRequest {
     text: string;
@@ -70,11 +71,17 @@
   }
 
   function buildSqlExtension() {
-    return sql({
+    const support = sql({
       dialect: dialectFor(dialect),
       schema,
       upperCaseKeywords: true,
     });
+    return [
+      support,
+      support.language.data.of({
+        autocomplete: contextualColumnSource(() => schema),
+      }),
+    ];
   }
 
   function buildLinter() {
