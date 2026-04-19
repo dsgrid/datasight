@@ -209,6 +209,8 @@ def test_project_template_does_not_uncomment_api_key():
         stripped = line.strip()
         if stripped.startswith("#") or not stripped:
             continue
-        # Only DB_MODE is expected to be uncommented in the project template.
+        # DB_MODE and DB_PATH are the only uncommented lines in the project
+        # template — secrets must stay commented so users are nudged toward
+        # ~/.config/datasight/.env.
         assert "API_KEY" not in stripped, f"unexpected uncommented secret line: {line!r}"
         assert "TOKEN" not in stripped, f"unexpected uncommented secret line: {line!r}"

@@ -259,7 +259,7 @@ options, and diagnostics.
 
 ```mermaid
 flowchart TB
-    A[datasight run] --> B[Load project .env, then global .env]
+    A[datasight run] --> B[Load .env: project values override global]
     B --> C[Connect to database]
     C --> D[Introspect schema]
     D --> E[Load schema_description.md]
