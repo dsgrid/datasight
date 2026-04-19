@@ -294,11 +294,18 @@
 
     if (e.key === "/") {
       e.preventDefault();
-      // Focus chat input
-      const input = document.querySelector<HTMLTextAreaElement>(
-        "textarea[data-chat-input]",
-      );
-      input?.focus();
+      if (dashboardStore.currentView === "sql") {
+        // Focus the SQL editor's contenteditable surface.
+        const cm = document.querySelector<HTMLElement>(
+          "[data-sql-editor] .cm-content",
+        );
+        cm?.focus();
+      } else {
+        const input = document.querySelector<HTMLTextAreaElement>(
+          "textarea[data-chat-input]",
+        );
+        input?.focus();
+      }
     } else if (e.key === "?") {
       e.preventDefault();
       shortcutsOpen = !shortcutsOpen;

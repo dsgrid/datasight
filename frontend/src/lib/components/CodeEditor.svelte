@@ -288,6 +288,7 @@
 
 <div
   bind:this={container}
+  data-sql-editor
   class="border border-border focus-within:border-teal"
   style="border-radius: 8px; overflow: hidden; background: var(--bg);
          --focus-shadow: 0 0 0 1px rgba(21, 168, 168, 0.2);"

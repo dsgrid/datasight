@@ -75,6 +75,12 @@ describe("extractFromTables", () => {
       .toEqual([{ table: "generation_fuel", alias: null }]);
   });
 
+  it("does not treat -- inside a string literal as a comment", () => {
+    expect(
+      extractFromTables("SELECT '--not a comment' FROM generation_fuel"),
+    ).toEqual([{ table: "generation_fuel", alias: null }]);
+  });
+
   it("handles schema-qualified table names", () => {
     expect(extractFromTables("SELECT * FROM public.plants p")).toEqual([
       { table: "public.plants", alias: "p" },

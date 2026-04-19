@@ -52,11 +52,12 @@ const ALIAS_STOP_WORDS = new Set([
 ]);
 
 function stripNoiseBeforeParse(sql: string): string {
+  // Mask string literals before stripping comments so a `--` inside a string
+  // doesn't get treated as a line comment that swallows the rest of the line.
   return sql
-    .replace(/--[^\n]*/g, " ")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/"(?:[^"\\]|\\.)*"/g, (m) => m);
+    .replace(/--[^\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
 }
 
 /**
@@ -147,8 +148,16 @@ export function contextualColumnSource(
     const schema = getSchema();
     if (!schema || Object.keys(schema).length === 0) return null;
 
-    const head = context.state.doc.sliceString(0, word.from);
-    const tables = extractFromTables(head);
+    // Scan the entire current statement (bounded by `;`s on either side of
+    // the cursor) so completions also work when the cursor sits in the SELECT
+    // list before the FROM clause has been fully typed/parsed.
+    const fullDoc = context.state.doc.sliceString(0);
+    const before = fullDoc.lastIndexOf(";", word.from - 1);
+    const after = fullDoc.indexOf(";", word.from);
+    const stmtStart = before === -1 ? 0 : before + 1;
+    const stmtEnd = after === -1 ? fullDoc.length : after;
+    const stmt = fullDoc.slice(stmtStart, stmtEnd);
+    const tables = extractFromTables(stmt);
     if (tables.length === 0) return null;
 
     const seenCols = new Set<string>();
