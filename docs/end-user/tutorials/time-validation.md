@@ -22,7 +22,7 @@ like.
 ## 1. Install datasight
 
 ```bash
-uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
+uv tool install datasight
 ```
 
 Don't have [uv](https://docs.astral.sh/uv/) yet? See

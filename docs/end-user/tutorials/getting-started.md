@@ -10,7 +10,7 @@ TEMPO](tempo.md) or [Try the time-validation demo](time-validation.md).
 ## 1. Install
 
 ```bash
-uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
+uv tool install datasight
 ```
 
 Don't have [uv](https://docs.astral.sh/uv/) yet? See
@@ -82,5 +82,5 @@ Click **Pin** on any result to add it to the dashboard.
 !!! note "PNG chart export"
     The `datasight ask --chart-format png` CLI command needs the optional
     export extra. Reinstall with:
-    `uv tool install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"`.
+    `uv tool install "datasight[export]"`.
     The web UI uses interactive HTML charts and does not need this.

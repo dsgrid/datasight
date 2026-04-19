@@ -1,16 +1,25 @@
 # Install datasight
 
-datasight is distributed as a Python CLI. The recommended installer is
-[uv](https://docs.astral.sh/uv/), which installs datasight as a global
-tool without managing a virtual environment.
+datasight is distributed as a Python CLI on PyPI. The recommended
+installer is [uv](https://docs.astral.sh/uv/), which installs datasight
+as a global tool without managing a virtual environment. If you already
+have a Python toolchain you prefer, `pip` works too.
 
-```bash
-# Install uv (one-time — see https://docs.astral.sh/uv/getting-started/installation/)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+=== "uv (recommended)"
 
-# Install datasight
-uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
-```
+    ```bash
+    # Install uv (one-time — see https://docs.astral.sh/uv/getting-started/installation/)
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install datasight
+    uv tool install datasight
+    ```
+
+=== "pip"
+
+    ```bash
+    pip install --user datasight
+    ```
 
 This includes DuckDB, SQLite, PostgreSQL, Anthropic, OpenAI, GitHub
 Models, and Ollama support.
@@ -62,6 +71,7 @@ every supported variable.
 
 !!! note "PNG chart export"
     `datasight ask --chart-format png` needs the optional export extra.
-    Reinstall with the extra:
-    `uv tool install "datasight[export] @ git+https://github.com/dsgrid/datasight.git"`.
+    Reinstall with the extra — for example,
+    `uv tool install "datasight[export]"` or
+    `pip install --user "datasight[export]"`.
     The web UI does not need it.

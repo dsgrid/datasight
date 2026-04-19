@@ -18,7 +18,7 @@ and **Ollama** (local) as LLM backends.
 ## Quick start
 
 ```bash
-uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
+uv tool install datasight
 
 # Create a new project
 mkdir my-project && cd my-project

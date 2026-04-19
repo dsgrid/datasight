@@ -15,7 +15,7 @@ use deterministic CLI inspection commands before involving the LLM.
 ![datasight chat view](assets/screenshots/02-chat-view.png)
 
 ```bash
-uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
+uv tool install datasight
 
 # Explore files instantly — no project setup needed
 datasight run

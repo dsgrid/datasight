@@ -11,7 +11,7 @@ This guide walks you through creating a datasight project for your database.
 ## Install datasight
 
 ```bash
-uv tool install "datasight @ git+https://github.com/dsgrid/datasight.git"
+uv tool install datasight
 ```
 
 Don't have [uv](https://docs.astral.sh/uv/) yet? See

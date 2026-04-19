@@ -25,7 +25,7 @@ environment and install:
 ```bash
 uv venv ~/datasight-env
 source ~/datasight-env/bin/activate
-uv pip install git+https://github.com/dsgrid/datasight.git
+uv pip install datasight
 ```
 
 If uv isn't available, install it first with
