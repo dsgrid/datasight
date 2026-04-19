@@ -1348,7 +1348,7 @@ def test_doctor_fails_when_required_files_missing(tmp_path, test_duckdb_path):
     (tmp_path / ".env").write_text(
         (
             "LLM_PROVIDER=ollama\n"
-            "OLLAMA_MODEL=qwen3:8b\n"
+            "OLLAMA_MODEL=qwen2.5:7b\n"
             "DB_MODE=duckdb\n"
             f"DB_PATH={test_duckdb_path}\n"
         ),
