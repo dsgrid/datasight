@@ -109,3 +109,33 @@ jobs:
           name: datasight-tests
           fail_ci_if_error: false
           verbose: true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Export Python dependencies
+        run: uv export --frozen --no-dev --format requirements-txt -o requirements.txt
+
+      - name: Run pip-audit
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: requirements.txt
+
+      - name: Run npm audit
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: frontend
