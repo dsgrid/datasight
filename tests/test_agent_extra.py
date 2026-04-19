@@ -11,6 +11,7 @@ import pytest
 from datasight.agent import (
     _format_sql,
     coerce_dates,
+    execute_sql_with_validation,
     execute_tool,
     extract_suggestions,
     resolve_plotly_spec,
@@ -323,3 +324,26 @@ async def test_run_agent_loop_max_iterations(test_duckdb_path):
     runner.close()
     assert "maximum" in result.text.lower()
     assert result.api_calls == 3
+
+
+# ---------------------------------------------------------------------------
+# execute_sql_with_validation input guards
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_sql", ["", "   ", "\n\t  "])
+async def test_execute_sql_with_validation_rejects_empty_sql(bad_sql):
+    """Empty / whitespace-only SQL must return a tool error, not crash."""
+    called = False
+
+    async def run_sql(_sql: str) -> pd.DataFrame:
+        nonlocal called
+        called = True
+        return pd.DataFrame()
+
+    result = await execute_sql_with_validation(bad_sql, run_sql)
+    assert called is False
+    assert result.error is not None
+    assert "empty" in result.error.lower()
+    assert result.df is None
+    assert result.validation_status == "not_run"

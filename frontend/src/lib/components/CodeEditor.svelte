@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
-  import { EditorState, Compartment } from "@codemirror/state";
+  import { EditorState, Compartment, Prec } from "@codemirror/state";
   import {
     HighlightStyle,
     syntaxHighlighting,
   } from "@codemirror/language";
+  import { emacsStyleKeymap, deleteToLineStart } from "@codemirror/commands";
   import { tags as t } from "@lezer/highlight";
   import { sql, StandardSQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
   import { linter, type Diagnostic } from "@codemirror/lint";
@@ -16,6 +17,7 @@
     completionStatus,
   } from "@codemirror/autocomplete";
   import { basicSetup } from "codemirror";
+  import { contextualColumnSource } from "$lib/utils/sql-completion";
 
   interface InsertRequest {
     text: string;
@@ -70,11 +72,17 @@
   }
 
   function buildSqlExtension() {
-    return sql({
+    const support = sql({
       dialect: dialectFor(dialect),
       schema,
       upperCaseKeywords: true,
     });
+    return [
+      support,
+      support.language.data.of({
+        autocomplete: contextualColumnSource(() => schema),
+      }),
+    ];
   }
 
   function buildLinter() {
@@ -197,6 +205,12 @@
       doc: value,
       extensions: [
         runKeymap,
+        Prec.high(
+          keymap.of([
+            ...emacsStyleKeymap,
+            { key: "Ctrl-u", run: deleteToLineStart, preventDefault: true },
+          ]),
+        ),
         autocompletion({ activateOnTyping: true, activateOnTypingDelay: 75 }),
         basicSetup,
         langCompartment.of(buildSqlExtension()),
@@ -274,6 +288,7 @@
 
 <div
   bind:this={container}
+  data-sql-editor
   class="border border-border focus-within:border-teal"
   style="border-radius: 8px; overflow: hidden; background: var(--bg);
          --focus-shadow: 0 0 0 1px rgba(21, 168, 168, 0.2);"

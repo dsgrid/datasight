@@ -14,7 +14,7 @@
     { key: `${mod}+K`, desc: "Command palette" },
     { key: `${mod}+B`, desc: "Toggle sidebar" },
     { key: `${mod}+,`, desc: "Settings" },
-    { key: "/", desc: "Focus chat input" },
+    { key: "/", desc: "Focus chat input (or SQL editor in SQL view)" },
     { key: "?", desc: "Show shortcuts" },
     { key: "N", desc: "New conversation" },
     { key: "D", desc: "Toggle chat / dashboard" },

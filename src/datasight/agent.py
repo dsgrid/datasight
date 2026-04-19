@@ -370,6 +370,14 @@ async def execute_sql_with_validation(
     -------
     SqlExecutionResult with the DataFrame or error information.
     """
+    if not sql or not sql.strip():
+        return SqlExecutionResult(
+            elapsed_ms=0.0,
+            error="SQL query is empty. Provide a non-empty SQL statement.",
+            validation_status="not_run",
+            validation_errors=[],
+        )
+
     # Validate SQL against schema if available
     if schema_map:
         vr = validate_sql(
