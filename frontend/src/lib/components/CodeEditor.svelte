@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { EditorView, keymap, placeholder as placeholderExt } from "@codemirror/view";
-  import { EditorState, Compartment } from "@codemirror/state";
+  import { EditorState, Compartment, Prec } from "@codemirror/state";
   import {
     HighlightStyle,
     syntaxHighlighting,
   } from "@codemirror/language";
+  import { emacsStyleKeymap, deleteToLineStart } from "@codemirror/commands";
   import { tags as t } from "@lezer/highlight";
   import { sql, StandardSQL, PostgreSQL, SQLite } from "@codemirror/lang-sql";
   import { linter, type Diagnostic } from "@codemirror/lint";
@@ -204,6 +205,12 @@
       doc: value,
       extensions: [
         runKeymap,
+        Prec.high(
+          keymap.of([
+            ...emacsStyleKeymap,
+            { key: "Ctrl-u", run: deleteToLineStart, preventDefault: true },
+          ]),
+        ),
         autocompletion({ activateOnTyping: true, activateOnTypingDelay: 75 }),
         basicSetup,
         langCompartment.of(buildSqlExtension()),

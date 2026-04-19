@@ -2,6 +2,7 @@
   import { chatStore } from "$lib/stores/chat.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import { sendMessage } from "$lib/api/chat";
+  import { handleEmacsKey } from "$lib/utils/emacs-keys";
 
   let inputValue = $state("");
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
@@ -31,7 +32,9 @@
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+      return;
     }
+    if (textareaEl && handleEmacsKey(e, textareaEl)) return;
   }
 
   function handleSubmit() {
