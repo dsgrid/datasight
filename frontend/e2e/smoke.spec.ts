@@ -34,7 +34,7 @@ test.describe("Landing page", () => {
 test.describe("Keyboard shortcuts", () => {
   test("Cmd+K opens command palette", async ({ page }) => {
     await page.goto("/");
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     // Should see the search input placeholder
     await expect(
       page.locator('input[placeholder*="Search commands"]'),
@@ -43,7 +43,7 @@ test.describe("Keyboard shortcuts", () => {
 
   test("Escape closes command palette", async ({ page }) => {
     await page.goto("/");
-    await page.keyboard.press("Meta+k");
+    await page.keyboard.press("ControlOrMeta+k");
     await expect(
       page.locator('input[placeholder*="Search commands"]'),
     ).toBeVisible();
@@ -57,7 +57,7 @@ test.describe("Keyboard shortcuts", () => {
 test.describe("Settings panel", () => {
   test("Cmd+, opens settings", async ({ page }) => {
     await page.goto("/");
-    await page.keyboard.press("Meta+,");
+    await page.keyboard.press("ControlOrMeta+,");
     await expect(page.locator("text=Query Behavior")).toBeVisible({
       timeout: 2000,
     });
