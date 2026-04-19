@@ -243,6 +243,10 @@
     }
   });
 
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+
   function handleKeydown(e: KeyboardEvent) {
     const tag = (document.activeElement as HTMLElement)?.tagName;
     const isInput =
@@ -251,8 +255,13 @@
       tag === "SELECT" ||
       (document.activeElement as HTMLElement)?.isContentEditable;
 
-    // Mod shortcuts work even in inputs
-    if (e.metaKey || e.ctrlKey) {
+    // Platform-aware mod key: Cmd on Mac, Ctrl elsewhere. Treating raw Ctrl
+    // as a mod on Mac stole emacs chords (Ctrl-k, Ctrl-b) from the editors.
+    const modDown = isMac ? e.metaKey : e.ctrlKey;
+    if (modDown && !e.altKey && !e.shiftKey) {
+      // On non-Mac, Ctrl is both the app mod key and readline's chord prefix
+      // inside inputs; let the focused element handle chords there.
+      if (!isMac && isInput && (e.key === "k" || e.key === "b")) return;
       if (e.key === ",") {
         e.preventDefault();
         settingsOpen = !settingsOpen;
