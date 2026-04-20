@@ -12,8 +12,9 @@ where you can ask questions in natural language. The agent writes SQL, runs
 queries, and generates interactive Plotly visualizations.
 
 Supports **DuckDB**, **PostgreSQL**, **SQLite**, and **Flight SQL** databases.
-Supports **Anthropic Claude** (default), **GitHub Models** (open source),
-and **Ollama** (local) as LLM backends.
+Also queries local **CSV** and **Parquet** files directly — no database setup
+required. Supports **Anthropic Claude** (default), **GitHub Models** (open
+source), and **Ollama** (local) as LLM backends.
 
 ## Quick start
 
@@ -34,6 +35,20 @@ datasight run
 
 Open http://localhost:8084 and start asking questions.
 
+### Explore CSV or Parquet files with no setup
+
+```bash
+# Launch the web UI with no project, then paste a file or directory path
+# into "Explore Files" to create views automatically
+datasight run
+
+# Or inspect a file from the command line (schema, row count, column stats)
+datasight inspect generation.parquet
+
+# Or build a persistent project from CSV/Parquet inputs
+datasight generate generation.csv plants.csv --db-path grid.duckdb
+```
+
 Or ask from the command line without starting a server:
 
 ```bash
@@ -49,6 +64,7 @@ datasight ask --file questions.txt --output-dir batch-output
 - **Natural language queries** — ask questions in English, get SQL + results
 - **Interactive charts** — Plotly visualizations with chart-type switching
 - **Multiple databases** — DuckDB, PostgreSQL, SQLite, and Flight SQL
+- **Query files directly** — point at a local CSV or Parquet file (or directory) and start asking questions; datasight creates DuckDB views on the fly
 - **Headless CLI** — `datasight ask` runs queries without a web server
 - **Deterministic CLI workflows** — profile, quality, dimension, trend, and recipe commands that do not require an LLM
 - **Schema browser** — sidebar with tables, columns, and example queries
@@ -70,7 +86,7 @@ frontend built with Vite. It supports multiple LLM backends — Anthropic
 ```
 datasight run / datasight ask / datasight profile / datasight quality
   → LLM provider (Anthropic / OpenAI / GitHub Models / Ollama)
-    → DuckDB / PostgreSQL / SQLite / Flight SQL
+    → DuckDB / PostgreSQL / SQLite / Flight SQL (or CSV/Parquet via DuckDB views)
     → Plotly chart generator
   → Web UI (SSE streaming) or CLI output
 ```
