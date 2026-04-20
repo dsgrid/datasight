@@ -19,5 +19,8 @@
 # OPENAI_BASE_URL=https://api.openai.com/v1
 
 # --- GitHub Models ---
+# GITHUB_TOKEN needs Models access: run `gh auth token`, or create a
+# fine-grained PAT with "Models: read" at
+# https://github.com/settings/personal-access-tokens (classic PATs do not work).
 # GITHUB_TOKEN=ghp_...
 # GITHUB_MODELS_BASE_URL=https://models.github.ai/inference

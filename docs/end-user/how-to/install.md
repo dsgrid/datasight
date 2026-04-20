@@ -55,6 +55,16 @@ shell. Pick one of:
     GITHUB_MODELS_MODEL=gpt-4o
     ```
 
+    `GITHUB_TOKEN` is a GitHub token with access to GitHub Models — it is
+    *not* the same as a git push credential. Pick one source:
+
+    - **GitHub CLI** — if you already use `gh`, run `gh auth token` and
+      paste the output. This is the quickest path.
+    - **Fine-grained PAT** — create one at
+      [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens)
+      with the **`Models: read`** account permission. No repository access
+      is needed. Classic PATs do not grant Models access.
+
 === "Ollama (local)"
 
     Install [Ollama](https://ollama.com/), pull a tool-calling model, then:

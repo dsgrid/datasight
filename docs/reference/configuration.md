@@ -66,7 +66,7 @@ For help picking a provider, see [Choosing an LLM](../concepts/choosing-an-llm.m
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GITHUB_TOKEN` | *(required)* | GitHub personal access token. Run `gh auth token` if you use the GitHub CLI. |
+| `GITHUB_TOKEN` | *(required)* | Token with GitHub Models access. Either the output of `gh auth token` (if you use the GitHub CLI) or a fine-grained PAT with the `Models: read` permission — *not* a classic PAT or git push credential. |
 | `GITHUB_MODELS_MODEL` | `gpt-4o` | Model name available on [GitHub Models](https://github.com/marketplace/models) |
 | `GITHUB_MODELS_BASE_URL` | `https://models.inference.ai.azure.com` | GitHub Models API endpoint |
 
