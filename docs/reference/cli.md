@@ -399,7 +399,7 @@ datasight ask [OPTIONS] [QUESTION]
 | `--file` | Read one question per line from a text file. |
 | `--output-dir` | Directory for per-question batch outputs (only with --file). |
 | `--print-sql` | Print the SQL queries executed by the agent to the console. |
-| `--provenance` | Print run provenance as JSON to stderr. |
+| `--provenance` | Print run provenance as JSON to stdout (suppresses human-readable answer). |
 | `--sql-script` | Write executed queries to a SQL script that materializes results into auto-named tables (CREATE OR REPLACE). |
 | `-v`, `--verbose` | Enable debug logging. |
 
