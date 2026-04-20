@@ -74,7 +74,7 @@ For help picking a provider, see [Choosing an LLM](../concepts/choosing-an-llm.m
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `qwen3:8b` | Ollama model name (must support tool calling) |
+| `OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name (must support tool calling). `qwen2.5:7b` works well for CLI queries; for the web UI with visualizations, try `qwen2.5:14b`. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint |
 
 ### Database settings

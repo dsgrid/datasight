@@ -338,7 +338,7 @@ form,
 
 .page-btn {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--text-secondary);
   border-radius: 4px;
   padding: 2px 10px;
   font-family: inherit;
@@ -360,7 +360,7 @@ form,
 
 .export-csv-btn {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--text-secondary);
   border-radius: 6px;
   padding: 4px 10px;
   font-family: inherit;

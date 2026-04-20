@@ -1140,6 +1140,7 @@ def _build_cli_provenance(
     return {
         "turn_id": tools[0].get("turn_id") if tools else None,
         "question": question,
+        "answer": result.text or "",
         "model": model,
         "dialect": dialect,
         "project_dir": project_dir,
@@ -1171,7 +1172,7 @@ def _emit_cli_provenance(
         project_dir=project_dir,
         provider=provider,
     )
-    click.echo(json.dumps(provenance, indent=2), err=True)
+    click.echo(json.dumps(provenance, indent=2))
 
 
 def _write_batch_result_files(
@@ -2477,7 +2478,7 @@ def verify(project_dir, model, queries_path, verbose):
 @click.option(
     "--provenance",
     is_flag=True,
-    help="Print run provenance as JSON to stderr.",
+    help="Print run provenance as JSON to stdout (suppresses human-readable answer).",
 )
 @click.option(
     "--sql-script",
@@ -2545,6 +2546,8 @@ def ask(
     settings, resolved_model = _resolve_settings(project_dir, model)
     _validate_settings_for_llm(settings)
 
+    click.echo(f"Using {settings.llm.provider} model: {resolved_model}", err=True)
+
     resolved_db_path = _resolve_db_path(settings, project_dir)
     if settings.database.mode in ("duckdb", "sqlite") and not os.path.exists(resolved_db_path):
         click.echo(f"Error: Database file not found: {resolved_db_path}", err=True)
@@ -2575,7 +2578,8 @@ def ask(
                         sql_dialect=sql_dialect,
                     )
                 )
-                _emit_ask_result(result, batch_output_format, None, None)
+                if not provenance:
+                    _emit_ask_result(result, batch_output_format, None, None)
                 if print_sql:
                     _print_sql_queries(result)
                 if provenance:
@@ -2617,7 +2621,8 @@ def ask(
             sql_dialect=sql_dialect,
         )
     )
-    _emit_ask_result(result, output_format, chart_format, output_path)
+    if not provenance:
+        _emit_ask_result(result, output_format, chart_format, output_path)
     if print_sql:
         _print_sql_queries(result)
     if provenance:

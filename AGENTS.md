@@ -134,7 +134,7 @@ Docs use **Zensical**. Key details:
 ## Testing
 
 - **pytest + pytest-asyncio** with `asyncio_mode = "auto"`
-- **Integration marker**: tests marked `integration` require a running local Ollama instance with `qwen3:8b` available and are excluded in CI with `pytest -m "not integration"`. New tests that call a live LLM provider must be marked `integration`; prefer fake/stub LLM clients for deterministic unit tests.
+- **Integration marker**: tests marked `integration` require a running local Ollama instance with `qwen2.5:7b` available and are excluded in CI with `pytest -m "not integration"`. New tests that call a live LLM provider must be marked `integration`; prefer fake/stub LLM clients for deterministic unit tests.
 - **Vitest** for frontend unit tests (`frontend/tests/`). Run with `cd frontend && npm test`.
 - **Playwright** for frontend E2E tests (`frontend/e2e/`). Requires `datasight run` to be running. Run with `cd frontend && npm run test:e2e`.
 - **Web UI smoke tests** live in `tests/test_web_ui_smoke.py` and exercise the rendered FastAPI app without a browser build step

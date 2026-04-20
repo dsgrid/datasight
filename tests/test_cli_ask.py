@@ -1,6 +1,6 @@
 """Integration tests for the ``datasight ask`` CLI command using Ollama.
 
-These tests require a running Ollama instance with the qwen3:8b model.
+These tests require a running Ollama instance with the qwen2.5:7b model.
 They are marked with ``@pytest.mark.integration`` and can be skipped with:
 
     pytest -m "not integration"
@@ -43,7 +43,7 @@ _SCRUBBED_ENV_VARS = (
     "POSTGRES_URL",
     "POSTGRES_SSLMODE",
 )
-_REQUIRED_OLLAMA_MODEL = "qwen3:8b"
+_REQUIRED_OLLAMA_MODEL = "qwen2.5:7b"
 
 
 def _clean_subprocess_env() -> dict[str, str]:

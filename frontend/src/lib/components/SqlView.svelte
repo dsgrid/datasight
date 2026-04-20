@@ -150,7 +150,7 @@
           onclick={() => runSql()}
           disabled={sqlEditorStore.running || !sqlEditorStore.sql.trim()}
         >
-          {sqlEditorStore.running ? "Running..." : "Run"}
+          {sqlEditorStore.running ? "Running..." : "▶ Run"}
         </button>
       </div>
     </div>

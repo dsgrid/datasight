@@ -113,7 +113,7 @@ Generated web assets under `src/datasight/web/static/` and
 checkout when you want FastAPI to serve the production UI.
 
 Ollama-backed CLI tests are marked `integration` because they require a running
-local Ollama server with the `qwen3:8b` model available. CI runs `pytest -m "not
+local Ollama server with the `qwen2.5:7b` model available. CI runs `pytest -m "not
 integration"`; run `pytest -m integration` locally when you want to exercise the
 live LLM path.
 

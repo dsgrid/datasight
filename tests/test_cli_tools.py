@@ -1348,7 +1348,7 @@ def test_doctor_fails_when_required_files_missing(tmp_path, test_duckdb_path):
     (tmp_path / ".env").write_text(
         (
             "LLM_PROVIDER=ollama\n"
-            "OLLAMA_MODEL=qwen3:8b\n"
+            "OLLAMA_MODEL=qwen2.5:7b\n"
             "DB_MODE=duckdb\n"
             f"DB_PATH={test_duckdb_path}\n"
         ),
@@ -1656,7 +1656,7 @@ def test_ask_print_sql_outputs_queries_to_stderr(monkeypatch, project_dir):
     assert "SELECT count(*) FROM orders" not in result.stdout
 
 
-def test_ask_provenance_outputs_json_to_stderr(monkeypatch, project_dir):
+def test_ask_provenance_outputs_json_to_stdout(monkeypatch, project_dir):
     async def fake_run_ask_pipeline(**kwargs):
         return _make_sql_result(
             text="here are the rows",
@@ -1676,9 +1676,9 @@ def test_ask_provenance_outputs_json_to_stderr(monkeypatch, project_dir):
         ["ask", "--project-dir", project_dir, "How many orders?", "--provenance"],
     )
     assert result.exit_code == 0, result.output
-    assert "here are the rows" in result.stdout
-    provenance = json.loads(result.stderr)
+    provenance = json.loads(result.stdout)
     assert provenance["question"] == "How many orders?"
+    assert provenance["answer"] == "here are the rows"
     assert provenance["dialect"] == "duckdb"
     assert provenance["tools"][0]["formatted_sql"] == "SELECT\n  count(*)\nFROM orders"
     assert provenance["tools"][0]["validation"]["status"] == "not_run"
