@@ -140,9 +140,7 @@ EXAMPLE_QUERIES_YAML = """\
 @pytest.fixture()
 def project_dir(tmp_path, test_duckdb_path):
     """Create a project directory with .env and config files pointing to test DB."""
-    env_content = (
-        f"LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen2.5:7b\nDB_MODE=duckdb\nDB_PATH={test_duckdb_path}\n"
-    )
+    env_content = f"LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen2.5:7b\nDB_MODE=duckdb\nDB_PATH={test_duckdb_path}\n"
     (tmp_path / ".env").write_text(env_content, encoding="utf-8")
     (tmp_path / "schema_description.md").write_text(SCHEMA_DESCRIPTION, encoding="utf-8")
     (tmp_path / "queries.yaml").write_text(EXAMPLE_QUERIES_YAML, encoding="utf-8")
