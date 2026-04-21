@@ -262,7 +262,7 @@ toml = [
 
 [[package]]
 name = "datasight"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "adbc-driver-flightsql" },
@@ -271,6 +271,7 @@ dependencies = [
     { name = "click" },
     { name = "duckdb" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "loguru" },
     { name = "openai" },
     { name = "pandas" },
@@ -308,6 +309,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.0,<9" },
     { name = "duckdb", specifier = ">=1.0,<2" },
     { name = "fastapi", specifier = ">=0.110,<1" },
+    { name = "httpx", specifier = ">=0.27,<1" },
     { name = "kaleido", marker = "extra == 'export'", specifier = ">=0.2,<1" },
     { name = "loguru", specifier = ">=0.7,<1" },
     { name = "openai", specifier = ">=2,<3" },

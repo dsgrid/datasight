@@ -57,6 +57,29 @@ Don't repeat what introspection discovers:
 
 Focus on the *meaning* behind the schema, not the schema itself.
 
+## Pull in external references
+
+Use `[include:Title](https://…)` anywhere in the file to fetch a web page
+at project-load time and splice its content into the system prompt. Useful
+for pointing the LLM at fuel-code glossaries, data-source documentation,
+or anything else that lives elsewhere and changes occasionally.
+
+```markdown
+Fuel code meanings come from
+[include:EIA fuel codes](https://www.eia.gov/electricity/monthly/pdf/technotes.pdf).
+```
+
+- HTML is stripped to plain text; non-text content types are skipped.
+- Each URL is capped at 20 KB (override with the `SCHEMA_INCLUDE_MAX_BYTES`
+  env var) and fetched once per project load.
+- If a fetch fails, the original `[include:…](url)` markdown link is left
+  in place so the LLM still sees the pointer.
+- Set `SCHEMA_INCLUDE_MAX_BYTES=0` to skip resolution entirely. The
+  directives stay in the prompt as plain markdown links, which is the
+  escape hatch when a linked page pushes the system prompt past a
+  small-context model's token limit (common on the free GitHub Models
+  tier).
+
 ## File location
 
 By default, datasight looks for `schema_description.md` in the project

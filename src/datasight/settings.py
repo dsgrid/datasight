@@ -99,6 +99,8 @@ _PROJECT_ENV_VARS = [
     # Project-specific file paths
     "SCHEMA_DESCRIPTION_PATH",
     "EXAMPLE_QUERIES_PATH",
+    # Schema include-link resolver
+    "SCHEMA_INCLUDE_MAX_BYTES",
 ]
 
 # Captured after root .env is loaded - the baseline environment that projects

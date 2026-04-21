@@ -19,8 +19,10 @@ from datasight.llm import (
     TextBlock,
     ToolUseBlock,
     Usage,
+    _augment_if_context_overflow,
     _convert_messages_to_openai,
     _convert_tools_to_openai,
+    _is_context_overflow_error,
     create_llm_client,
     serialize_content,
 )
@@ -56,6 +58,61 @@ def test_serialize_content_tool_use():
 
 def test_serialize_content_empty():
     assert serialize_content([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Context-overflow detection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "This model's maximum context length is 8192 tokens.",
+        "error code: context_length_exceeded",
+        "prompt is too long: 250000 tokens > 200000 maximum",
+        "Request failed: too many tokens in the request",
+        "exceeded tokens budget for this tier",
+        "Input token limit exceeded",
+        "Request too large for this model",
+        "Anthropic API error: input is too long for model",
+        "400 Bad Request: maximum context exceeded",
+        # Observed GitHub Models 413 response — error code + phrase.
+        (
+            "Error code: 413 - {'error': {'code': 'tokens_limit_reached', "
+            "'message': 'Request body too large for gpt-4o model. Max size: 8000 tokens.'}}"
+        ),
+    ],
+)
+def test_is_context_overflow_error_matches(message: str):
+    assert _is_context_overflow_error(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "",
+        "rate limit exceeded",
+        "authentication failed",
+        "internal server error",
+        "connection timed out",
+        "model not found",
+    ],
+)
+def test_is_context_overflow_error_non_matches(message: str):
+    assert _is_context_overflow_error(message) is False
+
+
+def test_augment_if_context_overflow_appends_hint_when_match():
+    augmented = _augment_if_context_overflow("prompt is too long: 300000 tokens")
+    assert "SCHEMA_INCLUDE_MAX_BYTES=0" in augmented
+    assert "context-window overflow" in augmented
+    assert augmented.startswith("prompt is too long")
+
+
+def test_augment_if_context_overflow_passthrough_when_no_match():
+    msg = "authentication failed — check your API key"
+    assert _augment_if_context_overflow(msg) == msg
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +378,31 @@ async def test_anthropic_client_api_status_error():
             )
 
 
+@pytest.mark.asyncio
+async def test_anthropic_context_overflow_error_adds_hint():
+    with patch("datasight.llm.anthropic.AsyncAnthropic") as mock_cls:
+        instance = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_resp.headers = {}
+        instance.messages.create = AsyncMock(
+            side_effect=anthropic.APIStatusError(
+                "prompt is too long: 250000 tokens > 200000 maximum",
+                response=mock_resp,
+                body=None,
+            )
+        )
+        mock_cls.return_value = instance
+
+        client = AnthropicLLMClient(api_key="sk-test")
+        with pytest.raises(LLMResponseError) as excinfo:
+            await client.create_message(
+                model="claude", system="sys", messages=[], tools=[], max_tokens=100
+            )
+        assert "SCHEMA_INCLUDE_MAX_BYTES=0" in str(excinfo.value)
+        assert "context-window overflow" in str(excinfo.value)
+
+
 def test_create_llm_client_missing_api_key_raises_configuration_error():
     """Factory short-circuits with a clear error when a required key is missing."""
     from datasight.exceptions import ConfigurationError
@@ -507,6 +589,30 @@ async def test_openai_compat_non_transient_error_fails_immediately():
             await client.create_message(
                 model="m", system="sys", messages=[], tools=[], max_tokens=50
             )
+        assert instance.chat.completions.create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_context_overflow_error_adds_hint():
+    fake_module = _fake_openai_module()
+    instance = MagicMock()
+    instance.chat.completions.create = AsyncMock(
+        side_effect=_openai_status_error(
+            "This model's maximum context length is 8192 tokens. However, your "
+            "messages resulted in 12345 tokens."
+        )
+    )
+    fake_module.AsyncOpenAI = MagicMock(return_value=instance)
+
+    with patch.dict("sys.modules", {"openai": fake_module}):
+        client = GitHubModelsLLMClient(api_key="ghp_test")
+        with pytest.raises(LLMResponseError) as excinfo:
+            await client.create_message(
+                model="gpt-4o", system="sys", messages=[], tools=[], max_tokens=50
+            )
+        assert "SCHEMA_INCLUDE_MAX_BYTES=0" in str(excinfo.value)
+        assert "context-window overflow" in str(excinfo.value)
+        # Should still fail immediately; overflow is a 4xx, not transient.
         assert instance.chat.completions.create.await_count == 1
 
 

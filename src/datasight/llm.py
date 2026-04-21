@@ -46,6 +46,55 @@ DEFAULT_MAX_ATTEMPTS: int = 3
 DEFAULT_RETRY_BASE_DELAY: float = 1.0  # seconds, doubled each retry
 
 
+# Phrases and error codes each provider uses for "your prompt blew through the
+# context window." Matched case-insensitively against the raw error message.
+# Conservative on purpose: false positives would point users at
+# SCHEMA_INCLUDE_MAX_BYTES when that isn't the actual problem.
+_CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
+    "context length",
+    "context_length",
+    "context_length_exceeded",
+    "maximum context",
+    "prompt is too long",
+    "too many tokens",
+    "exceeded tokens",
+    "token limit",
+    "tokens_limit",
+    "tokens_limit_reached",
+    "request too large",
+    "request body too large",
+    "input is too long",
+)
+
+# Tail added to ``LLMResponseError`` when the provider's 4xx looks like a
+# context-window overflow. Points at the usual culprit (schema includes) and
+# the escape hatches (disable the resolver, switch to a larger-context
+# backend).
+_CONTEXT_OVERFLOW_HINT: str = (
+    "\n\nThis looks like a context-window overflow. If your schema_description.md uses "
+    "[include:Title](url) directives, the fetched pages may be pushing the prompt past "
+    "this model's token limit. Options:\n"
+    "  - Set SCHEMA_INCLUDE_MAX_BYTES=0 to skip include-link resolution entirely.\n"
+    "  - Lower SCHEMA_INCLUDE_MAX_BYTES to a smaller per-URL cap.\n"
+    "  - Switch to a larger-context backend (e.g. LLM_PROVIDER=anthropic)."
+)
+
+
+def _is_context_overflow_error(message: str) -> bool:
+    """Return True if the provider error message smells like a context overflow."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(pattern in lowered for pattern in _CONTEXT_OVERFLOW_PATTERNS)
+
+
+def _augment_if_context_overflow(message: str) -> str:
+    """Append the context-overflow hint to ``message`` when the pattern matches."""
+    if _is_context_overflow_error(message):
+        return message + _CONTEXT_OVERFLOW_HINT
+    return message
+
+
 # ---------------------------------------------------------------------------
 # Common types
 # ---------------------------------------------------------------------------
@@ -297,7 +346,9 @@ class AnthropicLLMClient:
                 await asyncio.sleep(delay)
             except anthropic.APIStatusError as e:
                 logger.exception("Anthropic API error")
-                raise LLMResponseError(f"Anthropic API error: {e}") from e
+                raise LLMResponseError(
+                    _augment_if_context_overflow(f"Anthropic API error: {e}")
+                ) from e
 
         if response is None:
             raise LLMResponseError(
@@ -612,7 +663,7 @@ class _OpenAICompatibleClient:
                 await asyncio.sleep(delay)
             except oa.APIStatusError as e:
                 logger.exception("OpenAI-compatible API error")
-                raise LLMResponseError(f"API error: {e}") from e
+                raise LLMResponseError(_augment_if_context_overflow(f"API error: {e}")) from e
 
         if response is None:
             raise LLMResponseError(

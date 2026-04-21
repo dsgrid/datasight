@@ -83,6 +83,7 @@ from datasight.generate import (
 )
 from datasight.runner import CachingSqlRunner, SqlRunner
 from datasight.schema import filter_tables, format_schema_context, introspect_schema
+from datasight.schema_links import resolve_schema_description_links
 from datasight.settings import (
     Settings,
     capture_original_env,
@@ -981,6 +982,7 @@ async def load_project(project_dir: str, state: AppState) -> dict[str, Any]:
 
     # Load schema and introspect database
     user_desc = load_schema_description(os.environ.get("SCHEMA_DESCRIPTION_PATH"), project_dir)
+    user_desc = await resolve_schema_description_links(user_desc)
 
     schema_config = load_schema_config(None, project_dir)
     allowed_tables: set[str] | None = None

@@ -25,6 +25,7 @@ dependencies = [
     "adbc-driver-flightsql>=1.0,<2",
     "duckdb>=1.0,<2",
     "fastapi>=0.110,<1",
+    "httpx>=0.27,<1",
     "uvicorn>=0.29,<1",
     "loguru>=0.7,<1",
     "truststore>=0.10.4",
