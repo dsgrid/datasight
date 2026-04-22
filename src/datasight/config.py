@@ -181,6 +181,8 @@ def create_sql_runner_from_settings(
         if project_dir:
             db_path = str(Path(project_dir) / db_path)
 
+    logger.info(f"Database mode: {settings.mode} (dialect: {settings.sql_dialect})")
+
     runner = create_sql_runner(
         db_mode=settings.mode,
         db_path=db_path,

@@ -143,6 +143,27 @@ def test_dispatcher_no_settings_uses_ephemeral(tmp_path):
     assert [t["name"] for t in tables] == ["generation"]
 
 
+def test_dispatcher_logs_chosen_backend_on_every_branch(tmp_path, caplog):
+    """Every dispatcher branch should log which backend was picked."""
+    from loguru import logger as _logger
+
+    p = tmp_path / "generation.parquet"
+    _write_parquet(p, [(1, "wind")])
+
+    sink_id = _logger.add(lambda msg: caplog.records.append(msg), level="INFO")
+    try:
+        # No settings → DuckDB (with explanation)
+        create_files_session_for_settings([str(p)], None)
+        # DB_MODE=duckdb → DuckDB (with mode in message)
+        create_files_session_for_settings([str(p)], DatabaseSettings(mode="duckdb"))
+    finally:
+        _logger.remove(sink_id)
+
+    combined = "\n".join(str(r) for r in caplog.records)
+    assert "no settings" in combined.lower() or "no .env" in combined.lower()
+    assert "DB_MODE=duckdb" in combined
+
+
 def test_dispatcher_postgres_mode_falls_back_with_warning(tmp_path, caplog):
     """Postgres / FlightSQL can't read local files — fall back to DuckDB."""
     from loguru import logger as _logger

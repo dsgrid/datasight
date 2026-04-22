@@ -488,10 +488,17 @@ def create_files_session_for_settings(
     - ``postgres`` / ``flightsql``: fall back to DuckDB with a warning —
       those backends can't read arbitrary local files.
     """
-    if settings is None or settings.mode in ("duckdb", "sqlite"):
+    if settings is None:
+        logger.info("File session: in-memory DuckDB (no settings / no .env)")
+        return create_ephemeral_session(file_paths)
+    if settings.mode in ("duckdb", "sqlite"):
+        logger.info(f"File session: in-memory DuckDB (DB_MODE={settings.mode})")
         return create_ephemeral_session(file_paths)
     if settings.mode == "spark":
-        logger.info(f"File inspection routed through Spark Connect: {settings.spark_remote}")
+        logger.info(
+            f"File session: Spark Connect at {settings.spark_remote} "
+            f"(DB_MODE=spark, byte cap {settings.spark_max_result_bytes:,})"
+        )
         return create_spark_files_session(
             file_paths,
             spark_remote=settings.spark_remote,

@@ -95,13 +95,21 @@ def _current_db_settings_or_none():
     otherwise ``None`` (caller should fall back to plain DuckDB).
     """
     from dotenv import load_dotenv
+    from loguru import logger
 
     env_path = os.path.join(os.getcwd(), ".env")
     if not os.path.exists(env_path):
+        logger.info(
+            f"No .env found in {os.getcwd()} — file commands will use an "
+            "in-memory DuckDB session. Set DB_MODE in a .env to route "
+            "through a configured backend (e.g. Spark)."
+        )
         return None
     load_dotenv(env_path, override=False)
     load_global_env(override=False)
-    return Settings.from_env().database
+    db = Settings.from_env().database
+    logger.info(f"Loaded .env from {env_path} — DB_MODE={db.mode}")
+    return db
 
 
 def _validate_settings_for_llm(settings: Settings) -> None:
