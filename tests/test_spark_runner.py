@@ -263,6 +263,50 @@ def test_log_session_info_warns_on_local_master(caplog):
     assert "running all work in one JVM" in combined
 
 
+def test_enable_ansi_quoted_identifiers_sets_session_config():
+    """Spark must be told to treat "name" as an identifier, not a string."""
+
+    class _RecordingConf:
+        def __init__(self):
+            self.values: dict[str, str] = {}
+
+        def set(self, key, value):
+            self.values[key] = value
+
+        def get(self, key):
+            return self.values.get(key)
+
+    spark = _FakeSpark([])
+    spark.conf = _RecordingConf()
+
+    SparkConnectRunner._enable_ansi_quoted_identifiers(spark)
+
+    assert spark.conf.values.get("spark.sql.ansi.double_quoted_identifiers") == "true"
+
+
+def test_enable_ansi_quoted_identifiers_warns_but_does_not_raise(caplog):
+    """If the conf can't be set, log a warning but keep the connection alive."""
+    from loguru import logger as _logger
+
+    class _RejectingConf:
+        def set(self, *_args, **_kwargs):
+            raise RuntimeError("config locked by admin")
+
+    spark = _FakeSpark([])
+    spark.conf = _RejectingConf()
+
+    sink_id = _logger.add(lambda msg: caplog.records.append(msg), level="WARNING")
+    try:
+        # Must not raise even if conf.set blows up.
+        SparkConnectRunner._enable_ansi_quoted_identifiers(spark)
+    finally:
+        _logger.remove(sink_id)
+
+    combined = "\n".join(str(r) for r in caplog.records)
+    assert "double_quoted_identifiers" in combined
+    assert "config locked by admin" in combined
+
+
 def test_probe_connection_raises_quickly_when_server_unreachable(monkeypatch):
     """An unresponsive server should fail in seconds, not hang for minutes."""
     import queue as _queue

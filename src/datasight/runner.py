@@ -530,6 +530,7 @@ class SparkConnectRunner:
             self._spark = builder.getOrCreate()
             self._probe_connection(self._spark, self._remote)
             logger.info(f"Connected to Spark Connect: {self._remote}")
+            self._enable_ansi_quoted_identifiers(self._spark)
             self._log_session_info(self._spark)
         except ConnectionError:
             raise
@@ -575,6 +576,29 @@ class SparkConnectRunner:
         if status == "error":
             raise ConnectionError(
                 f"Spark Connect server at {remote} rejected the handshake: {payload}"
+            )
+
+    @staticmethod
+    def _enable_ansi_quoted_identifiers(spark: Any) -> None:
+        """Make Spark accept ``"name"`` as an identifier, not a string literal.
+
+        Spark's default SQL parser treats double-quoted text as a string
+        literal (it expects backticks for quoted identifiers). The rest
+        of datasight — and the SQL the LLM agent writes — uses the SQL
+        standard ``"identifier"`` form, which Spark rejects with
+        PARSE_SYNTAX_ERROR. Setting this session-level config flips
+        Spark's behavior to the standard interpretation. Available
+        on Spark 3.4+; ANSI mode (default in Spark 4.0) must be on.
+        """
+        key = "spark.sql.ansi.double_quoted_identifiers"
+        try:
+            spark.conf.set(key, "true")
+            logger.info(f"Set {key}=true so Spark accepts SQL-standard quoted identifiers")
+        except Exception as e:
+            logger.warning(
+                f"Could not set {key}: {e}. Queries that use double-quoted "
+                "identifiers may fail. Workaround: enable ANSI mode on the "
+                "Connect server, or upgrade Spark to 3.4+."
             )
 
     @staticmethod
