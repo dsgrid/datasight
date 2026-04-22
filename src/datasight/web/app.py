@@ -860,9 +860,22 @@ async def _build_project_health(state: AppState) -> dict[str, Any]:
         1 for check in checks if not check["ok"] and check["category"] == "project"
     )
 
+    # Surface the configured backend identity at the top level so the UI
+    # can render compact "Project / DB / LLM" rows without parsing strings
+    # out of individual check details.
+    db_mode = settings.database.mode if settings is not None else None
+    db_target = next(
+        (c["detail"] for c in checks if c["name"] == "Database config" and c["ok"]),
+        None,
+    )
+    llm_provider = settings.llm.provider if settings is not None else None
+
     return {
         "project_loaded": state.project_loaded,
         "project_dir": state.project_dir,
+        "db_mode": db_mode,
+        "db_target": db_target,
+        "llm_provider": llm_provider,
         "checks": checks,
         "summary": {
             "ok_count": sum(1 for check in checks if check["ok"]),

@@ -19,15 +19,23 @@
   let summary = $derived(
     (data?.summary as { ok_count?: number; fail_count?: number }) || {},
   );
-  let projectDir = $derived(
+  let totalCount = $derived(checks.length);
+  let healthy = $derived((summary.fail_count || 0) === 0);
+  let failing = $derived(checks.filter((c) => !c.ok));
+  let passing = $derived(checks.filter((c) => c.ok));
+  let projectName = $derived(
     data?.project_loaded
-      ? (data?.project_dir as string) || "Project loaded"
+      ? ((data?.project_dir as string) || "Project loaded").split("/").pop() ||
+        "Project"
       : "No project loaded",
   );
-  let hints = $derived(
-    checks.filter((c) => !c.ok && c.remediation),
-  );
-  let healthy = $derived((summary.fail_count || 0) === 0);
+  let dbMode = $derived((data?.db_mode as string) || null);
+  let dbTarget = $derived((data?.db_target as string) || null);
+  let llmProvider = $derived((data?.llm_provider as string) || null);
+
+  // Show the OK rows only when the user opens the disclosure. Default
+  // closed because in the healthy case they're just noise.
+  let showAll = $state(false);
 </script>
 
 {#if !data}
@@ -36,37 +44,80 @@
   <p class="health-empty">No health data available.</p>
 {:else}
   <div class="health-grid">
-    <!-- Summary -->
-    <div class="health-summary {healthy ? 'healthy' : 'has-failures'}">
-      <strong>{projectDir}</strong>
-      <span>{summary.ok_count || 0} OK &bull; {summary.fail_count || 0} failing</span>
-    </div>
+    <!-- Identity rows: who/what is configured. Always visible. -->
+    <dl class="identity">
+      <div class="identity-row" title={data?.project_dir as string ?? ""}>
+        <dt>Project</dt>
+        <dd>{projectName}</dd>
+      </div>
+      {#if dbMode}
+        <div class="identity-row" title={dbTarget ?? ""}>
+          <dt>Database</dt>
+          <dd>
+            <span class="mode">{dbMode}</span>
+            {#if dbTarget && dbTarget !== dbMode}
+              <span class="target">{dbTarget}</span>
+            {/if}
+          </dd>
+        </div>
+      {/if}
+      {#if llmProvider}
+        <div class="identity-row">
+          <dt>LLM</dt>
+          <dd>{llmProvider}</dd>
+        </div>
+      {/if}
+    </dl>
 
-    <!-- Remediation hints -->
-    {#if hints.length > 0}
-      <div class="health-hints">
-        {#each hints as hint}
-          <div class="health-hint">
-            <strong>{hint.name}:</strong> {hint.remediation}
+    <!-- Status pill: one line in the healthy case, click to expand. -->
+    <button
+      type="button"
+      class="status-pill {healthy ? 'healthy' : 'has-failures'}"
+      aria-expanded={showAll}
+      onclick={() => (showAll = !showAll)}
+    >
+      <span class="status-text">
+        {#if healthy}
+          All {totalCount} checks passed
+        {:else}
+          {summary.fail_count} of {totalCount} checks failing
+        {/if}
+      </span>
+      <span class="chev" aria-hidden="true">{showAll ? "▾" : "▸"}</span>
+    </button>
+
+    <!-- Failing checks + remediation hints — always visible when present. -->
+    {#if failing.length > 0}
+      <div class="failing-list">
+        {#each failing as check}
+          <div class="health-row fail">
+            <span class="health-name">{check.name}</span>
+            <span class="health-status fail">FAIL</span>
+            {#if check.detail}
+              <span class="health-detail">{check.detail}</span>
+            {/if}
+            {#if check.remediation}
+              <span class="health-remediation">{check.remediation}</span>
+            {/if}
           </div>
         {/each}
       </div>
     {/if}
 
-    <!-- Check rows -->
-    {#each checks as check}
-      <div class="health-row {check.ok ? '' : 'fail'}">
-        <span class="health-name">{check.name}</span>
-        <span class="health-status {check.ok ? 'ok' : 'fail'}">
-          {check.ok ? "OK" : "FAIL"}
-        </span>
-        {#if check.detail}
-          <span class="health-detail">{check.detail}</span>
-        {:else}
-          <span class="health-detail">{check.category}</span>
-        {/if}
+    <!-- All passing checks behind the disclosure. -->
+    {#if showAll && passing.length > 0}
+      <div class="passing-list">
+        {#each passing as check}
+          <div class="health-row">
+            <span class="health-name">{check.name}</span>
+            <span class="health-status ok">OK</span>
+            {#if check.detail}
+              <span class="health-detail">{check.detail}</span>
+            {/if}
+          </div>
+        {/each}
       </div>
-    {/each}
+    {/if}
   </div>
 {/if}
 
@@ -81,40 +132,83 @@
     color: var(--text-secondary);
   }
 
-  .health-summary {
-    padding: 10px 12px;
-    border-radius: 10px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-size: 0.78rem;
-    word-break: break-word;
+  .identity {
     display: grid;
     gap: 4px;
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 84%, var(--surface));
+    font-size: 0.78rem;
   }
 
-  .health-summary.healthy {
+  .identity-row {
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr);
+    gap: 8px;
+    align-items: baseline;
+  }
+
+  .identity-row dt {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .identity-row dd {
+    margin: 0;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  .identity-row .mode {
+    font-weight: 600;
+    margin-right: 6px;
+  }
+
+  .identity-row .target {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .status-pill.healthy {
     border-color: color-mix(in srgb, var(--teal) 32%, var(--border));
     background: color-mix(in srgb, var(--teal) 6%, var(--bg));
   }
 
-  .health-summary.has-failures {
+  .status-pill.has-failures {
     border-color: color-mix(in srgb, var(--orange) 34%, var(--border));
     background: color-mix(in srgb, var(--orange) 6%, var(--bg));
   }
 
-  .health-hints {
-    display: grid;
-    gap: 8px;
+  .status-pill .chev {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
   }
 
-  .health-hint {
-    padding: 10px 12px;
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--orange) 28%, var(--border));
-    background: color-mix(in srgb, var(--orange) 6%, var(--bg));
-    color: var(--text);
-    font-size: 0.74rem;
+  .failing-list,
+  .passing-list {
+    display: grid;
+    gap: 8px;
   }
 
   .health-row {
@@ -129,6 +223,7 @@
 
   .health-row.fail {
     border-color: color-mix(in srgb, var(--orange) 24%, var(--border));
+    background: color-mix(in srgb, var(--orange) 5%, var(--bg));
   }
 
   .health-name {
@@ -156,5 +251,15 @@
     color: var(--text-secondary);
     font-size: 0.74rem;
     word-break: break-word;
+  }
+
+  .health-remediation {
+    grid-column: 1 / -1;
+    color: var(--text);
+    font-size: 0.74rem;
+    word-break: break-word;
+    padding-top: 2px;
+    border-top: 1px solid color-mix(in srgb, var(--orange) 18%, transparent);
+    margin-top: 4px;
   }
 </style>
