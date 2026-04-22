@@ -217,10 +217,28 @@ Also useful to check:
 ## Running Spark on an HPC compute node
 
 If your organization doesn't have a shared Spark cluster but you do have
-HPC, you can start your own short-lived Spark Connect server on a
-Slurm-allocated compute node and tunnel to it from your laptop. This
-mirrors the [Flight SQL on HPC](connect-flight-sql.md) setup, just with
-a Spark driver instead of GizmoSQL.
+HPC, you can start your own short-lived Spark cluster on Slurm-allocated
+compute nodes and tunnel to it from your laptop. This mirrors the
+[Flight SQL on HPC](connect-flight-sql.md) setup, just with a Spark
+cluster instead of a GizmoSQL server.
+
+Pick a variant based on your scale:
+
+- **[Variant A: single-node driver](#variant-a-single-node-driver-local-mode)**
+  — fastest to get running, no networking between nodes. Everything
+  runs in one JVM. Good for up to a few hundred GB that fits in a
+  single compute node's memory.
+- **[Variant B: multi-node standalone cluster](#variant-b-multi-node-standalone-cluster)**
+  — launch a Spark standalone master + workers across 2+ compute nodes
+  so queries actually distribute. Use this when you want real parallel
+  execution across multiple machines.
+
+!!! important
+    **Do not run Spark on the login node.** Spark drivers and executors
+    can consume significant memory and CPU. Always allocate compute
+    nodes with Slurm first, then start the services on those nodes.
+
+### Variant A: single-node driver (local mode)
 
 ```mermaid
 flowchart LR
@@ -248,19 +266,14 @@ flowchart LR
     style compute fill:#c44a1e,stroke:#fe5d26,color:#fff
 ```
 
-!!! important
-    **Do not run Spark on the login node.** Spark drivers can consume
-    significant memory and CPU. Always allocate a compute node with Slurm
-    first, then start the Connect server on that node.
-
-### Step A: Allocate a compute node
+**Step A1: Allocate one compute node**
 
 ```bash
 salloc --time=4:00:00 --mem=240G --cpus-per-task=104 --account <your-account>
 hostname     # note the compute node hostname (e.g. compute-node-42)
 ```
 
-### Step B: Start Spark Connect on the compute node
+**Step A2: Start Spark Connect on the compute node**
 
 Spark 3.5+ ships a helper script that launches a local driver with the
 Connect server enabled:
@@ -285,19 +298,158 @@ The script binds the Connect gRPC server to `0.0.0.0:15002` by default.
 Override with `--conf spark.connect.grpc.binding.port=<port>` if 15002
 is taken. Check the driver log — it prints the exact bound address.
 
-### Step C: SSH tunnel from your laptop
+**Step A3: SSH tunnel and configure datasight** — see
+[common steps](#common-steps-ssh-tunnel-and-datasight-config) below.
 
-Replace `compute-node-42` with your actual allocated hostname:
+### Variant B: multi-node standalone cluster
+
+Use this when your dataset is too big for one compute node, or when you
+saw `spark.master = local[*]` in the session info log and only one node
+was actually doing work.
+
+```mermaid
+flowchart LR
+    subgraph laptop ["Your laptop"]
+        DS[datasight web UI<br>+ LLM agent]
+    end
+    subgraph login ["Login node"]
+        SSH[SSH tunnel<br>passthrough only]
+    end
+    subgraph nodeA ["Compute node A · head"]
+        MASTER[Spark master<br>:7077]
+        SC[Spark Connect server<br>:15002]
+        WA[Worker A]
+        SC --> MASTER
+        WA --> MASTER
+    end
+    subgraph nodeB ["Compute node B · worker"]
+        WB[Worker B]
+        WB --> MASTER
+    end
+    PQ["/scratch parquet files<br>shared filesystem"]
+    WA --> PQ
+    WB --> PQ
+    DS <-->|"SQL over<br>gRPC + Arrow"| SSH <-->|port 15002| SC
+
+    style DS fill:#15a8a8,stroke:#023d60,color:#fff
+    style SSH fill:#bf1363,stroke:#8a0d42,color:#fff
+    style SC fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style MASTER fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style WA fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style WB fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style PQ fill:#8a7d55,stroke:#6b6040,color:#fff
+    style laptop fill:#1a8a8a,stroke:#15a8a8,color:#fff
+    style login fill:#9e1050,stroke:#bf1363,color:#fff
+    style nodeA fill:#c44a1e,stroke:#fe5d26,color:#fff
+    style nodeB fill:#c44a1e,stroke:#fe5d26,color:#fff
+```
+
+!!! tip
+    Spark's standalone mode needs the **parquet / delta files on a
+    shared filesystem** that every node can read at the same path.
+    On HPC that usually means `/scratch` or `/projects`. NFS-mounted
+    home directories work but are slow under parallel IO.
+
+**Step B1: Allocate 2 compute nodes**
+
+Ask Slurm for two whole nodes with one task per node — you'll manually
+start different services on each:
+
+```bash
+salloc --nodes=2 --ntasks-per-node=1 --time=4:00:00 \
+    --mem=240G --cpus-per-task=104 --account <your-account>
+
+# List the allocated node names — first is "head", second is "worker"
+scontrol show hostnames "$SLURM_JOB_NODELIST"
+# → compute-node-42
+# → compute-node-43
+```
+
+Capture them into shell variables. From the head node (the one `salloc`
+puts you on):
+
+```bash
+HEAD_NODE=$(hostname)
+WORKER_NODE=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | tail -n1)
+echo "Head:   $HEAD_NODE"
+echo "Worker: $WORKER_NODE"
+```
+
+**Step B2: Start the standalone master on the head node**
+
+```bash
+# On the head node
+$SPARK_HOME/sbin/start-master.sh \
+    --host "$HEAD_NODE" \
+    --port 7077 \
+    --webui-port 8080
+```
+
+The master now accepts worker registrations at `spark://$HEAD_NODE:7077`.
+The web UI on `http://$HEAD_NODE:8080` lists every worker that registers.
+
+**Step B3: Launch a worker on each compute node**
+
+Start one worker locally on the head node, and use `srun` to launch
+another worker on the second node — `srun` inherits the Slurm allocation
+so it lands on `$WORKER_NODE` without a separate job:
+
+```bash
+# Worker on the head node (same box as the master)
+$SPARK_HOME/sbin/start-worker.sh "spark://$HEAD_NODE:7077" \
+    --cores 100 --memory 200g
+
+# Worker on the second node — srun runs it there inside this allocation
+srun --nodes=1 --ntasks=1 -w "$WORKER_NODE" \
+    $SPARK_HOME/sbin/start-worker.sh "spark://$HEAD_NODE:7077" \
+    --cores 100 --memory 200g &
+```
+
+Leave `--cores` a few below `--cpus-per-task` so the worker JVM and OS
+have breathing room. Check `http://$HEAD_NODE:8080` — you should see
+two `ALIVE` workers.
+
+**Step B4: Start the Connect server pointing at the standalone master**
+
+This is the critical change from Variant A — `--master` goes to
+`spark://...` instead of `local[...]`:
+
+```bash
+# On the head node
+$SPARK_HOME/sbin/start-connect-server.sh \
+    --master "spark://$HEAD_NODE:7077" \
+    --packages org.apache.spark:spark-connect_2.13:3.5.1 \
+    --conf spark.driver.memory=16g \
+    --conf spark.executor.memory=200g \
+    --conf spark.executor.cores=100 \
+    --conf spark.sql.execution.arrow.pyspark.enabled=true
+```
+
+When datasight connects, the session info log should now show something
+like `spark.master = spark://compute-node-42:7077` and the local-mode
+warning will not fire.
+
+**Step B5: SSH tunnel and configure datasight** — see
+[common steps](#common-steps-ssh-tunnel-and-datasight-config) below.
+Note that `$HEAD_NODE` is where the Connect server lives — that's what
+goes in the `-L` forward, not `$WORKER_NODE`.
+
+### Common steps: SSH tunnel and datasight config
+
+**SSH tunnel from your laptop**
+
+Replace `compute-node-42` with the compute node running the Connect
+server (the head node in Variant B):
 
 ```bash
 ssh -N -L 15002:compute-node-42:15002 user@hpc-login-node
 ```
 
-Leave this running in a separate terminal. The `-L` forwards your laptop's
-`localhost:15002` through the login node to port 15002 on the compute
-node — which is where the Spark Connect server is actually listening.
+Leave this running in a separate terminal. The `-L` forwards your
+laptop's `localhost:15002` through the login node to port 15002 on the
+head compute node.
 
-### Step D: Configure datasight
+**Configure datasight**
 
 Because the tunnel exposes the server at `localhost:15002` on your
 laptop, `SPARK_REMOTE` points at `localhost`, not the compute node:
@@ -313,10 +465,20 @@ SPARK_REMOTE=sc://localhost:15002
 - **Use the compute node hostname in the `-L` target, not the login
   node.** Spark is on the compute node; the login node is a passthrough.
   If you tunnel only to the login node, you'll hit `connection refused`.
+- **Standalone workers need to reach the master over the internal HPC
+  network.** On most HPC systems, compute nodes can freely reach each
+  other via the management or IB fabric — but some clusters firewall
+  internal traffic. If `start-worker.sh` on the second node hangs or
+  errors with "unable to connect to master", ask your HPC support
+  whether port 7077 is blocked between nodes.
 - **Watch for port collisions.** 15002 is the Spark Connect default, but
   if a previous job of yours on the same compute node is still bound to
   it, startup will fail. Either pick a different port via
   `spark.connect.grpc.binding.port` or kill the old job.
+- **Shared filesystem path must match on every node.** A worker at
+  `/scratch/alice/data.parquet` on node A and `/home/alice/data.parquet`
+  on node B will fail with "file not found" on whichever node didn't
+  match the query's path.
 - **The tunnel dies when the allocation ends.** Same as Flight SQL on
   HPC: request a generous `--time` or use `salloc` so you can extend
   interactively.
