@@ -542,35 +542,79 @@ class SparkConnectRunner:
         configuration. When ``spark.master`` starts with ``local`` the Connect
         server is running all work in one JVM — a common "why is only one
         node busy" cause — so we log a loud warning pointing at the fix.
-        """
-        info: dict[str, Any] = {"version": getattr(spark, "version", None)}
-        keys = [
-            "spark.master",
-            "spark.app.name",
-            "spark.app.id",
-            "spark.default.parallelism",
-            "spark.sql.shuffle.partitions",
-            "spark.executor.instances",
-            "spark.executor.cores",
-            "spark.executor.memory",
-            "spark.dynamicAllocation.enabled",
-            "spark.dynamicAllocation.minExecutors",
-            "spark.dynamicAllocation.maxExecutors",
-        ]
-        conf = getattr(spark, "conf", None)
-        for key in keys:
-            if conf is None:
-                info[key] = None
-                continue
-            try:
-                info[key] = conf.get(key)
-            except Exception:
-                # conf.get raises on unset keys in some Spark versions;
-                # treat that as "not configured" rather than failing connect.
-                info[key] = None
 
-        lines = [f"  {k:<42} = {v}" for k, v in info.items()]
-        logger.info("Spark session info:\n" + "\n".join(lines))
+        Each property and config is fetched via a synchronous gRPC call
+        to the Connect server, so we log per-key progress (in case one
+        hangs) and time-bound the whole probe so a slow cluster cannot
+        freeze the CLI. If the probe times out, the connection is still
+        usable; only the diagnostics are skipped. Runs on a daemon thread
+        so a hung gRPC call doesn't keep the process alive.
+        """
+        import queue
+        import threading
+
+        logger.info("Fetching Spark session info (one gRPC call per property)…")
+
+        def _gather() -> dict[str, Any]:
+            info: dict[str, Any] = {}
+            try:
+                info["version"] = getattr(spark, "version", None)
+                logger.info(f"  spark.version = {info['version']}")
+            except Exception as e:
+                info["version"] = None
+                logger.info(f"  spark.version unavailable: {e}")
+
+            keys = [
+                "spark.master",
+                "spark.app.name",
+                "spark.app.id",
+                "spark.default.parallelism",
+                "spark.sql.shuffle.partitions",
+                "spark.executor.instances",
+                "spark.executor.cores",
+                "spark.executor.memory",
+                "spark.dynamicAllocation.enabled",
+                "spark.dynamicAllocation.minExecutors",
+                "spark.dynamicAllocation.maxExecutors",
+            ]
+            conf = getattr(spark, "conf", None)
+            for key in keys:
+                if conf is None:
+                    info[key] = None
+                    continue
+                try:
+                    info[key] = conf.get(key)
+                except Exception:
+                    # conf.get raises on unset keys in some Spark versions;
+                    # treat that as "not configured" rather than failing.
+                    info[key] = None
+                logger.info(f"  {key} = {info[key]}")
+            return info
+
+        result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def _runner() -> None:
+            try:
+                result_q.put(("ok", _gather()))
+            except Exception as e:
+                result_q.put(("error", e))
+
+        # Daemon thread: if the gRPC calls hang forever the process can
+        # still exit cleanly when the rest of datasight finishes.
+        threading.Thread(target=_runner, daemon=True).start()
+        try:
+            status, payload = result_q.get(timeout=30.0)
+        except queue.Empty:
+            logger.warning(
+                "Spark session-info probe timed out after 30s — the Connect "
+                "server is responding slowly. Skipping the diagnostic block; "
+                "the connection itself should still be usable."
+            )
+            return
+        if status == "error":
+            logger.warning(f"Spark session-info probe failed: {payload}")
+            return
+        info: dict[str, Any] = payload
 
         master = str(info.get("spark.master") or "")
         if master.startswith("local"):

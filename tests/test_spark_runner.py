@@ -210,6 +210,43 @@ def test_log_session_info_includes_version_and_master(caplog):
     assert "running all work in one JVM" not in combined
 
 
+def test_log_session_info_times_out_on_unresponsive_server(caplog, monkeypatch):
+    """A hung gRPC call must not freeze the CLI — probe should time out."""
+    import queue as _queue
+
+    from loguru import logger as _logger
+
+    # Shrink the wait inside the runner so the test takes ms, not 30s. The
+    # daemon thread itself is left to be cleaned up by interpreter exit
+    # because that's exactly the production behavior we want to prove.
+    real_get = _queue.Queue.get
+
+    def _quick_get(self, *args, **kwargs):
+        kwargs["timeout"] = 0.2
+        return real_get(self, *args, **kwargs)
+
+    monkeypatch.setattr(_queue.Queue, "get", _quick_get)
+
+    class _HangingConf:
+        def get(self, _key):
+            import time as _time
+
+            _time.sleep(5)
+            return "never"
+
+    spark = _FakeSpark([])
+    spark.conf = _HangingConf()
+
+    sink_id = _logger.add(lambda msg: caplog.records.append(msg), level="INFO")
+    try:
+        SparkConnectRunner._log_session_info(spark)
+    finally:
+        _logger.remove(sink_id)
+
+    combined = "\n".join(str(r) for r in caplog.records)
+    assert "timed out" in combined
+
+
 def test_log_session_info_warns_on_local_master(caplog):
     from loguru import logger as _logger
 
