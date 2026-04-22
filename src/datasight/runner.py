@@ -506,9 +506,58 @@ class SparkConnectRunner:
                 builder = builder.config("spark.connect.client.token", self._token)
             self._spark = builder.getOrCreate()
             logger.info(f"Connected to Spark Connect: {self._remote}")
+            self._log_session_info(self._spark)
         except Exception as e:
             logger.exception("Spark Connect connection error")
             raise ConnectionError(f"Failed to connect to Spark Connect: {e}") from e
+
+    @staticmethod
+    def _log_session_info(spark: Any) -> None:
+        """Log Spark session details so users can verify they're distributed.
+
+        Surfaces version, master URL, app id, parallelism, and executor
+        configuration. When ``spark.master`` starts with ``local`` the Connect
+        server is running all work in one JVM — a common "why is only one
+        node busy" cause — so we log a loud warning pointing at the fix.
+        """
+        info: dict[str, Any] = {"version": getattr(spark, "version", None)}
+        keys = [
+            "spark.master",
+            "spark.app.name",
+            "spark.app.id",
+            "spark.default.parallelism",
+            "spark.sql.shuffle.partitions",
+            "spark.executor.instances",
+            "spark.executor.cores",
+            "spark.executor.memory",
+            "spark.dynamicAllocation.enabled",
+            "spark.dynamicAllocation.minExecutors",
+            "spark.dynamicAllocation.maxExecutors",
+        ]
+        conf = getattr(spark, "conf", None)
+        for key in keys:
+            if conf is None:
+                info[key] = None
+                continue
+            try:
+                info[key] = conf.get(key)
+            except Exception:
+                # conf.get raises on unset keys in some Spark versions;
+                # treat that as "not configured" rather than failing connect.
+                info[key] = None
+
+        lines = [f"  {k:<42} = {v}" for k, v in info.items()]
+        logger.info("Spark session info:\n" + "\n".join(lines))
+
+        master = str(info.get("spark.master") or "")
+        if master.startswith("local"):
+            logger.warning(
+                f"Spark master is '{master}' — the Connect server is running "
+                "all work in one JVM on the driver node. If you expected "
+                "distributed execution, set spark.master on the Connect "
+                "server (e.g. spark://master:7077, yarn, or k8s://...) "
+                "and restart it."
+            )
 
     def close(self) -> None:
         if self._spark is not None:

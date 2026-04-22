@@ -46,14 +46,26 @@ class _FakeCatalog:
         return [type("Table", (), {"name": n})() for n in self._table_names]
 
 
+class _FakeConf:
+    def __init__(self, values: dict[str, str] | None = None):
+        self._values = values or {}
+
+    def get(self, key: str) -> str | None:
+        return self._values.get(key)
+
+
 class _FakeSpark:
     def __init__(
         self,
         batches: list[pa.RecordBatch],
         table_names: list[str] | None = None,
+        conf: dict[str, str] | None = None,
+        version: str = "3.5.1",
     ):
         self.client = _FakeClient(batches)
         self.catalog = _FakeCatalog(table_names or [])
+        self.conf = _FakeConf(conf)
+        self.version = version
         self._sql_seen: list[str] = []
         self.tags_added: list[str] = []
         self.tags_removed: list[str] = []
@@ -169,6 +181,49 @@ async def test_spark_runner_interrupts_on_timeout():
     await asyncio.sleep(0.05)
     assert len(spark.tags_interrupted) == 1
     assert spark.tags_interrupted[0].startswith("datasight-")
+
+
+def test_log_session_info_includes_version_and_master(caplog):
+    from loguru import logger as _logger
+
+    spark = _FakeSpark(
+        [],
+        conf={
+            "spark.master": "spark://master:7077",
+            "spark.app.id": "app-20260422-0001",
+            "spark.executor.instances": "8",
+        },
+        version="3.5.1",
+    )
+
+    sink_id = _logger.add(lambda msg: caplog.records.append(msg), level="INFO")
+    try:
+        SparkConnectRunner._log_session_info(spark)
+    finally:
+        _logger.remove(sink_id)
+
+    combined = "\n".join(str(r) for r in caplog.records)
+    assert "version" in combined and "3.5.1" in combined
+    assert "spark.master" in combined and "spark://master:7077" in combined
+    assert "app-20260422-0001" in combined
+    # Distributed master → no local-mode warning.
+    assert "running all work in one JVM" not in combined
+
+
+def test_log_session_info_warns_on_local_master(caplog):
+    from loguru import logger as _logger
+
+    spark = _FakeSpark([], conf={"spark.master": "local[*]"})
+
+    sink_id = _logger.add(lambda msg: caplog.records.append(msg), level="INFO")
+    try:
+        SparkConnectRunner._log_session_info(spark)
+    finally:
+        _logger.remove(sink_id)
+
+    combined = "\n".join(str(r) for r in caplog.records)
+    assert "local[*]" in combined
+    assert "running all work in one JVM" in combined
 
 
 def test_spark_runner_get_table_names_uses_catalog():

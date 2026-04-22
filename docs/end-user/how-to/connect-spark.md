@@ -164,6 +164,56 @@ pulls column metadata for each table, and starts the web UI at
 <http://localhost:8084>. Ask a question and the agent writes Spark SQL
 against your tables.
 
+### Verifying you're actually distributed
+
+On startup, datasight logs the Spark session details it sees from the
+Connect server. Look for a block like this in the terminal output:
+
+```text
+INFO  Spark session info:
+  version                                   = 3.5.1
+  spark.master                              = spark://master-node:7077
+  spark.app.name                            = datasight
+  spark.app.id                              = app-20260422-0001
+  spark.default.parallelism                 = 208
+  spark.sql.shuffle.partitions              = 200
+  spark.executor.instances                  = 2
+  spark.executor.cores                      = 104
+  spark.executor.memory                     = 200g
+  spark.dynamicAllocation.enabled           = false
+```
+
+The field to check first is **`spark.master`**:
+
+- `spark://host:7077` — connected to a standalone cluster. ✓ distributed
+- `yarn` / `k8s://...` — connected to a YARN / Kubernetes cluster. ✓
+- `local` or `local[*]` — **the Connect server is running all work in
+  one JVM on the driver node.** No executors on other nodes are used.
+  This is almost always the reason only one node shows CPU activity.
+
+If you see `local[*]` and you expected distribution, datasight also emits
+a warning pointing at the fix:
+
+```text
+WARNING Spark master is 'local[*]' — the Connect server is running all
+work in one JVM on the driver node. If you expected distributed
+execution, set spark.master on the Connect server (e.g.
+spark://master:7077, yarn, or k8s://...) and restart it.
+```
+
+`spark.master` is set on the **Connect server** side when it starts, not
+on the datasight client. If you launched Spark with
+`start-connect-server.sh --master local[104]`, that's where the setting
+lives — restart the server with the correct master URL.
+
+Also useful to check:
+
+- `spark.executor.instances` — should be ≥ 1 for a real cluster. `None`
+  or missing means dynamic allocation, in which case look at
+  `spark.dynamicAllocation.minExecutors` / `maxExecutors`.
+- `spark.default.parallelism` — roughly `executor_count × cores_per_executor`.
+  If this number looks like a single machine's core count, you're local.
+
 ## Running Spark on an HPC compute node
 
 If your organization doesn't have a shared Spark cluster but you do have
