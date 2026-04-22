@@ -263,6 +263,123 @@ def test_log_session_info_warns_on_local_master(caplog):
     assert "running all work in one JVM" in combined
 
 
+def test_probe_connection_raises_quickly_when_server_unreachable(monkeypatch):
+    """An unresponsive server should fail in seconds, not hang for minutes."""
+    import queue as _queue
+
+    real_get = _queue.Queue.get
+
+    def _quick_get(self, *args, **kwargs):
+        kwargs["timeout"] = 0.2
+        return real_get(self, *args, **kwargs)
+
+    monkeypatch.setattr(_queue.Queue, "get", _quick_get)
+
+    class _HangingSpark:
+        @property
+        def version(self):
+            import time as _time
+
+            _time.sleep(5)  # simulate a hung gRPC call
+
+    from datasight.exceptions import ConnectionError as _ConnErr
+
+    with pytest.raises(_ConnErr) as excinfo:
+        SparkConnectRunner._probe_connection(_HangingSpark(), "sc://nowhere:15002", timeout=999.0)
+    assert "Could not reach Spark Connect" in str(excinfo.value)
+    assert "sc://nowhere:15002" in str(excinfo.value)
+
+
+def test_probe_connection_propagates_handshake_error():
+    """When spark.version raises (e.g. auth failure) we surface it cleanly."""
+
+    class _RejectingSpark:
+        @property
+        def version(self):
+            raise RuntimeError("UNAUTHENTICATED: invalid token")
+
+    from datasight.exceptions import ConnectionError as _ConnErr
+
+    with pytest.raises(_ConnErr) as excinfo:
+        SparkConnectRunner._probe_connection(_RejectingSpark(), "sc://x:15002")
+    assert "rejected the handshake" in str(excinfo.value)
+    assert "UNAUTHENTICATED" in str(excinfo.value)
+
+
+def test_spark_runner_get_columns_uses_catalog_api():
+    """Use spark.catalog.listColumns rather than SQL DESCRIBE/information_schema."""
+    from types import SimpleNamespace
+
+    class _SparkWithColumns(_FakeSpark):
+        def __init__(self, columns_by_table):
+            super().__init__([])
+            self._columns_by_table = columns_by_table
+
+            class _Cat:
+                def __init__(self, parent):
+                    self._parent = parent
+
+                def listTables(self):
+                    return []
+
+                def listColumns(self, table):
+                    return self._parent._columns_by_table.get(table, [])
+
+            self.catalog = _Cat(self)
+
+    cols = [
+        SimpleNamespace(name="id", dataType="bigint", nullable=False),
+        SimpleNamespace(name="value", dataType="double", nullable=True),
+    ]
+    runner = SparkConnectRunner(spark=_SparkWithColumns({"generation": cols}))
+
+    result = runner.get_columns("generation")
+    assert [c.name for c in result] == ["id", "value"]
+    assert [c.dtype for c in result] == ["bigint", "double"]
+    assert [c.nullable for c in result] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_introspect_schema_uses_runner_get_columns_for_spark(monkeypatch):
+    """Schema introspection should call runner.get_columns instead of SQL probes."""
+    from types import SimpleNamespace
+
+    from datasight import schema as schema_mod
+
+    sql_calls: list[str] = []
+
+    async def _fake_run_sql(sql: str):
+        sql_calls.append(sql)
+        return pd.DataFrame()
+
+    async def _no_count(*args, **kwargs):
+        return None
+
+    class _Cat:
+        def listTables(self):
+            return [SimpleNamespace(name="generation")]
+
+        def listColumns(self, table):
+            return [
+                SimpleNamespace(name="id", dataType="bigint", nullable=False),
+                SimpleNamespace(name="report_date", dataType="date", nullable=False),
+            ]
+
+    spark = _FakeSpark([])
+    spark.catalog = _Cat()
+    runner = SparkConnectRunner(spark=spark)
+    monkeypatch.setattr(runner, "get_row_count", _no_count)
+
+    tables = await schema_mod.introspect_schema(_fake_run_sql, runner=runner)
+
+    assert [t.name for t in tables] == ["generation"]
+    assert [c.name for c in tables[0].columns] == ["id", "report_date"]
+    # Critically: the broken DuckDB/Postgres/SQLite SQL probes must not run.
+    assert not any("DESCRIBE" in s for s in sql_calls), sql_calls
+    assert not any("information_schema" in s for s in sql_calls), sql_calls
+    assert not any("PRAGMA" in s for s in sql_calls), sql_calls
+
+
 def test_spark_runner_get_table_names_uses_catalog():
     spark = _FakeSpark([], table_names=["generation_fuel", "plants", "boilers"])
     runner = SparkConnectRunner(spark=spark)

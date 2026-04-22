@@ -175,10 +175,20 @@ async def introspect_schema(
         logger.info(f"Introspecting {total_discovered} tables")
 
     runner_row_count = _runner_row_count_fn(runner)
+    runner_get_columns = _runner_get_columns_fn(runner)
     total = len(table_names)
     progress_every = max(1, total // 10) if total >= 20 else total + 1
     for idx, tname in enumerate(table_names, start=1):
-        cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
+        if runner_get_columns is not None:
+            try:
+                cols = runner_get_columns(tname)
+            except Exception as e:
+                logger.warning(
+                    f"runner.get_columns({tname}) failed, falling back to SQL probes: {e}"
+                )
+                cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
+        else:
+            cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
         if runner_row_count is not None:
             row_count = await runner_row_count(tname)
         else:
@@ -188,6 +198,25 @@ async def introspect_schema(
             logger.info(f"  introspected {idx}/{total} tables")
 
     return tables
+
+
+def _runner_get_columns_fn(runner: Any) -> Callable[[str], list[ColumnInfo]] | None:
+    """Return ``runner.get_columns`` if provided, walking ``_inner`` wrappers.
+
+    Backends with a native catalog API (Spark Connect's
+    ``spark.catalog.listColumns``) implement this to avoid the
+    DuckDB/Postgres/SQLite-specific SQL probes in ``_get_columns``,
+    which Spark rejects.
+    """
+    current = runner
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        fn = getattr(current, "get_columns", None)
+        if callable(fn):
+            return fn
+        seen.add(id(current))
+        current = getattr(current, "_inner", None)
+    return None
 
 
 def _runner_row_count_fn(runner: Any) -> Callable[[str], Awaitable[int | None]] | None:

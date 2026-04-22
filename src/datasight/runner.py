@@ -528,11 +528,54 @@ class SparkConnectRunner:
             if self._token:
                 builder = builder.config("spark.connect.client.token", self._token)
             self._spark = builder.getOrCreate()
+            self._probe_connection(self._spark, self._remote)
             logger.info(f"Connected to Spark Connect: {self._remote}")
             self._log_session_info(self._spark)
+        except ConnectionError:
+            raise
         except Exception as e:
             logger.exception("Spark Connect connection error")
             raise ConnectionError(f"Failed to connect to Spark Connect: {e}") from e
+
+    @staticmethod
+    def _probe_connection(spark: Any, remote: str, timeout: float = 5.0) -> None:
+        """Force a tiny gRPC round-trip so we fail loudly if the server is down.
+
+        ``SparkSession.builder.remote(...).getOrCreate()`` is lazy — it
+        returns immediately even if no Connect server is listening. The
+        first real call (a query, conf lookup, or even ``spark.version``)
+        is what blocks. Without this probe a missing/down server looks
+        like "Connected to Spark Connect …" followed by a multi-minute
+        hang. Probing here turns it into a fast, actionable error.
+        """
+        import queue
+        import threading
+
+        result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def _ping() -> None:
+            try:
+                # spark.version is a synchronous gRPC call to the server.
+                _ = spark.version
+                result_q.put(("ok", None))
+            except Exception as e:
+                result_q.put(("error", e))
+
+        threading.Thread(target=_ping, daemon=True).start()
+        try:
+            status, payload = result_q.get(timeout=timeout)
+        except queue.Empty:
+            raise ConnectionError(
+                f"Could not reach Spark Connect server at {remote} within "
+                f"{timeout:.0f}s. Is the Connect server actually running and "
+                "listening on that host/port? "
+                "(start-connect-server.sh on the cluster, then re-check the "
+                "URI in your .env)"
+            )
+        if status == "error":
+            raise ConnectionError(
+                f"Spark Connect server at {remote} rejected the handshake: {payload}"
+            )
 
     @staticmethod
     def _log_session_info(spark: Any) -> None:
@@ -681,6 +724,35 @@ class SparkConnectRunner:
         here later if we need approximate counts.
         """
         return None
+
+    def get_columns(self, table: str) -> list[Any]:
+        """Return ``ColumnInfo`` for ``table`` via ``spark.catalog.listColumns()``.
+
+        The generic SQL probes in ``schema._get_columns`` (DESCRIBE
+        "name", information_schema.columns, PRAGMA table_info) all use
+        DuckDB / Postgres / SQLite syntax that Spark rejects with
+        PARSE_SYNTAX_ERROR or TABLE_OR_VIEW_NOT_FOUND. Spark's catalog
+        API returns the same information without any SQL.
+        """
+        from datasight.schema import ColumnInfo
+
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+        try:
+            columns = self._spark.catalog.listColumns(table)
+        except Exception as e:
+            logger.debug(f"Spark catalog.listColumns({table}) error: {e}")
+            raise QueryError(f"Failed to list Spark columns for {table}: {e}") from e
+        result: list[ColumnInfo] = []
+        for c in columns:
+            result.append(
+                ColumnInfo(
+                    name=str(getattr(c, "name", "")),
+                    dtype=str(getattr(c, "dataType", "") or "UNKNOWN"),
+                    nullable=bool(getattr(c, "nullable", True)),
+                )
+            )
+        return result
 
     @staticmethod
     def _iter_arrow_batches(spark: Any, sdf: Any):
