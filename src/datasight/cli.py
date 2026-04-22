@@ -50,6 +50,23 @@ def _epilog(text: str) -> str:
     return "\n\n".join(line.rstrip() for line in dedent(text).strip().splitlines())
 
 
+# One-line log format that shows the module name but not the function or
+# line number — ``function:line`` noise rarely helps users diagnose their
+# own CLI runs, and leaving it out makes each line fit comfortably.
+_LOG_FORMAT = "{time:HH:mm:ss} | {level: <7} | {name} - {message}"
+
+
+def _configure_logging(level: str = "INFO") -> None:
+    """Replace any existing Loguru sinks with a single stderr sink.
+
+    Call from commands that log progress so every command uses the same
+    format regardless of which module emitted the log. Safe to call
+    multiple times.
+    """
+    logger.remove()
+    logger.add(sys.stderr, level=level, format=_LOG_FORMAT)
+
+
 def _resolve_settings(
     project_dir: str,
     model_override: str | None = None,
@@ -1363,9 +1380,7 @@ def _prepare_web_runtime(
     load_global_env(override=False)
 
     if configure_logging:
-        level = "DEBUG" if verbose else "INFO"
-        logger.remove()
-        logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
+        _configure_logging("DEBUG" if verbose else "INFO")
 
     settings = Settings.from_env()
     resolved_model = model if model else settings.llm.model
@@ -1595,8 +1610,7 @@ def demo_eia_generation(project_dir: str, min_year: int):
 
     PROJECT_DIR defaults to the current directory.
     """
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging("INFO")
 
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1647,8 +1661,7 @@ def demo_dsgrid_tempo(project_dir: str):
 
     PROJECT_DIR defaults to the current directory.
     """
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging("INFO")
 
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1702,8 +1715,7 @@ def demo_time_validation(project_dir: str):
 
     PROJECT_DIR defaults to the current directory.
     """
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging("INFO")
 
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1893,8 +1905,7 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
 
     # Logging
     level = "DEBUG" if verbose else "WARNING"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging(level)
 
     # Load settings and validate
     settings, resolved_model = _resolve_settings(project_dir, model)
@@ -2264,8 +2275,7 @@ def verify(project_dir, model, queries_path, verbose):
 
     # Logging
     level = "DEBUG" if verbose else "WARNING"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging(level)
 
     # Load queries
     from datasight.config import load_example_queries
@@ -2579,8 +2589,7 @@ def ask(
 
     # Logging
     level = "DEBUG" if verbose else "WARNING"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging(level)
 
     # Load settings and validate
     settings, resolved_model = _resolve_settings(project_dir, model)
@@ -4264,6 +4273,7 @@ def inspect(files, output_format, output_path):
     from datasight.explore import create_files_session_for_settings
     from datasight.schema import introspect_schema
 
+    _configure_logging("INFO")
     db_settings = _current_db_settings_or_none()
 
     async def _run_phase(name: str, coro):
@@ -4717,8 +4727,7 @@ def recipes_run(
     _validate_settings_for_llm(settings)
 
     if verbose:
-        logger.remove()
-        logger.add(sys.stderr, level="DEBUG")
+        _configure_logging("DEBUG")
 
     recipe_data = _load_recipe_entries(project_dir, settings, table)
     recipe = next((item for item in recipe_data if item["id"] == recipe_id), None)
