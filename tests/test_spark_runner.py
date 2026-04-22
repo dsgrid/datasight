@@ -18,7 +18,12 @@ from datasight.runner import SparkConnectRunner
 
 
 class _FakePlan:
-    pass
+    """Mimics pyspark 4.0's LogicalPlan — needs a ``to_proto(client)`` method."""
+
+    def to_proto(self, _client):
+        # Production code just passes the returned value back into
+        # client.to_table_as_iterator; our fake client ignores it.
+        return self
 
 
 class _FakeClient:
@@ -26,10 +31,14 @@ class _FakeClient:
         self._batches = batches
         self.iterator_consumed = 0
 
-    def to_table_as_iterator(self, plan, observations):
+    def to_table_as_iterator(self, plan_proto, observations):
+        # Real Spark 4.0 yields a StructType schema first, then one pa.Table
+        # per batch. Mirror that so the runner's isinstance(item, pa.Table)
+        # filter is exercised by tests.
+        yield "schema-placeholder"  # non-pa.Table, must be skipped by caller
         for batch in self._batches:
             self.iterator_consumed += 1
-            yield pa.Table.from_batches([batch]), None
+            yield pa.Table.from_batches([batch])
 
 
 class _FakeSparkDataFrame:
