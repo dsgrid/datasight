@@ -14,11 +14,14 @@ project developer can spot the bad URL.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 import re
+import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Awaitable, Callable, overload
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -34,6 +37,17 @@ DEFAULT_MAX_BYTES: int = 20_000
 # restores it cleanly.
 _MAX_BYTES_ENV_VAR: str = "SCHEMA_INCLUDE_MAX_BYTES"
 
+# Opt-in env var that disables the SSRF guard so internal documentation
+# servers (private IPs, ``.internal`` hostnames) become fetchable again.
+# Also registered in ``datasight.settings._PROJECT_ENV_VARS``.
+_ALLOW_PRIVATE_HOSTS_ENV_VAR: str = "SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS"
+
+# Hard ceiling on bytes pulled over the wire per URL, expressed as a
+# multiple of ``max_bytes``. HTML strips to ~1/3 of its raw size typically,
+# so 4x gives enough raw bytes to produce ``max_bytes`` of text without
+# letting a hostile server stream megabytes into memory.
+_DOWNLOAD_OVERSAMPLE: int = 4
+
 # Per-fetch timeout. Project load is not latency-critical, so we can afford
 # to wait longer than the LLM call timeout.
 DEFAULT_FETCH_TIMEOUT: float = 10.0
@@ -42,6 +56,16 @@ _ALLOWED_CONTENT_PREFIXES: tuple[str, ...] = (
     "text/",
     "application/json",
     "application/xhtml",
+)
+
+# Hostnames that must never be resolved — catches the common footgun cases
+# without requiring a DNS lookup.
+_BLOCKED_LITERAL_HOSTNAMES: frozenset[str] = frozenset({"localhost", "ip6-localhost"})
+_BLOCKED_HOSTNAME_SUFFIXES: tuple[str, ...] = (
+    ".local",
+    ".localhost",
+    ".internal",
+    ".localdomain",
 )
 
 # ``[include:Title](url)`` — title is everything after the colon up to the
@@ -115,21 +139,113 @@ def _truncate(text: str, max_bytes: int) -> str:
     return clipped + "\n\n…[content truncated]"
 
 
+def _allow_private_hosts() -> bool:
+    """Opt-out switch for the SSRF guard. Defaults to False."""
+    return os.environ.get(_ALLOW_PRIVATE_HOSTS_ENV_VAR, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _is_disallowed_ip(address: str) -> bool:
+    """Return True for loopback / private / link-local / reserved IPs."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+async def _validate_url_safety(url: str) -> None:
+    """Raise ``ValueError`` if ``url`` should not be fetched.
+
+    Mitigates SSRF via a malicious ``schema_description.md`` that points at
+    internal services (loopback, private IP ranges, link-local, reserved).
+    Note: we only validate the supplied URL; redirects are disabled in the
+    fetcher so we don't need to re-validate intermediate hops. DNS rebinding
+    is NOT defended against here — a full mitigation would require resolving
+    ourselves and pinning the connection to the vetted IP. Set
+    ``SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS=1`` to bypass for internal doc
+    servers you trust.
+    """
+    if _allow_private_hosts():
+        return
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"unsupported url scheme {parsed.scheme!r}")
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise ValueError("url has no hostname")
+    if hostname in _BLOCKED_LITERAL_HOSTNAMES:
+        raise ValueError(f"hostname {hostname!r} is blocked")
+    if any(hostname.endswith(suffix) for suffix in _BLOCKED_HOSTNAME_SUFFIXES):
+        raise ValueError(f"hostname {hostname!r} is blocked")
+    if _is_disallowed_ip(hostname):
+        raise ValueError(f"hostname {hostname!r} resolves to a disallowed address")
+
+    # Resolve and reject any A/AAAA that points into a private range.
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"failed to resolve {hostname!r}: {e}") from e
+    for _family, _type, _proto, _canon, sockaddr in infos:
+        addr = sockaddr[0]
+        if _is_disallowed_ip(addr):
+            raise ValueError(f"{hostname!r} resolves to disallowed address {addr!r}")
+
+
 async def _default_fetch(url: str, *, timeout: float, max_bytes: int) -> str:
-    """Fetch ``url`` and return plain text. Raises on failure."""
+    """Fetch ``url`` and return plain text. Raises on failure.
+
+    The body is streamed in and capped at ``max_bytes * _DOWNLOAD_OVERSAMPLE``
+    raw bytes so a hostile server can't blow up project-load memory even
+    when the declared ``Content-Length`` lies. HTML pages are then stripped
+    to text before a final truncation to ``max_bytes`` of output.
+    """
     import httpx
 
+    await _validate_url_safety(url)
+
+    download_cap = max_bytes * _DOWNLOAD_OVERSAMPLE
+    # ``follow_redirects=False`` — a redirect target could bypass the SSRF
+    # validation above (e.g. a public URL that 302s into 127.0.0.1). We'd
+    # rather surface a clear error than silently chase the Location header.
     async with httpx.AsyncClient(
         timeout=timeout,
-        follow_redirects=True,
+        follow_redirects=False,
         headers={"User-Agent": "datasight schema-link resolver"},
     ) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "").lower().split(";", 1)[0].strip()
-        if not any(content_type.startswith(p) for p in _ALLOWED_CONTENT_PREFIXES):
-            raise ValueError(f"unsupported content-type {content_type!r}")
-        body = response.text
+        async with client.stream("GET", url) as response:
+            if 300 <= response.status_code < 400:
+                location = response.headers.get("location", "")
+                raise ValueError(
+                    f"redirect ({response.status_code}) to {location!r} is not followed; "
+                    "use the final URL directly"
+                )
+            response.raise_for_status()
+            content_type = (
+                response.headers.get("content-type", "").lower().split(";", 1)[0].strip()
+            )
+            if not any(content_type.startswith(p) for p in _ALLOWED_CONTENT_PREFIXES):
+                raise ValueError(f"unsupported content-type {content_type!r}")
+
+            buffer = bytearray()
+            async for chunk in response.aiter_bytes():
+                buffer.extend(chunk)
+                if len(buffer) >= download_cap:
+                    break
+
+    body = bytes(buffer).decode("utf-8", errors="replace")
     if content_type.startswith("text/html") or content_type.startswith("application/xhtml"):
         body = _html_to_text(body)
     return _truncate(body, max_bytes)
@@ -173,7 +289,8 @@ async def resolve_schema_description_links(
     fetcher: Fetcher | None = ...,
     max_bytes: int | None = ...,
     timeout: float = ...,
-) -> str: ...
+) -> str:
+    pass
 
 
 @overload
@@ -183,7 +300,8 @@ async def resolve_schema_description_links(
     fetcher: Fetcher | None = ...,
     max_bytes: int | None = ...,
     timeout: float = ...,
-) -> None: ...
+) -> None:
+    pass
 
 
 async def resolve_schema_description_links(

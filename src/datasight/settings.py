@@ -101,6 +101,7 @@ _PROJECT_ENV_VARS = [
     "EXAMPLE_QUERIES_PATH",
     # Schema include-link resolver
     "SCHEMA_INCLUDE_MAX_BYTES",
+    "SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS",
 ]
 
 # Captured after root .env is loaded - the baseline environment that projects

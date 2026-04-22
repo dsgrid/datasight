@@ -65,11 +65,15 @@ for pointing the LLM at fuel-code glossaries, data-source documentation,
 or anything else that lives elsewhere and changes occasionally.
 
 ```markdown
-Fuel code meanings come from
-[include:EIA fuel codes](https://www.eia.gov/electricity/monthly/pdf/technotes.pdf).
+Fuel code meanings come from the EIA's
+[include:Electricity Monthly Glossary](https://www.eia.gov/tools/glossary/index.php?id=electricity).
 ```
 
-- HTML is stripped to plain text; non-text content types are skipped.
+- Only HTML, plain-text, and JSON responses are inlined. PDFs, images,
+  and other binary formats are skipped (the directive stays as a plain
+  markdown link so the LLM still sees the pointer). Link to an HTML or
+  text rendering of the reference when one exists.
+- HTML is stripped to plain text.
 - Each URL is capped at 20 KB (override with the `SCHEMA_INCLUDE_MAX_BYTES`
   env var) and fetched once per project load.
 - If a fetch fails, the original `[include:…](url)` markdown link is left
@@ -79,6 +83,12 @@ Fuel code meanings come from
   escape hatch when a linked page pushes the system prompt past a
   small-context model's token limit (common on the free GitHub Models
   tier).
+- Only public hosts are fetched. URLs pointing at `localhost`, private
+  IP ranges, or `.internal`/`.local` hostnames are blocked to mitigate
+  SSRF from a malicious project file. Set
+  `SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS=1` to opt in when a project
+  genuinely references an internal documentation server. Redirects are
+  not followed — link to the final URL directly.
 
 ## File location
 

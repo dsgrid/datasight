@@ -115,6 +115,7 @@ For production, use `POSTGRES_SSLMODE=verify-full` and consider using a
 | `SCHEMA_DESCRIPTION_PATH` | `./schema_description.md` | Schema description file |
 | `EXAMPLE_QUERIES_PATH` | `./queries.yaml` | Example queries file |
 | `SCHEMA_INCLUDE_MAX_BYTES` | `20000` | Per-URL size cap for `[include:…](url)` directives inside the schema description. Set to `0` to skip include resolution entirely — useful when fetched pages push the prompt past a small-context model's token limit. |
+| `SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS` | `false` | Opt-in switch that disables the SSRF guard on `[include:…](url)` directives, allowing fetches from `localhost`, private IP ranges, and `.internal`/`.local` hostnames. Leave off unless a project intentionally references an internal documentation server. |
 | `PORT` | `8084` | Web UI port |
 | `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../end-user/how-to/review-query-log.md)) |
 | `QUERY_LOG_PATH` | `./query_log.jsonl` | Path to query log file |
