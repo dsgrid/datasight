@@ -164,6 +164,28 @@ pulls column metadata for each table, and starts the web UI at
 <http://localhost:8084>. Ask a question and the agent writes Spark SQL
 against your tables.
 
+### File-based commands also route through Spark
+
+When `DB_MODE=spark` is set in your `.env`, commands that accept explicit
+file arguments — `datasight inspect foo.parquet`, `datasight generate
+--files`, `datasight trends --files`, and the web UI's "explore files"
+flow — register the given Parquet/CSV paths as Spark temp views and run
+introspection on the cluster instead of opening a local in-memory
+DuckDB. Your `SPARK_REMOTE` appears in the startup log so you can
+confirm Spark was used:
+
+```text
+INFO  File inspection routed through Spark Connect: sc://localhost:15002
+INFO  Connected to Spark Connect: sc://localhost:15002
+INFO  Spark session info: ...
+```
+
+The file paths you pass must be reachable from the Spark workers at the
+same absolute path — Spark does not upload local files to the cluster.
+On HPC this is usually fine because `/scratch` / `/projects` are shared;
+on a laptop-only Spark-Connect setup it won't work, so use DuckDB mode
+in that case.
+
 ### Verifying you're actually distributed
 
 On startup, datasight logs the Spark session details it sees from the

@@ -81,6 +81,29 @@ def _resolve_settings(
     return settings, resolved_model
 
 
+def _current_db_settings_or_none():
+    """Load database settings from the current directory's .env, or None.
+
+    Used by the file-based commands (``inspect``, ``generate --files``,
+    ``trends --files``) so that when the user is inside a project with
+    ``DB_MODE=spark``, file operations route through Spark Connect
+    instead of silently dropping the configured backend.
+
+    Returns
+    -------
+    ``DatabaseSettings`` if a ``.env`` is found in the current directory,
+    otherwise ``None`` (caller should fall back to plain DuckDB).
+    """
+    from dotenv import load_dotenv
+
+    env_path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(env_path):
+        return None
+    load_dotenv(env_path, override=False)
+    load_global_env(override=False)
+    return Settings.from_env().database
+
+
 def _validate_settings_for_llm(settings: Settings) -> None:
     """Validate that required LLM settings are present. Exits on error."""
     errors = settings.validate()
@@ -1922,9 +1945,11 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
             sql_runner = DuckDBRunner(str(duckdb_source_path))
             tables_info = []
         elif use_files:
-            from datasight.explore import create_ephemeral_session
+            from datasight.explore import create_files_session_for_settings
 
-            sql_runner, tables_info = create_ephemeral_session(list(files))
+            sql_runner, tables_info = create_files_session_for_settings(
+                list(files), settings.database
+            )
         else:
             sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
             tables_info = []
@@ -4071,10 +4096,11 @@ def trends(files, project_dir, table, output_format, output_path):
 
     async def _run_trends():
         if files:
-            from datasight.explore import create_ephemeral_session
+            from datasight.explore import create_files_session_for_settings
             from datasight.schema import introspect_schema
 
-            runner, _ = create_ephemeral_session(list(files))
+            db_settings = _current_db_settings_or_none()
+            runner, _ = create_files_session_for_settings(list(files), db_settings)
             tables = await introspect_schema(runner.run_sql, runner=runner)
             schema_info = [
                 {
@@ -4215,17 +4241,22 @@ def trends(files, project_dir, table, output_format, output_path):
 def inspect(files, output_format, output_path):
     """Run all analyses on Parquet, CSV, or DuckDB files and print results.
 
-    Creates an ephemeral in-memory database from the given files and runs
-    profile, quality, measures, dimensions, trends, and recipes — printing
-    everything to the console without creating a project.
+    Creates a file-backed session and runs profile, quality, measures,
+    dimensions, trends, and recipes — printing everything to the console
+    without creating a project. When the current directory contains a
+    ``.env`` with ``DB_MODE=spark``, the files are registered as Spark
+    temp views and all queries run on the cluster; otherwise an ephemeral
+    in-memory DuckDB session is used.
     """
     from rich.console import Console
 
-    from datasight.explore import create_ephemeral_session
+    from datasight.explore import create_files_session_for_settings
     from datasight.schema import introspect_schema
 
+    db_settings = _current_db_settings_or_none()
+
     async def _run_all():
-        runner, tables_info = create_ephemeral_session(list(files))
+        runner, tables_info = create_files_session_for_settings(list(files), db_settings)
         tables = await introspect_schema(runner.run_sql, runner=runner)
         schema_info = [
             {

@@ -71,7 +71,6 @@ from datasight.recent_projects import (
 )
 from datasight.explore import (
     add_files_to_connection,
-    create_ephemeral_session,
     save_ephemeral_as_project,
     scan_directory_for_data_files,
 )
@@ -2113,12 +2112,15 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
         state.max_output_tokens = settings.app.max_output_tokens
 
-        # Create ephemeral session
-        runner, tables_info = create_ephemeral_session(file_paths)
+        # Route file-backed exploration through whichever backend the
+        # current settings point at (Spark when DB_MODE=spark, else DuckDB).
+        from datasight.explore import create_files_session_for_settings
+
+        runner, tables_info = create_files_session_for_settings(file_paths, settings.database)
         state.sql_runner = runner
         state.is_ephemeral = True
         state.ephemeral_tables_info = tables_info
-        state.sql_dialect = "duckdb"
+        state.sql_dialect = settings.database.sql_dialect
         state.project_loaded = True
 
         # Introspect schema

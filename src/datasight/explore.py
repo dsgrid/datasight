@@ -3,19 +3,28 @@ Explore functionality for datasight.
 
 Provides utilities for quickly exploring CSV and Parquet files without
 setting up a full project. Creates ephemeral DuckDB sessions with views
-pointing to user files.
+pointing to user files, or routes through Spark Connect when the
+current project is configured with ``DB_MODE=spark``.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 from loguru import logger
 
 from datasight.exceptions import ConfigurationError
-from datasight.runner import EphemeralDuckDBRunner
+from datasight.runner import (
+    DEFAULT_SPARK_MAX_RESULT_BYTES,
+    EphemeralDuckDBRunner,
+    SparkConnectRunner,
+)
+
+if TYPE_CHECKING:
+    from datasight.settings import DatabaseSettings
 
 
 def detect_file_type(path: str) -> str | None:
@@ -359,6 +368,142 @@ def create_ephemeral_session(file_paths: list[str]) -> tuple[EphemeralDuckDBRunn
 
     runner = EphemeralDuckDBRunner(conn)
     return runner, tables_info
+
+
+_SPARK_SUPPORTED_TYPES = {"parquet", "hive_parquet", "csv", "csv_dir"}
+
+
+def create_spark_files_session(
+    file_paths: list[str],
+    *,
+    spark_remote: str,
+    spark_token: str | None = None,
+    spark_max_result_bytes: int = DEFAULT_SPARK_MAX_RESULT_BYTES,
+    spark: Any = None,
+) -> tuple[SparkConnectRunner, list[dict]]:
+    """Register parquet/CSV files as Spark temp views on a Spark Connect session.
+
+    Each file or directory becomes a temp view that the rest of datasight
+    (schema introspection, the agent, the web UI) can query by name. The
+    paths must be reachable by the Spark workers at the *same* absolute
+    path — Spark does not upload local files to the cluster.
+
+    Parameters
+    ----------
+    file_paths:
+        Paths to Parquet/CSV files or directories. SQLite and DuckDB files
+        are not supported on this path.
+    spark_remote, spark_token, spark_max_result_bytes:
+        Forwarded to ``SparkConnectRunner``.
+    spark:
+        Optional pre-built Spark session (used by tests to inject a fake).
+
+    Raises
+    ------
+    ConfigurationError
+        If a path doesn't exist, isn't absolute-resolvable, or is a file
+        type Spark can't read (duckdb/sqlite).
+    """
+    if not file_paths:
+        raise ConfigurationError("No file paths provided")
+
+    resolved: list[tuple[str, str]] = []
+    for p in file_paths:
+        abs_path = str(Path(p).resolve())
+        ftype = detect_file_type(abs_path)
+        if ftype is None:
+            raise ConfigurationError(f"Unrecognized or missing file: {p}")
+        if ftype not in _SPARK_SUPPORTED_TYPES:
+            raise ConfigurationError(
+                f"Spark backend cannot read {ftype!r} files ({p}). "
+                "Use DuckDB mode, or re-export to Parquet."
+            )
+        resolved.append((abs_path, ftype))
+
+    runner = SparkConnectRunner(
+        remote=spark_remote,
+        token=spark_token,
+        max_result_bytes=spark_max_result_bytes,
+        spark=spark,
+    )
+
+    tables_info: list[dict] = []
+    existing_names: set[str] = set()
+    errors: list[str] = []
+    for path, file_type in resolved:
+        p = Path(path)
+        base_name = p.stem if p.is_file() else p.name
+        view_name = sanitize_table_name(base_name)
+        if view_name in existing_names:
+            counter = 2
+            while f"{view_name}_{counter}" in existing_names:
+                counter += 1
+            view_name = f"{view_name}_{counter}"
+        try:
+            _register_spark_view(runner._spark, view_name, path, file_type)
+            existing_names.add(view_name)
+            tables_info.append({"name": view_name, "path": path, "type": file_type})
+            logger.info(f"Registered Spark temp view '{view_name}' from {file_type}: {path}")
+        except Exception as e:
+            errors.append(f"Failed to register {path}: {e}")
+            logger.warning(f"Failed to register Spark view for {path}: {e}")
+
+    if not tables_info:
+        runner.close()
+        msg = "No valid data files registered with Spark."
+        if errors:
+            msg += " " + " ".join(errors)
+        raise ConfigurationError(msg)
+
+    return runner, tables_info
+
+
+def _register_spark_view(spark: Any, view_name: str, path: str, file_type: str) -> None:
+    """Read ``path`` with Spark and expose it as a temp view.
+
+    ``hive_parquet`` and ``csv_dir`` point at directories; Spark autodetects
+    the partitioning. Plain parquet / csv are single files.
+    """
+    reader = spark.read
+    if file_type in ("parquet", "hive_parquet"):
+        df = reader.parquet(path)
+    elif file_type in ("csv", "csv_dir"):
+        df = reader.option("header", "true").option("inferSchema", "true").csv(path)
+    else:
+        raise ConfigurationError(f"Unsupported Spark file type: {file_type}")
+    df.createOrReplaceTempView(view_name)
+
+
+def create_files_session_for_settings(
+    file_paths: list[str],
+    settings: DatabaseSettings | None = None,
+) -> tuple[Any, list[dict]]:
+    """Pick a file-session backend based on the project's configured DB_MODE.
+
+    - ``spark``: register files as temp views on a SparkConnectRunner so
+      the cluster does the reading — cheap to set up on HPC where the
+      files already live on a shared filesystem.
+    - ``duckdb`` / ``sqlite`` / no settings: local ephemeral DuckDB session
+      (the long-standing default).
+    - ``postgres`` / ``flightsql``: fall back to DuckDB with a warning —
+      those backends can't read arbitrary local files.
+    """
+    if settings is None or settings.mode in ("duckdb", "sqlite"):
+        return create_ephemeral_session(file_paths)
+    if settings.mode == "spark":
+        logger.info(f"File inspection routed through Spark Connect: {settings.spark_remote}")
+        return create_spark_files_session(
+            file_paths,
+            spark_remote=settings.spark_remote,
+            spark_token=settings.spark_token,
+            spark_max_result_bytes=settings.spark_max_result_bytes,
+        )
+    logger.warning(
+        f"DB_MODE={settings.mode!r} cannot read local files directly — "
+        "file inspection will use a local DuckDB session, independent of "
+        "the configured database."
+    )
+    return create_ephemeral_session(file_paths)
 
 
 def add_files_to_connection(
