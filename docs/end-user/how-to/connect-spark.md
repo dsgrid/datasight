@@ -164,6 +164,117 @@ pulls column metadata for each table, and starts the web UI at
 <http://localhost:8084>. Ask a question and the agent writes Spark SQL
 against your tables.
 
+## Running Spark on an HPC compute node
+
+If your organization doesn't have a shared Spark cluster but you do have
+HPC, you can start your own short-lived Spark Connect server on a
+Slurm-allocated compute node and tunnel to it from your laptop. This
+mirrors the [Flight SQL on HPC](connect-flight-sql.md) setup, just with
+a Spark driver instead of GizmoSQL.
+
+```mermaid
+flowchart LR
+    subgraph laptop ["Your laptop"]
+        DS[datasight web UI<br>+ LLM agent]
+    end
+    subgraph login ["Login node"]
+        SSH[SSH tunnel<br>passthrough only]
+    end
+    subgraph compute ["Compute node · Slurm-allocated"]
+        SC[Spark Connect server]
+        DR[Spark driver<br>+ local executors]
+        PQ["/scratch parquet files"]
+        SC --> DR --> PQ
+    end
+    DS <-->|"SQL over<br>gRPC + Arrow"| SSH <-->|port 15002| SC
+
+    style DS fill:#15a8a8,stroke:#023d60,color:#fff
+    style SSH fill:#bf1363,stroke:#8a0d42,color:#fff
+    style SC fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style DR fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style PQ fill:#8a7d55,stroke:#6b6040,color:#fff
+    style laptop fill:#1a8a8a,stroke:#15a8a8,color:#fff
+    style login fill:#9e1050,stroke:#bf1363,color:#fff
+    style compute fill:#c44a1e,stroke:#fe5d26,color:#fff
+```
+
+!!! important
+    **Do not run Spark on the login node.** Spark drivers can consume
+    significant memory and CPU. Always allocate a compute node with Slurm
+    first, then start the Connect server on that node.
+
+### Step A: Allocate a compute node
+
+```bash
+salloc --time=4:00:00 --mem=240G --cpus-per-task=104 --account <your-account>
+hostname     # note the compute node hostname (e.g. compute-node-42)
+```
+
+### Step B: Start Spark Connect on the compute node
+
+Spark 3.5+ ships a helper script that launches a local driver with the
+Connect server enabled:
+
+```bash
+# On the compute node, inside your allocation
+$SPARK_HOME/sbin/start-connect-server.sh \
+    --master "local[104]" \
+    --packages org.apache.spark:spark-connect_2.13:3.5.1 \
+    --conf spark.driver.memory=200g \
+    --conf spark.sql.execution.arrow.pyspark.enabled=true
+```
+
+- `--master local[104]` runs driver and executors in one JVM using all
+  allocated cores (tune to `--cpus-per-task`).
+- `--packages` pulls the Connect server jar matching your Spark version.
+  Some Spark distributions bundle it already — if so, omit this flag.
+- `--conf spark.driver.memory=...` must fit inside your Slurm `--mem`
+  allocation with headroom for the Python gRPC process and OS cache.
+
+The script binds the Connect gRPC server to `0.0.0.0:15002` by default.
+Override with `--conf spark.connect.grpc.binding.port=<port>` if 15002
+is taken. Check the driver log — it prints the exact bound address.
+
+### Step C: SSH tunnel from your laptop
+
+Replace `compute-node-42` with your actual allocated hostname:
+
+```bash
+ssh -N -L 15002:compute-node-42:15002 user@hpc-login-node
+```
+
+Leave this running in a separate terminal. The `-L` forwards your laptop's
+`localhost:15002` through the login node to port 15002 on the compute
+node — which is where the Spark Connect server is actually listening.
+
+### Step D: Configure datasight
+
+Because the tunnel exposes the server at `localhost:15002` on your
+laptop, `SPARK_REMOTE` points at `localhost`, not the compute node:
+
+```bash
+DB_MODE=spark
+SPARK_REMOTE=sc://localhost:15002
+# No SPARK_TOKEN needed — the SSH tunnel already authenticates you
+```
+
+### Gotchas
+
+- **Use the compute node hostname in the `-L` target, not the login
+  node.** Spark is on the compute node; the login node is a passthrough.
+  If you tunnel only to the login node, you'll hit `connection refused`.
+- **Watch for port collisions.** 15002 is the Spark Connect default, but
+  if a previous job of yours on the same compute node is still bound to
+  it, startup will fail. Either pick a different port via
+  `spark.connect.grpc.binding.port` or kill the old job.
+- **The tunnel dies when the allocation ends.** Same as Flight SQL on
+  HPC: request a generous `--time` or use `salloc` so you can extend
+  interactively.
+- **Package resolution requires login-node internet.** The first
+  `--packages` invocation downloads jars to `~/.ivy2`. If your compute
+  nodes lack outbound network, pre-resolve on the login node first, or
+  install the Connect jar into `$SPARK_HOME/jars`.
+
 ## Tips
 
 - **Let the agent aggregate.** Questions like "total wind generation by
