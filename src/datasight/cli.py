@@ -4256,6 +4256,9 @@ def inspect(files, output_format, output_path):
     temp views and all queries run on the cluster; otherwise an ephemeral
     in-memory DuckDB session is used.
     """
+    import time as _time
+
+    from loguru import logger as _logger
     from rich.console import Console
 
     from datasight.explore import create_files_session_for_settings
@@ -4263,9 +4266,19 @@ def inspect(files, output_format, output_path):
 
     db_settings = _current_db_settings_or_none()
 
+    async def _run_phase(name: str, coro):
+        _logger.info(f"[inspect] {name}…")
+        t0 = _time.perf_counter()
+        result = await coro
+        _logger.info(f"[inspect] {name} done in {_time.perf_counter() - t0:.1f}s")
+        return result
+
     async def _run_all():
         runner, tables_info = create_files_session_for_settings(list(files), db_settings)
-        tables = await introspect_schema(runner.run_sql, runner=runner)
+        tables = await _run_phase(
+            f"introspecting schema for {len(tables_info)} table(s)",
+            introspect_schema(runner.run_sql, runner=runner),
+        )
         schema_info = [
             {
                 "name": t.name,
@@ -4277,12 +4290,27 @@ def inspect(files, output_format, output_path):
             for t in tables
         ]
 
-        profile_data = await build_dataset_overview(schema_info, runner.run_sql)
-        quality_data = await build_quality_overview(schema_info, runner.run_sql)
-        measure_data = await build_measure_overview(schema_info, runner.run_sql, overrides=None)
-        dimension_data = await build_dimension_overview(schema_info, runner.run_sql)
-        trend_data = await build_trend_overview(schema_info, runner.run_sql, overrides=None)
-        recipe_list = await build_prompt_recipes(schema_info, runner.run_sql, overrides=None)
+        profile_data = await _run_phase(
+            "profiling tables", build_dataset_overview(schema_info, runner.run_sql)
+        )
+        quality_data = await _run_phase(
+            "running quality checks", build_quality_overview(schema_info, runner.run_sql)
+        )
+        measure_data = await _run_phase(
+            "discovering measures",
+            build_measure_overview(schema_info, runner.run_sql, overrides=None),
+        )
+        dimension_data = await _run_phase(
+            "discovering dimensions", build_dimension_overview(schema_info, runner.run_sql)
+        )
+        trend_data = await _run_phase(
+            "scanning for trends",
+            build_trend_overview(schema_info, runner.run_sql, overrides=None),
+        )
+        recipe_list = await _run_phase(
+            "building prompt recipes",
+            build_prompt_recipes(schema_info, runner.run_sql, overrides=None),
+        )
         recipes_data = [{"id": idx, **r} for idx, r in enumerate(recipe_list, start=1)]
 
         return {

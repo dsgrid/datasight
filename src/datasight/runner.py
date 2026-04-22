@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -35,6 +36,14 @@ DEFAULT_SPARK_MAX_RESULT_BYTES: int = 100 * 1024 * 1024
 
 # Type alias for async SQL execution function
 RunSql = Callable[[str], Awaitable[pd.DataFrame]]
+
+
+def _sql_preview(sql: str, max_len: int = 200) -> str:
+    """Collapse whitespace and truncate so a SQL log line fits one row."""
+    one_line = " ".join(sql.split())
+    if len(one_line) <= max_len:
+        return one_line
+    return one_line[:max_len] + "…"
 
 
 class SqlRunner(Protocol):
@@ -99,11 +108,18 @@ class DuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("DuckDBRunner is closed")
+        logger.info(f"DuckDB query: {_sql_preview(sql)}")
+        t0 = time.perf_counter()
         try:
-            return self._conn.execute(sql).fetchdf()
+            df = self._conn.execute(sql).fetchdf()
         except duckdb.Error as e:
             logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"DuckDB returned {len(df)} rows, {len(df.columns)} cols in {elapsed_ms:.0f}ms"
+        )
+        return df
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
         """Execute SQL asynchronously with timeout."""
@@ -166,11 +182,18 @@ class EphemeralDuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("EphemeralDuckDBRunner is closed")
+        logger.info(f"DuckDB query: {_sql_preview(sql)}")
+        t0 = time.perf_counter()
         try:
-            return self._conn.execute(sql).fetchdf()
+            df = self._conn.execute(sql).fetchdf()
         except duckdb.Error as e:
             logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"DuckDB returned {len(df)} rows, {len(df.columns)} cols in {elapsed_ms:.0f}ms"
+        )
+        return df
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
         """Execute SQL asynchronously with timeout."""
