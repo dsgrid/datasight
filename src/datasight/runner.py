@@ -532,6 +532,40 @@ class SparkConnectRunner:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
 
+    def get_table_names(self) -> list[str]:
+        """List tables via ``spark.catalog.listTables()``.
+
+        Spark's ``SHOW TABLES`` returns ``namespace | tableName | isTemporary``,
+        so the generic first-column strategy in ``schema._get_table_names``
+        would pick up database names instead of table names. The catalog
+        API returns structured ``Table`` objects with a stable ``.name``.
+        """
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+        try:
+            tables = self._spark.catalog.listTables()
+        except Exception as e:
+            logger.debug(f"Spark catalog.listTables error: {e}")
+            raise QueryError(f"Failed to list Spark tables: {e}") from e
+        names: list[str] = []
+        for t in tables:
+            name = getattr(t, "name", None)
+            if name:
+                names.append(str(name))
+        return names
+
+    async def get_row_count(self, table: str) -> int | None:  # noqa: ARG002
+        """Skip row counts for Spark.
+
+        A naive ``SELECT COUNT(*)`` on a multi-TB partitioned table kicks
+        off a full cluster job at introspection time, which is exactly
+        the foot-gun the byte-cap design exists to prevent. Return None
+        so the schema prompt simply omits row counts for Spark tables.
+        Statistics from ``DESCRIBE TABLE EXTENDED`` could be wired in
+        here later if we need approximate counts.
+        """
+        return None
+
     @staticmethod
     def _iter_arrow_batches(spark: Any, sdf: Any):
         """Yield ``pyarrow.RecordBatch`` from a Spark DataFrame.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -37,9 +38,22 @@ class _FakeSparkDataFrame:
         self.columns = columns or ["id", "payload"]
 
 
+class _FakeCatalog:
+    def __init__(self, table_names: list[str]):
+        self._table_names = table_names
+
+    def listTables(self):
+        return [type("Table", (), {"name": n})() for n in self._table_names]
+
+
 class _FakeSpark:
-    def __init__(self, batches: list[pa.RecordBatch]):
+    def __init__(
+        self,
+        batches: list[pa.RecordBatch],
+        table_names: list[str] | None = None,
+    ):
         self.client = _FakeClient(batches)
+        self.catalog = _FakeCatalog(table_names or [])
         self._sql_seen: list[str] = []
         self.tags_added: list[str] = []
         self.tags_removed: list[str] = []
@@ -90,8 +104,10 @@ async def test_spark_runner_returns_full_result_when_under_cap():
 
 @pytest.mark.asyncio
 async def test_spark_runner_truncates_at_byte_cap():
-    # Each batch is ~10k rows × ~88 bytes = roughly 880KB. With a 1MB cap,
-    # we should truncate after the second batch.
+    # Each batch is ~10k rows × ~88 bytes = roughly 880KB. The cap is
+    # checked *before* appending, so with a 1MB cap the first batch fits
+    # (880KB) and adding the second would push total past the cap —
+    # streaming halts after the first batch is accepted.
     batches = [_make_batch(10_000) for _ in range(5)]
     spark = _FakeSpark(batches)
     runner = SparkConnectRunner(spark=spark, max_result_bytes=1_000_000)
@@ -134,7 +150,7 @@ async def test_spark_runner_truncates_immediately_when_byte_cap_is_zero():
 
 
 @pytest.mark.asyncio
-async def test_spark_runner_interrupts_on_timeout(monkeypatch):
+async def test_spark_runner_interrupts_on_timeout():
     # Hand-rolled spark whose sql() call blocks forever so wait_for fires.
     class _BlockingSpark(_FakeSpark):
         def sql(self, query: str):
@@ -153,3 +169,107 @@ async def test_spark_runner_interrupts_on_timeout(monkeypatch):
     await asyncio.sleep(0.05)
     assert len(spark.tags_interrupted) == 1
     assert spark.tags_interrupted[0].startswith("datasight-")
+
+
+def test_spark_runner_get_table_names_uses_catalog():
+    spark = _FakeSpark([], table_names=["generation_fuel", "plants", "boilers"])
+    runner = SparkConnectRunner(spark=spark)
+
+    assert runner.get_table_names() == ["generation_fuel", "plants", "boilers"]
+
+
+@pytest.mark.asyncio
+async def test_spark_runner_get_row_count_returns_none():
+    """Spark skips row counts so introspection never triggers a full scan."""
+    runner = SparkConnectRunner(spark=_FakeSpark([]))
+
+    assert await runner.get_row_count("any_table") is None
+
+
+@pytest.mark.asyncio
+async def test_introspect_schema_skips_row_count_for_spark(monkeypatch):
+    """SparkConnectRunner.get_row_count wins over the generic COUNT(*) probe."""
+    from datasight import schema as schema_mod
+
+    calls: list[str] = []
+
+    async def _fake_run_sql(sql: str):
+        calls.append(sql)
+        if "DESCRIBE" in sql:
+            return pd.DataFrame(
+                {"column_name": ["id", "payload"], "column_type": ["INT", "STRING"]}
+            )
+        return pd.DataFrame()
+
+    async def _count_boom(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("_get_row_count must not be called for Spark runner")
+
+    monkeypatch.setattr(schema_mod, "_get_row_count", _count_boom)
+
+    spark = _FakeSpark([], table_names=["generation_fuel"])
+    runner = SparkConnectRunner(spark=spark)
+
+    tables = await schema_mod.introspect_schema(_fake_run_sql, runner=runner)
+
+    assert [t.name for t in tables] == ["generation_fuel"]
+    assert tables[0].row_count is None
+    assert not any("COUNT(*)" in sql for sql in calls)
+
+
+@pytest.mark.asyncio
+async def test_agent_surfaces_truncation_in_tool_result():
+    """When the runner truncates, the LLM-facing text and HTML should say so."""
+    from datasight.agent import _execute_run_sql
+
+    batches = [_make_batch(10_000) for _ in range(5)]
+    spark = _FakeSpark(batches)
+    # Cap sized so the first batch fits but accumulation trips before the end.
+    runner = SparkConnectRunner(spark=spark, max_result_bytes=2_000_000)
+
+    async def _run_sql(sql: str):
+        return await runner.run_sql(sql)
+
+    result = await _execute_run_sql(
+        input_data={"sql": "SELECT * FROM huge"},
+        run_sql=_run_sql,
+        schema_map=None,
+        dialect="spark",
+        measure_rules=None,
+        query_logger=None,
+        session_id="test",
+        user_question="everything please",
+    )
+
+    assert result.meta.get("truncated") is True
+    assert "truncation_reason" in result.meta
+    assert "Partial result" in result.result_text
+    assert result.result_html is not None
+    assert "sql-warning" in result.result_html
+
+
+@pytest.mark.asyncio
+async def test_agent_reports_truncated_empty_result_distinctly():
+    """An empty result caused by truncation must not be reported as 'no rows'."""
+    from datasight.agent import _execute_run_sql
+
+    batches = [_make_batch(10)]
+    spark = _FakeSpark(batches)
+    runner = SparkConnectRunner(spark=spark, max_result_bytes=0)
+
+    async def _run_sql(sql: str):
+        return await runner.run_sql(sql)
+
+    result = await _execute_run_sql(
+        input_data={"sql": "SELECT * FROM anything"},
+        run_sql=_run_sql,
+        schema_map=None,
+        dialect="spark",
+        measure_rules=None,
+        query_logger=None,
+        session_id="test",
+        user_question="everything please",
+    )
+
+    assert result.meta.get("truncated") is True
+    assert "No rows returned" not in result.result_text
+    assert "truncated before any rows" in result.result_text.lower()

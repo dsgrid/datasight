@@ -3,6 +3,7 @@ Auto-discover database schema by querying INFORMATION_SCHEMA or DuckDB-specific
 system tables.
 """
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -173,16 +174,39 @@ async def introspect_schema(
     else:
         logger.info(f"Introspecting {total_discovered} tables")
 
+    runner_row_count = _runner_row_count_fn(runner)
     total = len(table_names)
     progress_every = max(1, total // 10) if total >= 20 else total + 1
     for idx, tname in enumerate(table_names, start=1):
         cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
-        row_count = await _get_row_count(run_sql, tname)
+        if runner_row_count is not None:
+            row_count = await runner_row_count(tname)
+        else:
+            row_count = await _get_row_count(run_sql, tname)
         tables.append(TableInfo(name=tname, columns=cols, row_count=row_count))
         if idx % progress_every == 0 and idx < total:
             logger.info(f"  introspected {idx}/{total} tables")
 
     return tables
+
+
+def _runner_row_count_fn(runner: Any) -> Callable[[str], Awaitable[int | None]] | None:
+    """Return ``runner.get_row_count`` (async) if provided, walking ``_inner``.
+
+    Runners like ``SparkConnectRunner`` override row counting to avoid
+    triggering full-table scans at schema-introspection time. The
+    ``CachingSqlRunner`` wraps other runners, so we walk ``_inner`` to find
+    the concrete backend's method.
+    """
+    current = runner
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        fn = getattr(current, "get_row_count", None)
+        if callable(fn):
+            return fn
+        seen.add(id(current))
+        current = getattr(current, "_inner", None)
+    return None
 
 
 def format_schema_context(

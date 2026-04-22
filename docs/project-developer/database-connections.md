@@ -1,18 +1,18 @@
 # Database connections
 
-datasight supports four database backends. This guide explains when to use
+datasight supports five database backends. This guide explains when to use
 each one and how to configure the connection.
 
 ## Choosing a database
 
-| | DuckDB | SQLite | PostgreSQL | Flight SQL |
-|---|---|---|---|---|
-| **Best for** | Local analytics on Parquet/CSV files | Existing SQLite databases from other apps | Production databases, multi-user access | Remote HPC or distributed query engines |
-| **Install** | Built in | Built in | Built in | Built in |
-| **DB_MODE** | `duckdb` | `sqlite` | `postgres` | `flightsql` |
-| **Connection** | Local file path | Local file path | Host/port or connection string | gRPC URI |
-| **Concurrent users** | Single process | Single process | Multi-user | Multi-user |
-| **SQL dialect** | DuckDB SQL (Postgres-like) | SQLite SQL | PostgreSQL | Depends on server |
+| | DuckDB | SQLite | PostgreSQL | Flight SQL | Spark |
+|---|---|---|---|---|---|
+| **Best for** | Local analytics on Parquet/CSV files | Existing SQLite databases from other apps | Production databases, multi-user access | Remote HPC or distributed query engines | Multi-TB datasets on a Spark cluster |
+| **Install** | Built in | Built in | Built in | Built in | `pip install 'datasight[spark]'` |
+| **DB_MODE** | `duckdb` | `sqlite` | `postgres` | `flightsql` | `spark` |
+| **Connection** | Local file path | Local file path | Host/port or connection string | gRPC URI | Spark Connect URI |
+| **Concurrent users** | Single process | Single process | Multi-user | Multi-user | Multi-user |
+| **SQL dialect** | DuckDB SQL (Postgres-like) | SQLite SQL | PostgreSQL | Depends on server | Spark SQL |
 
 **DuckDB** is the default and recommended for most use cases. It is an
 embedded OLAP (Online Analytical Processing) database designed for
@@ -32,6 +32,14 @@ databases, data warehouses, or managed services like RDS or Cloud SQL.
 protocol, such as [GizmoSQL](https://github.com/gizmodata/gizmosql) on an
 HPC cluster. See [Connect to a remote Flight SQL backend](../end-user/how-to/connect-flight-sql.md)
 for a full walkthrough.
+
+**Spark** connects to an Apache Spark cluster via
+[Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html).
+Use this when your data is too large to fit on a single machine — typically
+multi-terabyte Parquet/Delta/Iceberg tables managed by Spark. The client
+streams Arrow batches and truncates the result once it exceeds a byte cap
+(default 100 MiB), so the web server stays responsive even when the agent
+forgets to aggregate.
 
 ## DuckDB
 
@@ -179,6 +187,54 @@ For TLS-enabled servers, use `grpc+tls://` as the URI scheme:
 FLIGHT_SQL_URI=grpc+tls://flight.example.com:31337
 FLIGHT_SQL_TOKEN=your_bearer_token
 ```
+
+## Spark (via Spark Connect)
+
+Spark is for multi-terabyte datasets that live on a Spark cluster. The
+cluster must have the Spark Connect server enabled (Spark 3.4+; we require
+pyspark 3.5+ on the client). Install the extra dependency:
+
+```bash
+pip install 'datasight[spark]'
+```
+
+Then configure the connection:
+
+```bash
+DB_MODE=spark
+SPARK_REMOTE=sc://spark-connect.example.com:15002
+SPARK_TOKEN=your_bearer_token        # optional
+SPARK_MAX_RESULT_BYTES=104857600     # optional, default 100 MiB
+```
+
+### Why the byte cap
+
+At multi-TB scale, a careless `SELECT * FROM fact_table` could try to pull
+terabytes of Arrow data back to the client. The client streams Arrow
+batches and stops once the accumulated bytes exceed `SPARK_MAX_RESULT_BYTES`.
+Truncated results are flagged in the UI and in the LLM's tool output so
+the agent can tell the user "partial result — add aggregation" rather than
+misreporting them as the full answer.
+
+- Default cap: **100 MiB** on the wire (≈250–500 MiB after pandas inflation).
+- Truncation is safe: cancelling the query server-side via Spark Connect's
+  interrupt API so it stops consuming cluster resources.
+
+### Schema introspection at TB scale
+
+- Table discovery uses `spark.catalog.listTables()` — fast, metadata-only.
+- Row counts are **skipped** for Spark tables. A naive `SELECT COUNT(*)` on
+  a partitioned multi-TB table can kick off a full-cluster job at project
+  load, before the user even asks a question. Row counts simply won't
+  appear in the schema prompt for Spark backends.
+
+### Write queries that the cluster can serve cheaply
+
+datasight's system prompt for Spark already tells the LLM to aggregate,
+avoid `SELECT *`, include partition predicates, and always add `LIMIT`
+for non-aggregated queries. When you write `schema_description.md`,
+document your partition columns explicitly — e.g. "this table is
+partitioned by `report_date` (daily)" — so the agent uses them as filters.
 
 ## All environment variables
 

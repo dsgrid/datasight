@@ -344,6 +344,8 @@ class SqlExecutionResult:
     validation_error: str | None = None
     validation_status: str = "not_run"
     validation_errors: list[str] = field(default_factory=list)
+    truncated: bool = False
+    truncation_reason: str | None = None
 
 
 async def execute_sql_with_validation(
@@ -405,11 +407,20 @@ async def execute_sql_with_validation(
     try:
         df = await run_sql(sql)
         elapsed_ms = (time.perf_counter() - t0) * 1000
+        # Runners signal client-side truncation (e.g. Spark's byte cap) via
+        # df.attrs. Lift it out now: df.attrs is ephemeral and doesn't
+        # survive downstream pandas operations.
+        truncated = bool(df.attrs.get("truncated")) if df is not None else False
+        truncation_reason = (
+            str(df.attrs.get("truncation_reason") or "") if df is not None else ""
+        ) or None
         return SqlExecutionResult(
             df=df,
             elapsed_ms=elapsed_ms,
             validation_status=validation_status,
             validation_errors=validation_errors,
+            truncated=truncated,
+            truncation_reason=truncation_reason,
         )
     except QueryTimeoutError as e:
         elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -496,6 +507,9 @@ def _build_tool_meta(
         meta["row_count"] = len(execution_result.df)
         meta["column_count"] = len(execution_result.df.columns)
         meta["columns"] = list(execution_result.df.columns)
+    if execution_result.truncated:
+        meta["truncated"] = True
+        meta["truncation_reason"] = execution_result.truncation_reason
     return meta
 
 
@@ -568,6 +582,20 @@ async def _execute_run_sql(
     # Handle empty result
     df = result.df
     if df is None or df.empty:
+        if result.truncated:
+            reason = result.truncation_reason or "Result truncated before any rows returned."
+            return ToolResult(
+                result_text=(
+                    "Query was truncated before any rows could be returned. "
+                    f"{reason} The database likely holds matching data — "
+                    "add aggregation or a tighter LIMIT to get a usable answer."
+                ),
+                result_html=(
+                    f"<p class='sql-warning'>Result truncated: {escape_html(reason)}</p>"
+                ),
+                meta=meta,
+                df=df,
+            )
         return ToolResult(
             result_text="Query executed successfully. No rows returned.",
             meta=meta,
@@ -578,7 +606,15 @@ async def _execute_run_sql(
     csv = df.to_csv(index=False)
     preview = csv if len(csv) <= 500 else csv[:500] + "\n..."
     result_text = f"{preview}\n\nReturned {len(df)} rows, {len(df.columns)} columns."
+    if result.truncated:
+        reason = result.truncation_reason or "Result truncated by client-side cap."
+        result_text += f"\n\n⚠ Partial result — {reason}"
     result_html = df_to_html_table(df)
+    if result.truncated:
+        reason = result.truncation_reason or "Result truncated by client-side cap."
+        result_html = (
+            f"<p class='sql-warning'>Partial result — {escape_html(reason)}</p>" + result_html
+        )
 
     return ToolResult(
         result_text=result_text,
