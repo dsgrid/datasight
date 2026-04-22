@@ -108,7 +108,10 @@ class DuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("DuckDBRunner is closed")
-        logger.info(f"DuckDB query: {_sql_preview(sql)}")
+        # Per-query logs at DEBUG: a single inspect / generate run can fire
+        # hundreds of these and they drown out genuinely interesting INFO
+        # output. Run with -v (or LOG_LEVEL=DEBUG) to surface them.
+        logger.debug(f"DuckDB query: {_sql_preview(sql)}")
         t0 = time.perf_counter()
         try:
             df = self._conn.execute(sql).fetchdf()
@@ -116,7 +119,7 @@ class DuckDBRunner:
             logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.info(
+        logger.debug(
             f"DuckDB returned {len(df)} rows, {len(df.columns)} cols in {elapsed_ms:.0f}ms"
         )
         return df
@@ -182,7 +185,10 @@ class EphemeralDuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("EphemeralDuckDBRunner is closed")
-        logger.info(f"DuckDB query: {_sql_preview(sql)}")
+        # Per-query logs at DEBUG: a single inspect / generate run can fire
+        # hundreds of these and they drown out genuinely interesting INFO
+        # output. Run with -v (or LOG_LEVEL=DEBUG) to surface them.
+        logger.debug(f"DuckDB query: {_sql_preview(sql)}")
         t0 = time.perf_counter()
         try:
             df = self._conn.execute(sql).fetchdf()
@@ -190,7 +196,7 @@ class EphemeralDuckDBRunner:
             logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.info(
+        logger.debug(
             f"DuckDB returned {len(df)} rows, {len(df.columns)} cols in {elapsed_ms:.0f}ms"
         )
         return df
@@ -459,13 +465,13 @@ class FlightSqlRunner:
         if self._conn is None:
             raise ConnectionError("FlightSqlRunner is closed")
         sql = sql.strip().rstrip(";")
-        logger.info(f"Flight SQL query: {sql[:200]}")
+        logger.debug(f"Flight SQL query: {sql[:200]}")
         try:
             cursor = self._conn.cursor()
             cursor.execute(sql)
             table = cursor.fetch_arrow_table()
             df = table.to_pandas()
-            logger.info(f"Flight SQL returned {len(df)} rows, {len(df.columns)} columns")
+            logger.debug(f"Flight SQL returned {len(df)} rows, {len(df.columns)} columns")
             return df
         except Exception as e:
             logger.debug(f"Flight SQL query error: {e}\nSQL: {sql[:500]}")
@@ -808,7 +814,7 @@ class SparkConnectRunner:
         import pyarrow as pa
 
         sql = sql.strip().rstrip(";")
-        logger.info(f"Spark SQL: {sql[:200]}")
+        logger.debug(f"Spark SQL: {sql[:200]}")
         try:
             sdf = self._spark.sql(sql)
             columns = list(getattr(sdf, "columns", []) or [])
@@ -867,7 +873,7 @@ class SparkConnectRunner:
                 f"Spark result truncated at {total_bytes:,} bytes ({len(df):,} rows returned)"
             )
         else:
-            logger.info(f"Spark returned {len(df)} rows, {len(df.columns)} columns")
+            logger.debug(f"Spark returned {len(df)} rows, {len(df.columns)} columns")
         return df
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
