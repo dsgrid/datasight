@@ -1521,6 +1521,9 @@ def config_show():
             click.echo(f"  db:   {settings.database.postgres_database}")
     elif settings.database.mode == "flightsql":
         click.echo(f"  uri:  {settings.database.flight_uri}")
+    elif settings.database.mode == "spark":
+        click.echo(f"  remote: {settings.database.spark_remote}")
+        click.echo(f"  max result bytes: {settings.database.spark_max_result_bytes:,}")
 
 
 @cli.group(
@@ -4753,6 +4756,9 @@ def doctor(project_dir, output_format, output_path):
     elif settings.database.mode == "flightsql":
         db_ok = bool(settings.database.flight_uri)
         db_detail = settings.database.flight_uri
+    elif settings.database.mode == "spark":
+        db_ok = bool(settings.database.spark_remote)
+        db_detail = settings.database.spark_remote
     add_check("Database config", db_ok, db_detail or settings.database.mode)
 
     for name in ("schema_description.md", "queries.yaml"):

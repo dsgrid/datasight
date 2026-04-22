@@ -811,6 +811,9 @@ async def _build_project_health(state: AppState) -> dict[str, Any]:
         elif settings.database.mode == "flightsql":
             db_ok = bool(settings.database.flight_uri)
             db_detail = settings.database.flight_uri
+        elif settings.database.mode == "spark":
+            db_ok = bool(settings.database.spark_remote)
+            db_detail = settings.database.spark_remote
         add_check(
             "Database config",
             db_ok,

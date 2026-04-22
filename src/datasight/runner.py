@@ -2,16 +2,18 @@
 SQL runners for datasight.
 
 Provides a common async interface for executing SQL queries against local
-DuckDB files, remote Flight SQL servers, PostgreSQL, or SQLite databases.
+DuckDB files, remote Flight SQL servers, PostgreSQL, SQLite databases, or
+Apache Spark via Spark Connect.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sqlite3
+import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 import duckdb
 import pandas as pd
@@ -24,6 +26,12 @@ DEFAULT_QUERY_TIMEOUT: float = 120.0
 
 # Default SQL result cache size (1 GiB). 0 disables caching.
 DEFAULT_SQL_CACHE_MAX_BYTES: int = 1 << 30
+
+# Default byte cap for Spark Connect results (100 MiB on the wire).
+# Spark sits in front of multi-TB datasets, so the client cannot afford to
+# materialize an unbounded result. This protects the FastAPI process from
+# OOMing when the agent forgets to aggregate.
+DEFAULT_SPARK_MAX_RESULT_BYTES: int = 100 * 1024 * 1024
 
 # Type alias for async SQL execution function
 RunSql = Callable[[str], Awaitable[pd.DataFrame]]
@@ -450,6 +458,196 @@ class FlightSqlRunner:
         except TimeoutError:
             raise QueryTimeoutError(
                 f"Query timed out after {self.timeout:.0f}s. "
+                "Try a simpler query or add filters to reduce the result set."
+            )
+
+
+class SparkConnectRunner:
+    """Execute SQL against an Apache Spark cluster via Spark Connect.
+
+    Streams Arrow batches from the server and stops once the accumulated
+    result exceeds ``max_result_bytes``. The returned DataFrame carries
+    ``df.attrs['truncated'] = True`` and ``df.attrs['truncation_reason']``
+    when truncation occurred so the UI can surface that to the user.
+
+    Cancellation on timeout uses Spark Connect's tag-based interrupt API
+    (``addTag`` / ``interruptTag``), which actually frees cluster resources
+    rather than just abandoning the gRPC stream client-side.
+    """
+
+    def __init__(
+        self,
+        remote: str = "sc://localhost:15002",
+        *,
+        token: str | None = None,
+        max_result_bytes: int = DEFAULT_SPARK_MAX_RESULT_BYTES,
+        query_timeout: float = DEFAULT_QUERY_TIMEOUT,
+        spark: Any = None,
+    ):
+        self._remote = remote
+        self._token = token
+        self._max_result_bytes = max(0, int(max_result_bytes))
+        self._query_timeout = query_timeout
+        self._spark: Any = spark
+        if self._spark is None:
+            self._connect()
+
+    def _connect(self) -> None:
+        try:
+            from pyspark.sql import SparkSession  # ty: ignore[unresolved-import]
+        except ImportError as e:
+            raise ConnectionError(
+                "Spark Connect support requires pyspark. "
+                "Install with: pip install 'datasight[spark]'"
+            ) from e
+        try:
+            builder = SparkSession.builder.remote(self._remote)
+            if self._token:
+                builder = builder.config("spark.connect.client.token", self._token)
+            self._spark = builder.getOrCreate()
+            logger.info(f"Connected to Spark Connect: {self._remote}")
+        except Exception as e:
+            logger.exception("Spark Connect connection error")
+            raise ConnectionError(f"Failed to connect to Spark Connect: {e}") from e
+
+    def close(self) -> None:
+        if self._spark is not None:
+            try:
+                self._spark.stop()
+            except Exception:
+                pass
+            self._spark = None
+
+    def __enter__(self) -> "SparkConnectRunner":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "SparkConnectRunner":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    @staticmethod
+    def _iter_arrow_batches(spark: Any, sdf: Any):
+        """Yield ``pyarrow.RecordBatch`` from a Spark DataFrame.
+
+        Prefers the Spark Connect client's streaming iterator so we can stop
+        before materializing the full result. Falls back to ``toArrow()`` /
+        ``toPandas()`` if the streaming API isn't exposed.
+        """
+        import pyarrow as pa
+
+        client = getattr(spark, "client", None)
+        plan = getattr(sdf, "_plan", None)
+        if client is not None and plan is not None and hasattr(client, "to_table_as_iterator"):
+            for table, _ in client.to_table_as_iterator(plan, observations={}):
+                for batch in table.to_batches():
+                    yield batch
+            return
+        if hasattr(sdf, "toArrow"):
+            table = sdf.toArrow()
+            for batch in table.to_batches():
+                yield batch
+            return
+        df = sdf.toPandas()
+        yield pa.RecordBatch.from_pandas(df)
+
+    def _execute(self, sql: str) -> pd.DataFrame:
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+        import pyarrow as pa
+
+        sql = sql.strip().rstrip(";")
+        logger.info(f"Spark SQL: {sql[:200]}")
+        try:
+            sdf = self._spark.sql(sql)
+            iterator = self._iter_arrow_batches(self._spark, sdf)
+            batches: list[pa.RecordBatch] = []
+            schema: pa.Schema | None = None
+            total_bytes = 0
+            truncated = False
+            try:
+                for batch in iterator:
+                    if schema is None:
+                        schema = batch.schema
+                    batches.append(batch)
+                    total_bytes += batch.nbytes
+                    if total_bytes > self._max_result_bytes:
+                        truncated = True
+                        break
+            finally:
+                close = getattr(iterator, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug(f"Spark SQL error: {e}\nSQL: {sql[:500]}")
+            raise QueryError(str(e)) from e
+
+        if not batches:
+            return pd.DataFrame()
+        table = pa.Table.from_batches(batches, schema=schema)
+        df = table.to_pandas()
+        if truncated:
+            df.attrs["truncated"] = True
+            df.attrs["truncation_reason"] = (
+                f"Result exceeded {self._max_result_bytes:,} bytes "
+                f"({total_bytes:,} bytes streamed). Add aggregation or a tighter "
+                "LIMIT to your question to see the full answer."
+            )
+            logger.warning(
+                f"Spark result truncated at {total_bytes:,} bytes ({len(df):,} rows returned)"
+            )
+        else:
+            logger.info(f"Spark returned {len(df)} rows, {len(df.columns)} columns")
+        return df
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+
+        # Tag every query so we can interrupt server-side on timeout. Without
+        # this, asyncio.wait_for cancels the local task but the gRPC call and
+        # underlying Spark job keep running and burning cluster resources.
+        tag = f"datasight-{uuid.uuid4().hex}"
+        spark = self._spark
+        add_tag = getattr(spark, "addTag", None)
+        remove_tag = getattr(spark, "removeTag", None)
+        interrupt_tag = getattr(spark, "interruptTag", None)
+
+        def _exec() -> pd.DataFrame:
+            if add_tag is not None:
+                try:
+                    add_tag(tag)
+                except Exception:
+                    pass
+            try:
+                return self._execute(sql)
+            finally:
+                if remove_tag is not None:
+                    try:
+                        remove_tag(tag)
+                    except Exception:
+                        pass
+
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(_exec),
+                timeout=self._query_timeout,
+            )
+        except TimeoutError:
+            if interrupt_tag is not None:
+                try:
+                    interrupt_tag(tag)
+                except Exception:
+                    logger.warning("Failed to interrupt Spark query on timeout")
+            raise QueryTimeoutError(
+                f"Query timed out after {self._query_timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
 
