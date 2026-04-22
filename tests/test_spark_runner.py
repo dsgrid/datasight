@@ -281,7 +281,7 @@ def test_enable_ansi_quoted_identifiers_sets_session_config():
 
     SparkConnectRunner._enable_ansi_quoted_identifiers(spark)
 
-    assert spark.conf.values.get("spark.sql.ansi.double_quoted_identifiers") == "true"
+    assert spark.conf.values.get("spark.sql.ansi.doubleQuotedIdentifiers") == "true"
 
 
 def test_enable_ansi_quoted_identifiers_warns_but_does_not_raise(caplog):
@@ -303,7 +303,7 @@ def test_enable_ansi_quoted_identifiers_warns_but_does_not_raise(caplog):
         _logger.remove(sink_id)
 
     combined = "\n".join(str(r) for r in caplog.records)
-    assert "double_quoted_identifiers" in combined
+    assert "doubleQuotedIdentifiers" in combined
     assert "config locked by admin" in combined
 
 

@@ -590,7 +590,7 @@ class SparkConnectRunner:
         Spark's behavior to the standard interpretation. Available
         on Spark 3.4+; ANSI mode (default in Spark 4.0) must be on.
         """
-        key = "spark.sql.ansi.double_quoted_identifiers"
+        key = "spark.sql.ansi.doubleQuotedIdentifiers"
         try:
             spark.conf.set(key, "true")
             logger.info(f"Set {key}=true so Spark accepts SQL-standard quoted identifiers")
@@ -785,19 +785,21 @@ class SparkConnectRunner:
         Uses the Spark Connect client's streaming iterator so we can stop
         before materializing the full result. Falling back to ``toArrow()`` /
         ``toPandas()`` would defeat the byte cap (they fully materialize the
-        result client-side), so we require the streaming API and fail fast
-        otherwise. The API is public on pyspark 3.5+, which is our minimum.
+        result client-side).
+
+        The iterator yields a ``StructType`` schema first, then one ``pa.Table``
+        per Arrow batch; we skip the schema and flatten each table to its
+        underlying batches. pyspark 4.0 also requires a ``Plan`` protobuf, so
+        we convert the DataFrame's ``LogicalPlan`` with ``to_proto(client)``.
         """
-        client = getattr(spark, "client", None)
-        plan = getattr(sdf, "_plan", None)
-        if client is None or plan is None or not hasattr(client, "to_table_as_iterator"):
-            raise QueryError(
-                "Spark Connect streaming API (client.to_table_as_iterator) is "
-                "unavailable — pyspark>=3.5 is required. Upgrade pyspark so "
-                "the client-side byte cap remains effective."
-            )
-        for table, _ in client.to_table_as_iterator(plan, observations={}):
-            for batch in table.to_batches():
+        import pyarrow as pa
+
+        client = spark.client
+        plan_proto = sdf._plan.to_proto(client)
+        for item in client.to_table_as_iterator(plan_proto, observations={}):
+            if not isinstance(item, pa.Table):
+                continue
+            for batch in item.to_batches():
                 yield batch
 
     def _execute(self, sql: str) -> pd.DataFrame:
