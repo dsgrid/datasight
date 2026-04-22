@@ -190,6 +190,57 @@ def test_generate_respects_custom_db_path(tmp_path, parquet_file, stub_llm):
     assert "DB_PATH=./db/custom.duckdb" in env_text
 
 
+def test_generate_preserves_existing_spark_backend(tmp_path, parquet_file, stub_llm, monkeypatch):
+    """generate <file> must not clobber DB_MODE=spark with DB_MODE=duckdb.
+
+    The 'new project from parquet files' flow creates a local DuckDB
+    mirror and writes DB_MODE=duckdb. When the project is already
+    configured for Spark (or another non-DuckDB backend), that would
+    silently replace the user's real backend. The command should
+    preserve the existing .env and skip the DuckDB mirror.
+    """
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=test-key\nDB_MODE=spark\nSPARK_REMOTE=sc://my-cluster:15002\n",
+        encoding="utf-8",
+    )
+
+    # Route the Spark-mode files session through the DuckDB path so the
+    # test doesn't need a real Spark cluster. We're only exercising the
+    # CLI's env-preservation logic here; the Spark plumbing is tested
+    # separately in test_spark_runner.py.
+    from datasight.explore import create_ephemeral_session
+
+    def _fake_session(file_paths, settings):
+        return create_ephemeral_session(file_paths)
+
+    # cli imports create_files_session_for_settings locally inside the
+    # _run coroutine, so we patch where it lives in explore.
+    monkeypatch.setattr("datasight.explore.create_files_session_for_settings", _fake_session)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+
+    # No local DuckDB mirror.
+    assert not (tmp_path / "database.duckdb").exists(), result.output
+
+    # DB_MODE stays on spark; SPARK_REMOTE is preserved; no DB_PATH was added.
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "DB_MODE=spark" in env_text, env_text
+    assert "DB_MODE=duckdb" not in env_text, env_text
+    assert "SPARK_REMOTE=sc://my-cluster:15002" in env_text, env_text
+    assert "DB_PATH=" not in env_text, env_text
+
+    # Schema description and queries are still written — those describe
+    # the tables regardless of which backend serves them.
+    assert (tmp_path / "schema_description.md").exists()
+    assert (tmp_path / "queries.yaml").exists()
+
+
 def test_generate_sqlite_file_updates_env_without_creating_duckdb(tmp_path, stub_llm):
     db_path = tmp_path / "generation.sqlite"
     conn = sqlite3.connect(str(db_path))

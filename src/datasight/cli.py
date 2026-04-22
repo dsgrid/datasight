@@ -1824,10 +1824,20 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
 
     project_dir = str(Path(project_dir).resolve())
 
+    # Configure logging and resolve settings early so the db_target
+    # preflight can respect a pre-existing DB_MODE (e.g. spark) and
+    # avoid clobbering the user's backend config.
+    level = "DEBUG" if verbose else "WARNING"
+    _configure_logging(level)
+    settings, resolved_model = _resolve_settings(project_dir, model)
+    _validate_settings_for_llm(settings)
+
     # Resolve the would-be DB path up front so we can include it in the
     # preflight check — otherwise a stale database.duckdb would abort the
     # run only after the LLM call and the doc writes, leaving behind a
-    # partial, mutated project.
+    # partial, mutated project. Skip it entirely when the project is
+    # configured for a non-DuckDB backend; we're not going to touch the
+    # local DuckDB in that case.
     use_files = bool(files)
     db_target: Path | None = None
     sqlite_source_path: Path | None = None
@@ -1869,11 +1879,13 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
                 )
                 sys.exit(1)
             duckdb_source_path = duckdb_files[0]
-        else:
+        elif settings.database.mode == "duckdb":
             _db_target = Path(db_path or "database.duckdb")
             if not _db_target.is_absolute():
                 _db_target = Path(project_dir) / _db_target
             db_target = _db_target.resolve()
+        # Any other mode (spark, postgres, flightsql, sqlite) → no
+        # local DuckDB target; we'll preserve the existing backend.
 
     # Check for existing files early
     schema_path = Path(project_dir) / "schema_description.md"
@@ -1902,14 +1914,6 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
                 err=True,
             )
             sys.exit(1)
-
-    # Logging
-    level = "DEBUG" if verbose else "WARNING"
-    _configure_logging(level)
-
-    # Load settings and validate
-    settings, resolved_model = _resolve_settings(project_dir, model)
-    _validate_settings_for_llm(settings)
 
     if not use_files:
         resolved_db_path = _resolve_db_path(settings, project_dir)
@@ -2121,33 +2125,47 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
         set_env_vars(env_path, {"DB_MODE": db_mode, "DB_PATH": db_env_value})
         written.append(".env (updated)" if existed else ".env")
     elif use_files:
-        from datasight.config import set_env_vars
-        from datasight.explore import build_persistent_duckdb
-
-        assert db_target is not None  # set above when use_files is True
-        try:
-            build_persistent_duckdb(db_target, tables_info, overwrite=overwrite)
-        except FileExistsError:
-            # Preflight above rejects pre-existing DBs without --overwrite,
-            # so reaching here means the file appeared mid-run.
+        # The "new project from parquet files" flow creates a local DuckDB
+        # mirror and writes DB_MODE=duckdb to .env. When the user is already
+        # inside a project configured for a different backend (Spark,
+        # Postgres, Flight SQL, SQLite), doing that silently clobbers
+        # their real config. Preserve whatever they already have.
+        if settings.database.mode != "duckdb":
             click.echo(
-                f"Error: Database file already exists: {db_target}.",
-                err=True,
+                f"Existing .env has DB_MODE={settings.database.mode} — "
+                "keeping it. The schema_description.md / queries.yaml "
+                "files describe the same tables your configured backend "
+                "serves; no local DuckDB mirror was created and .env was "
+                "not modified."
             )
-            sys.exit(1)
-        db_size_mb = db_target.stat().st_size / (1024 * 1024)
-        written.append(f"{db_target.name} ({db_size_mb:.2f} MB)")
+        else:
+            from datasight.config import set_env_vars
+            from datasight.explore import build_persistent_duckdb
 
-        try:
-            rel_db = db_target.relative_to(Path(project_dir).resolve())
-            db_env_value = f"./{rel_db.as_posix()}"
-        except ValueError:
-            db_env_value = str(db_target)
+            assert db_target is not None  # set above when use_files is True
+            try:
+                build_persistent_duckdb(db_target, tables_info, overwrite=overwrite)
+            except FileExistsError:
+                # Preflight above rejects pre-existing DBs without --overwrite,
+                # so reaching here means the file appeared mid-run.
+                click.echo(
+                    f"Error: Database file already exists: {db_target}.",
+                    err=True,
+                )
+                sys.exit(1)
+            db_size_mb = db_target.stat().st_size / (1024 * 1024)
+            written.append(f"{db_target.name} ({db_size_mb:.2f} MB)")
 
-        env_path = Path(project_dir) / ".env"
-        existed = env_path.exists()
-        set_env_vars(env_path, {"DB_MODE": "duckdb", "DB_PATH": db_env_value})
-        written.append(".env (updated)" if existed else ".env")
+            try:
+                rel_db = db_target.relative_to(Path(project_dir).resolve())
+                db_env_value = f"./{rel_db.as_posix()}"
+            except ValueError:
+                db_env_value = str(db_target)
+
+            env_path = Path(project_dir) / ".env"
+            existed = env_path.exists()
+            set_env_vars(env_path, {"DB_MODE": "duckdb", "DB_PATH": db_env_value})
+            written.append(".env (updated)" if existed else ".env")
 
     click.echo()
     if written:
