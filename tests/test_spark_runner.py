@@ -32,8 +32,9 @@ class _FakeClient:
 
 
 class _FakeSparkDataFrame:
-    def __init__(self):
+    def __init__(self, columns: list[str] | None = None):
         self._plan = _FakePlan()
+        self.columns = columns or ["id", "payload"]
 
 
 class _FakeSpark:
@@ -102,6 +103,34 @@ async def test_spark_runner_truncates_at_byte_cap():
     # Should have stopped streaming early — not consumed all 5 batches.
     assert spark.client.iterator_consumed < 5
     assert len(df) < 50_000
+
+
+@pytest.mark.asyncio
+async def test_spark_runner_preserves_columns_for_zero_row_result():
+    spark = _FakeSpark([_make_batch(0)])
+    runner = SparkConnectRunner(spark=spark, max_result_bytes=10 * 1024 * 1024)
+
+    df = await runner.run_sql("SELECT * FROM empty_t")
+
+    assert df.empty
+    assert list(df.columns) == ["id", "payload"]
+    assert "truncated" not in df.attrs
+
+
+@pytest.mark.asyncio
+async def test_spark_runner_truncates_immediately_when_byte_cap_is_zero():
+    batches = [_make_batch(10), _make_batch(10)]
+    spark = _FakeSpark(batches)
+    runner = SparkConnectRunner(spark=spark, max_result_bytes=0)
+
+    df = await runner.run_sql("SELECT * FROM tiny")
+
+    assert df.empty
+    assert list(df.columns) == ["id", "payload"]
+    assert df.attrs.get("truncated") is True
+    assert "truncation_reason" in df.attrs
+    # Cap enforced before the first non-empty batch is appended.
+    assert spark.client.iterator_consumed <= 1
 
 
 @pytest.mark.asyncio

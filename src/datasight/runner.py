@@ -515,6 +515,8 @@ class SparkConnectRunner:
             try:
                 self._spark.stop()
             except Exception:
+                # Best-effort cleanup: session may already be dead, and a
+                # failure here would mask the real error from the caller.
                 pass
             self._spark = None
 
@@ -534,26 +536,23 @@ class SparkConnectRunner:
     def _iter_arrow_batches(spark: Any, sdf: Any):
         """Yield ``pyarrow.RecordBatch`` from a Spark DataFrame.
 
-        Prefers the Spark Connect client's streaming iterator so we can stop
-        before materializing the full result. Falls back to ``toArrow()`` /
-        ``toPandas()`` if the streaming API isn't exposed.
+        Uses the Spark Connect client's streaming iterator so we can stop
+        before materializing the full result. Falling back to ``toArrow()`` /
+        ``toPandas()`` would defeat the byte cap (they fully materialize the
+        result client-side), so we require the streaming API and fail fast
+        otherwise. The API is public on pyspark 3.5+, which is our minimum.
         """
-        import pyarrow as pa
-
         client = getattr(spark, "client", None)
         plan = getattr(sdf, "_plan", None)
-        if client is not None and plan is not None and hasattr(client, "to_table_as_iterator"):
-            for table, _ in client.to_table_as_iterator(plan, observations={}):
-                for batch in table.to_batches():
-                    yield batch
-            return
-        if hasattr(sdf, "toArrow"):
-            table = sdf.toArrow()
+        if client is None or plan is None or not hasattr(client, "to_table_as_iterator"):
+            raise QueryError(
+                "Spark Connect streaming API (client.to_table_as_iterator) is "
+                "unavailable — pyspark>=3.5 is required. Upgrade pyspark so "
+                "the client-side byte cap remains effective."
+            )
+        for table, _ in client.to_table_as_iterator(plan, observations={}):
             for batch in table.to_batches():
                 yield batch
-            return
-        df = sdf.toPandas()
-        yield pa.RecordBatch.from_pandas(df)
 
     def _execute(self, sql: str) -> pd.DataFrame:
         if self._spark is None:
@@ -564,6 +563,7 @@ class SparkConnectRunner:
         logger.info(f"Spark SQL: {sql[:200]}")
         try:
             sdf = self._spark.sql(sql)
+            columns = list(getattr(sdf, "columns", []) or [])
             iterator = self._iter_arrow_batches(self._spark, sdf)
             batches: list[pa.RecordBatch] = []
             schema: pa.Schema | None = None
@@ -571,26 +571,41 @@ class SparkConnectRunner:
             truncated = False
             try:
                 for batch in iterator:
+                    # Check the cap *before* appending so the returned result
+                    # is a true upper bound (cap=0 → zero-row truncated result).
+                    if total_bytes + batch.nbytes > self._max_result_bytes:
+                        truncated = True
+                        break
                     if schema is None:
                         schema = batch.schema
                     batches.append(batch)
                     total_bytes += batch.nbytes
-                    if total_bytes > self._max_result_bytes:
-                        truncated = True
-                        break
             finally:
                 close = getattr(iterator, "close", None)
                 if close is not None:
                     try:
                         close()
                     except Exception:
+                        # Iterator cleanup is best-effort; don't mask any
+                        # primary exception raised during iteration.
                         pass
+        except QueryError:
+            raise
         except Exception as e:
             logger.debug(f"Spark SQL error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
 
         if not batches:
-            return pd.DataFrame()
+            # No data, but preserve the column list so downstream UI and
+            # schema logic still sees the shape of the result.
+            df = pd.DataFrame(columns=columns)
+            if truncated:
+                df.attrs["truncated"] = True
+                df.attrs["truncation_reason"] = (
+                    f"Result exceeded {self._max_result_bytes:,} bytes before any "
+                    "batch could be returned. Add aggregation or a tighter LIMIT."
+                )
+            return df
         table = pa.Table.from_batches(batches, schema=schema)
         df = table.to_pandas()
         if truncated:
@@ -625,6 +640,8 @@ class SparkConnectRunner:
                 try:
                     add_tag(tag)
                 except Exception:
+                    # Tag API is best-effort: without it we lose server-side
+                    # cancellation on timeout, but the query still runs.
                     pass
             try:
                 return self._execute(sql)
@@ -633,6 +650,7 @@ class SparkConnectRunner:
                     try:
                         remove_tag(tag)
                     except Exception:
+                        # Ancillary cleanup; never mask the primary result.
                         pass
 
         try:

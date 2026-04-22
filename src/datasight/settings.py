@@ -15,6 +15,7 @@ from typing import Literal, cast
 from dotenv import load_dotenv
 
 from datasight.exceptions import ConfigurationError
+from datasight.runner import DEFAULT_SPARK_MAX_RESULT_BYTES
 
 
 def _safe_int(value: str, default: int) -> int:
@@ -273,7 +274,7 @@ class DatabaseSettings:
     # Spark Connect settings
     spark_remote: str = "sc://localhost:15002"
     spark_token: str | None = None
-    spark_max_result_bytes: int = 100 * 1024 * 1024
+    spark_max_result_bytes: int = DEFAULT_SPARK_MAX_RESULT_BYTES
 
     @property
     def sql_dialect(self) -> str:
@@ -395,7 +396,8 @@ class Settings:
                 spark_remote=os.environ.get("SPARK_REMOTE", "sc://localhost:15002"),
                 spark_token=os.environ.get("SPARK_TOKEN") or None,
                 spark_max_result_bytes=_safe_int(
-                    os.environ.get("SPARK_MAX_RESULT_BYTES", ""), 100 * 1024 * 1024
+                    os.environ.get("SPARK_MAX_RESULT_BYTES", ""),
+                    DEFAULT_SPARK_MAX_RESULT_BYTES,
                 ),
             ),
             app=AppSettings(
