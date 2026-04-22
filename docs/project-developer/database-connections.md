@@ -188,17 +188,16 @@ FLIGHT_SQL_URI=grpc+tls://flight.example.com:31337
 FLIGHT_SQL_TOKEN=your_bearer_token
 ```
 
-## Spark (via Spark Connect)
+## Spark
 
-Spark is for multi-terabyte datasets that live on a Spark cluster. The
-cluster must have the Spark Connect server enabled (Spark 3.4+; we require
-pyspark 3.5+ on the client). Install the extra dependency:
+Spark connects to an Apache Spark cluster over Spark Connect. Use this
+for multi-terabyte datasets that won't fit on a single machine. See
+[Connect to an Apache Spark backend](../end-user/how-to/connect-spark.md)
+for the full walkthrough.
 
 ```bash
 pip install 'datasight[spark]'
 ```
-
-Then configure the connection:
 
 ```bash
 DB_MODE=spark
@@ -207,34 +206,12 @@ SPARK_TOKEN=your_bearer_token        # optional
 SPARK_MAX_RESULT_BYTES=104857600     # optional, default 100 MiB
 ```
 
-### Why the byte cap
-
-At multi-TB scale, a careless `SELECT * FROM fact_table` could try to pull
-terabytes of Arrow data back to the client. The client streams Arrow
-batches and stops once the accumulated bytes exceed `SPARK_MAX_RESULT_BYTES`.
-Truncated results are flagged in the UI and in the LLM's tool output so
-the agent can tell the user "partial result — add aggregation" rather than
-misreporting them as the full answer.
-
-- Default cap: **100 MiB** on the wire (≈250–500 MiB after pandas inflation).
-- Truncation is safe: cancelling the query server-side via Spark Connect's
-  interrupt API so it stops consuming cluster resources.
-
-### Schema introspection at TB scale
-
-- Table discovery uses `spark.catalog.listTables()` — fast, metadata-only.
-- Row counts are **skipped** for Spark tables. A naive `SELECT COUNT(*)` on
-  a partitioned multi-TB table can kick off a full-cluster job at project
-  load, before the user even asks a question. Row counts simply won't
-  appear in the schema prompt for Spark backends.
-
-### Write queries that the cluster can serve cheaply
-
-datasight's system prompt for Spark already tells the LLM to aggregate,
-avoid `SELECT *`, include partition predicates, and always add `LIMIT`
-for non-aggregated queries. When you write `schema_description.md`,
-document your partition columns explicitly — e.g. "this table is
-partitioned by `report_date` (daily)" — so the agent uses them as filters.
+The client streams Arrow batches and truncates results above
+`SPARK_MAX_RESULT_BYTES` to protect the web server from OOMing. Row
+counts are skipped at introspection time (a naive `SELECT COUNT(*)` on
+a multi-TB partitioned table would kick off a full-cluster job); document
+your partition columns in `schema_description.md` so the agent uses them
+as predicates.
 
 ## All environment variables
 

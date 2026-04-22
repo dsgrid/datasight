@@ -81,6 +81,7 @@ nav:
           - Review the SQL query log: end-user/how-to/review-query-log.md
           - Run on an HPC compute node: end-user/how-to/run-on-hpc.md
           - Connect to a remote Flight SQL backend: end-user/how-to/connect-flight-sql.md
+          - Connect to an Apache Spark backend: end-user/how-to/connect-spark.md
       - Tutorials:
           - Explore US electricity generation (EIA): end-user/tutorials/getting-started.md
           - Explore EV charging demand (TEMPO): end-user/tutorials/tempo.md
