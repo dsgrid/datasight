@@ -33,15 +33,13 @@ DATASETS = {
 SCHEMA_DESCRIPTION = """\
 # dsgrid TEMPO — EV Charging Demand Projections
 
-This database contains projected electric vehicle (EV) charging demand from the
-[TEMPO project](https://github.com/dsgrid/dsgrid-project-StandardScenarios/blob/main/tempo_project/README.md),
-part of NLR's [dsgrid](https://www.nrel.gov/analysis/dsgrid.html) framework.
-The data covers 2024–2050 and models hourly county-level charging load for
-light-duty passenger EVs across the contiguous United States.
+Three DuckDB tables derived from the dsgrid TEMPO project's OEDI
+publications. All energy values are in **MWh** (measured at the electrical
+meter). See the "Additional project context" section at the bottom for the
+full upstream README with scenarios, vehicle types, dimensions, bounding-case
+assumptions, and timestamp details.
 
-All energy values are in **MWh** (measured at the electrical meter).
-
-## Tables
+## Tables in this database
 
 ### charging_profiles
 Hourly EV charging demand aggregated to **census division** level.
@@ -49,10 +47,10 @@ One row per scenario × model year × census division × hour.
 
 | Column | Description |
 |--------|-------------|
-| scenario | Adoption scenario (see below) |
+| scenario | Adoption scenario — column values: `reference`, `efs_high_ldv`, `ldv_sales_evs_2035` |
 | time_est | Hourly timestamp (EST, 2012 meteorological year) |
 | five_year_intervals | Model year (2025, 2030, 2035, 2040, 2045, 2050) |
-| census_division | US Census division (e.g. pacific, mountain, south_atlantic) |
+| census_division | One of: east_north_central, east_south_central, middle_atlantic, mountain, new_england, pacific, south_atlantic, west_north_central, west_south_central |
 | value | Charging demand in MWh |
 
 ### annual_state
@@ -61,11 +59,11 @@ One row per scenario × model year × state × subsector.
 
 | Column | Description |
 |--------|-------------|
-| scenario | Adoption scenario |
+| scenario | Adoption scenario (same values as above) |
 | year | Weather year (2012) |
 | tempo_project_model_years | Projection year (biennial 2024–2050) |
 | state | Two-letter state code |
-| subsector | Vehicle type (see below) |
+| subsector | Vehicle type — one of: `bev_compact`, `bev_midsize`, `bev_suv`, `bev_pickup`, `phev_compact`, `phev_midsize`, `phev_suv`, `phev_pickup` |
 | value | Annual charging demand in MWh |
 
 ### annual_county
@@ -77,43 +75,9 @@ One row per scenario × model year × county × subsector.
 | scenario | Adoption scenario |
 | year | Weather year (2012) |
 | five_year_intervals | Model year (5-year intervals, 2025–2050) |
-| county | FIPS county code (e.g. 06037 = Los Angeles County, CA) |
-| subsector | Vehicle type |
+| county | FIPS county code (e.g. `06037` = Los Angeles County, CA) |
+| subsector | Vehicle type (same values as annual_state) |
 | value | Annual charging demand in MWh |
-
-## Scenarios
-
-Three EV adoption scenarios model different market trajectories:
-
-- **reference** — AEO Reference Case: baseline EV adoption following current trends
-- **efs_high_ldv** — EFS High Electrification: aggressive electrification of light-duty vehicles
-- **ldv_sales_evs_2035** — All EV Sales by 2035: all new light-duty vehicle sales are electric by 2035
-
-## Vehicle Types (subsector)
-
-Eight categories combining drivetrain and body style:
-
-- **bev_compact**, **bev_midsize**, **bev_suv**, **bev_pickup** — Battery electric vehicles
-- **phev_compact**, **phev_midsize**, **phev_suv**, **phev_pickup** — Plug-in hybrid electric vehicles
-
-## Census Divisions
-
-Nine US Census divisions in charging_profiles:
-east_north_central, east_south_central, middle_atlantic, mountain,
-new_england, pacific, south_atlantic, west_north_central, west_south_central.
-
-## Key Assumptions
-
-The charging profiles assume **ubiquitous charger access** (drivers can charge
-whenever not driving) and **immediate charging** (vehicles plug in right after
-trips). This represents a bounding case that maximizes vehicle state of charge.
-
-## Timestamps
-
-- Timestamps use 2012 actual meteorological year weather data
-- The time_est column is in EST (Eastern Standard Time)
-- Leap day is included (8,784 hours per year)
-- Daylight savings adjustments are incorporated
 
 ## Query defaults
 
@@ -149,6 +113,14 @@ trips). This represents a bounding case that maximizes vehicle state of charge.
 - Compare scenarios to see how adoption assumptions affect projected demand
 - BEV vs PHEV split shows the drivetrain mix impact on grid load
 - This is a DuckDB database — use DuckDB SQL syntax
+
+## Additional project context
+
+Upstream project README (dsgrid dimensions, OEDI publication details,
+scenario descriptions, bounding-case charging assumptions, weather year,
+timestamp conventions):
+
+[include:dsgrid TEMPO project README](https://raw.githubusercontent.com/dsgrid/dsgrid-project-StandardScenarios/main/tempo_project/README.md)
 """
 
 EXAMPLE_QUERIES = """\

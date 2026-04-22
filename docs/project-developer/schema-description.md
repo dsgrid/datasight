@@ -57,6 +57,39 @@ Don't repeat what introspection discovers:
 
 Focus on the *meaning* behind the schema, not the schema itself.
 
+## Pull in external references
+
+Use `[include:Title](https://…)` anywhere in the file to fetch a web page
+at project-load time and splice its content into the system prompt. Useful
+for pointing the LLM at fuel-code glossaries, data-source documentation,
+or anything else that lives elsewhere and changes occasionally.
+
+```markdown
+Fuel code meanings come from the EIA's
+[include:Electricity Monthly Glossary](https://www.eia.gov/tools/glossary/index.php?id=electricity).
+```
+
+- Only HTML, plain-text, and JSON responses are inlined. PDFs, images,
+  and other binary formats are skipped (the directive stays as a plain
+  markdown link so the LLM still sees the pointer). Link to an HTML or
+  text rendering of the reference when one exists.
+- HTML is stripped to plain text.
+- Each URL is capped at 20 KB (override with the `SCHEMA_INCLUDE_MAX_BYTES`
+  env var) and fetched once per project load.
+- If a fetch fails, the original `[include:…](url)` markdown link is left
+  in place so the LLM still sees the pointer.
+- Set `SCHEMA_INCLUDE_MAX_BYTES=0` to skip resolution entirely. The
+  directives stay in the prompt as plain markdown links, which is the
+  escape hatch when a linked page pushes the system prompt past a
+  small-context model's token limit (common on the free GitHub Models
+  tier).
+- Only public hosts are fetched. URLs pointing at `localhost`, private
+  IP ranges, or `.internal`/`.local` hostnames are blocked to mitigate
+  SSRF from a malicious project file. Set
+  `SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS=1` to opt in when a project
+  genuinely references an internal documentation server. Redirects are
+  not followed — link to the final URL directly.
+
 ## File location
 
 By default, datasight looks for `schema_description.md` in the project

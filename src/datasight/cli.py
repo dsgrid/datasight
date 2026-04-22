@@ -128,6 +128,7 @@ async def _run_ask_pipeline(
     from datasight.prompts import build_system_prompt
     from datasight.query_log import QueryLogger
     from datasight.schema import filter_tables, format_schema_context, introspect_schema
+    from datasight.schema_links import resolve_schema_description_links
     from datasight.sql_validation import build_measure_rule_map, build_schema_map
 
     llm_client = create_llm_client(
@@ -165,6 +166,7 @@ async def _run_ask_pipeline(
         ],
     )
     user_desc = load_schema_description(None, project_dir)
+    user_desc = await resolve_schema_description_links(user_desc)
     example_queries = load_example_queries(None, project_dir)
     measure_overrides = load_measure_overrides(None, project_dir)
     time_series_configs = load_time_series_config(None, project_dir)
@@ -2258,6 +2260,7 @@ def verify(project_dir, model, queries_path, verbose):
         from datasight.config import format_example_queries, load_schema_description
         from datasight.prompts import build_system_prompt
         from datasight.schema import format_schema_context, introspect_schema
+        from datasight.schema_links import resolve_schema_description_links
         from datasight.verify import run_ambiguity_analysis, run_verification
 
         llm_client = create_llm_client(
@@ -2272,6 +2275,7 @@ def verify(project_dir, model, queries_path, verbose):
         # Build system prompt
         tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
         user_desc = load_schema_description(None, project_dir)
+        user_desc = await resolve_schema_description_links(user_desc)
         schema_text = format_schema_context(tables, user_desc)
         schema_text += format_example_queries(queries)
 
