@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -23,7 +24,7 @@ import pandas as pd
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -102,7 +103,36 @@ async def lifespan(application: FastAPI):  # noqa: ARG001
     yield
 
 
-app = FastAPI(title="datasight", lifespan=lifespan)
+def _sanitize_non_finite(value: Any) -> Any:
+    # Starlette's JSONResponse encodes with allow_nan=False, which rejects NaN
+    # and ±Inf. Persisted event logs (written with default json.dumps) and
+    # pandas-derived payloads can carry these values into responses, so we
+    # replace them with None before encoding.
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _sanitize_non_finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_non_finite(v) for v in value]
+    return value
+
+
+class SafeJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            _sanitize_non_finite(content),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+
+app = FastAPI(
+    title="datasight",
+    lifespan=lifespan,
+    default_response_class=SafeJSONResponse,
+)
 
 _BASE_DIR = Path(__file__).resolve().parent
 _INDEX_HTML = _BASE_DIR / "templates" / "index.html"

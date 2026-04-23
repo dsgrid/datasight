@@ -15,6 +15,7 @@ from hashlib import blake2b
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -178,6 +179,21 @@ def coerce_dates(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _series_to_json_list(series: pd.Series) -> list[Any]:
+    # Starlette's JSONResponse uses allow_nan=False, so NaN/NaT/Inf would crash
+    # serialization. Convert them to None here. Boolean-indexed assignment on
+    # an object-dtype Series preserves None rather than coercing it back to NaN.
+    if pd.api.types.is_datetime64_any_dtype(series):
+        out = series.dt.strftime("%Y-%m-%dT%H:%M:%S").astype(object)
+        out[series.isna()] = None
+        return out.tolist()
+    if pd.api.types.is_float_dtype(series):
+        out = series.astype(object)
+        out[~np.isfinite(series)] = None
+        return out.tolist()
+    return series.tolist()
+
+
 def split_traces_by_group(traces: list[dict[str, Any]], df: pd.DataFrame) -> list[dict[str, Any]]:
     """Auto-split traces when ``name`` references a DataFrame column."""
     columns = set(df.columns)
@@ -203,11 +219,7 @@ def split_traces_by_group(traces: list[dict[str, Any]], df: pd.DataFrame) -> lis
             new_trace["name"] = str(group_value)
             for k in col_keys:
                 col_name = trace[k]
-                series = sub_df[col_name]
-                if pd.api.types.is_datetime64_any_dtype(series):
-                    new_trace[k] = series.dt.strftime("%Y-%m-%dT%H:%M:%S").tolist()
-                else:
-                    new_trace[k] = series.tolist()
+                new_trace[k] = _series_to_json_list(sub_df[col_name])
             expanded.append(new_trace)
 
     return expanded
@@ -229,10 +241,7 @@ def resolve_plotly_spec(spec: dict[str, Any], df: pd.DataFrame) -> dict[str, Any
         if isinstance(val, list):
             return [_resolve_value(item) for item in val]
         if isinstance(val, str) and val in columns:
-            series = df[val]
-            if pd.api.types.is_datetime64_any_dtype(series):
-                return series.dt.strftime("%Y-%m-%dT%H:%M:%S").tolist()
-            return series.tolist()
+            return _series_to_json_list(df[val])
         return val
 
     resolved: dict[str, Any] = {"data": []}
