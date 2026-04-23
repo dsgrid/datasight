@@ -25,8 +25,10 @@
   let passing = $derived(checks.filter((c) => c.ok));
   let projectName = $derived(
     data?.project_loaded
-      ? ((data?.project_dir as string) || "Project loaded").split("/").pop() ||
-        "Project"
+      ? ((data?.project_dir as string) || "Project loaded")
+          .replace(/[\\/]+$/, "")
+          .split(/[\\/]/)
+          .pop() || "Project"
       : "No project loaded",
   );
   let dbMode = $derived((data?.db_mode as string) || null);

@@ -79,7 +79,7 @@ pyspark. Install the extra on your laptop:
 pip install 'datasight[spark]'
 ```
 
-This adds `pyspark[connect]>=3.5` to your environment. No Java is
+This adds `pyspark[connect]>=4.0,<5` to your environment. No Java is
 required — the Connect client is pure Python and talks to the cluster
 over gRPC.
 

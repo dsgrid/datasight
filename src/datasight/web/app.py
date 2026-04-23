@@ -2128,12 +2128,17 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         # Route file-backed exploration through whichever backend the
         # current settings point at (Spark when DB_MODE=spark, else DuckDB).
         from datasight.explore import create_files_session_for_settings
+        from datasight.runner import SparkConnectRunner
 
         runner, tables_info = create_files_session_for_settings(file_paths, settings.database)
         state.sql_runner = runner
         state.is_ephemeral = True
         state.ephemeral_tables_info = tables_info
-        state.sql_dialect = settings.database.sql_dialect
+        # Dialect must match the effective runner, not the configured DB_MODE:
+        # for DB_MODE=postgres/flightsql/sqlite the file session falls back to
+        # an in-memory DuckDB, so SQL must be generated as DuckDB rather than
+        # the configured backend's dialect.
+        state.sql_dialect = "spark" if isinstance(runner, SparkConnectRunner) else "duckdb"
         state.project_loaded = True
 
         # Introspect schema

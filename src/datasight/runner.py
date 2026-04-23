@@ -21,6 +21,7 @@ import pandas as pd
 from loguru import logger
 
 from datasight.exceptions import ConnectionError, QueryError, QueryTimeoutError
+from datasight.schema_types import ColumnInfo
 
 # Default timeout for SQL queries (seconds). Can be overridden per-runner.
 DEFAULT_QUERY_TIMEOUT: float = 120.0
@@ -755,7 +756,7 @@ class SparkConnectRunner:
         """
         return None
 
-    def get_columns(self, table: str) -> list[Any]:
+    def get_columns(self, table: str) -> list[ColumnInfo]:
         """Return ``ColumnInfo`` for ``table`` via ``spark.catalog.listColumns()``.
 
         The generic SQL probes in ``schema._get_columns`` (DESCRIBE
@@ -764,8 +765,6 @@ class SparkConnectRunner:
         PARSE_SYNTAX_ERROR or TABLE_OR_VIEW_NOT_FOUND. Spark's catalog
         API returns the same information without any SQL.
         """
-        from datasight.schema import ColumnInfo
-
         if self._spark is None:
             raise ConnectionError("SparkConnectRunner is closed")
         try:
@@ -797,16 +796,32 @@ class SparkConnectRunner:
         per Arrow batch; we skip the schema and flatten each table to its
         underlying batches. pyspark 4.0 also requires a ``Plan`` protobuf, so
         we convert the DataFrame's ``LogicalPlan`` with ``to_proto(client)``.
+
+        Wraps the underlying gRPC iterator in a try/finally so early-exit on
+        truncation/timeout releases the server stream instead of leaving it
+        open until GC.
         """
         import pyarrow as pa
 
         client = spark.client
         plan_proto = sdf._plan.to_proto(client)
-        for item in client.to_table_as_iterator(plan_proto, observations={}):
-            if not isinstance(item, pa.Table):
-                continue
-            for batch in item.to_batches():
-                yield batch
+        table_iter = client.to_table_as_iterator(plan_proto, observations={})
+        try:
+            for item in table_iter:
+                if not isinstance(item, pa.Table):
+                    continue
+                for batch in item.to_batches():
+                    yield batch
+        finally:
+            for name in ("close", "cancel"):
+                method = getattr(table_iter, name, None)
+                if callable(method):
+                    try:
+                        method()
+                    except Exception:
+                        # Best-effort cleanup; do not mask iteration errors.
+                        pass
+                    break
 
     def _execute(self, sql: str) -> pd.DataFrame:
         if self._spark is None:
@@ -907,21 +922,40 @@ class SparkConnectRunner:
                         # Ancillary cleanup; never mask the primary result.
                         pass
 
+        # Run on a dedicated single-worker executor rather than the shared
+        # asyncio thread pool. pyspark Connect stores tag state per-thread
+        # (ThreadLocal), so reusing a worker thread that was mid-query when
+        # we timed out could leak tags or other session state into the next
+        # query. A dedicated executor isolates this query's thread entirely
+        # — on timeout we call shutdown(wait=False) so the stuck thread is
+        # not recycled, and it exits naturally once the gRPC call returns
+        # (typically via the interruptTag below).
+        import concurrent.futures
+
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="spark-query"
+        )
+        loop = asyncio.get_running_loop()
         try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(_exec),
-                timeout=self._query_timeout,
-            )
-        except TimeoutError:
-            if interrupt_tag is not None:
-                try:
-                    interrupt_tag(tag)
-                except Exception:
-                    logger.warning("Failed to interrupt Spark query on timeout")
-            raise QueryTimeoutError(
-                f"Query timed out after {self._query_timeout:.0f}s. "
-                "Try a simpler query or add filters to reduce the result set."
-            )
+            future = loop.run_in_executor(executor, _exec)
+            try:
+                return await asyncio.wait_for(future, timeout=self._query_timeout)
+            except TimeoutError:
+                if interrupt_tag is not None:
+                    try:
+                        interrupt_tag(tag)
+                    except Exception:
+                        logger.warning("Failed to interrupt Spark query on timeout")
+                raise QueryTimeoutError(
+                    f"Query timed out after {self._query_timeout:.0f}s. "
+                    "Try a simpler query or add filters to reduce the result set."
+                )
+        finally:
+            # wait=False: if the worker thread is still blocked on a gRPC
+            # call, do not block shutdown. The thread will exit after the
+            # call returns (and _exec's finally clears the tag). The key
+            # guarantee is that this thread never serves another query.
+            executor.shutdown(wait=False)
 
 
 class CachingSqlRunner:

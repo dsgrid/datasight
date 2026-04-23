@@ -4,27 +4,21 @@ system tables.
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
 from loguru import logger
 
 from datasight.runner import RunSql, SQLiteRunner
+from datasight.schema_types import ColumnInfo, TableInfo
 
-
-@dataclass
-class ColumnInfo:
-    name: str
-    dtype: str
-    nullable: bool = True
-
-
-@dataclass
-class TableInfo:
-    name: str
-    columns: list[ColumnInfo] = field(default_factory=list)
-    row_count: int | None = None
+__all__ = [
+    "ColumnInfo",
+    "TableInfo",
+    "filter_tables",
+    "format_schema_context",
+    "introspect_schema",
+]
 
 
 def filter_tables(
