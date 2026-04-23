@@ -12,9 +12,9 @@ where you can ask questions in natural language. The agent writes SQL, runs
 queries, and generates interactive Plotly visualizations.
 
 Supports **DuckDB**, **PostgreSQL**, **SQLite**, and **Flight SQL** databases.
-Also queries local **CSV** and **Parquet** files directly — no database setup
-required. Supports **Anthropic Claude** (default), **GitHub Models** (open
-source), and **Ollama** (local) as LLM backends.
+Also queries local **CSV**, **Parquet**, and **Excel** (.xlsx) files directly —
+no database setup required. Supports **Anthropic Claude** (default),
+**GitHub Models** (open source), and **Ollama** (local) as LLM backends.
 
 ## Quick start
 
@@ -35,7 +35,7 @@ datasight run
 
 Open http://localhost:8084 and start asking questions.
 
-### Explore CSV or Parquet files with no setup
+### Explore CSV, Parquet, or Excel files with no setup
 
 ```bash
 # Launch the web UI with no project, then paste a file or directory path
@@ -64,7 +64,7 @@ datasight ask --file questions.txt --output-dir batch-output
 - **Natural language queries** — ask questions in English, get SQL + results
 - **Interactive charts** — Plotly visualizations with chart-type switching
 - **Multiple databases** — DuckDB, PostgreSQL, SQLite, and Flight SQL
-- **Query files directly** — point at a local CSV or Parquet file (or directory) and start asking questions; datasight creates DuckDB views on the fly
+- **Query files directly** — point at a local CSV, Parquet, or Excel file (or directory) and start asking questions; datasight creates DuckDB views (or one table per Excel sheet) on the fly
 - **Headless CLI** — `datasight ask` runs queries without a web server
 - **Deterministic CLI workflows** — profile, quality, dimension, trend, and recipe commands that do not require an LLM
 - **Schema browser** — sidebar with tables, columns, and example queries

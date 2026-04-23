@@ -189,9 +189,12 @@ def _series_to_json_list(series: pd.Series) -> list[Any]:
         return out.tolist()
     if pd.api.types.is_float_dtype(series):
         out = series.astype(object)
-        out[~np.isfinite(series)] = None
+        out[series.isna()] = None
+        out[~np.isfinite(series.fillna(np.nan).astype(float))] = None
         return out.tolist()
-    return series.tolist()
+    out = series.astype(object)
+    out[series.isna()] = None
+    return out.tolist()
 
 
 def split_traces_by_group(traces: list[dict[str, Any]], df: pd.DataFrame) -> list[dict[str, Any]]:

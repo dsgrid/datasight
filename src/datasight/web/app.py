@@ -108,12 +108,14 @@ def _sanitize_non_finite(value: Any) -> Any:
     # and ±Inf. Persisted event logs (written with default json.dumps) and
     # pandas-derived payloads can carry these values into responses, so we
     # replace them with None before encoding.
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
     if isinstance(value, dict):
         return {k: _sanitize_non_finite(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_sanitize_non_finite(v) for v in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if pd.isna(value):
+        return None
     return value
 
 
@@ -2527,7 +2529,7 @@ async def _write_measure_overrides_scaffold(
 
 @app.get("/api/explore/scan-cwd")
 async def explore_scan_cwd(state: AppState = Depends(get_state)):
-    """Scan the server's working directory for CSV/Parquet files.
+    """Scan the server's working directory for CSV/Parquet/Excel files.
 
     Returns an empty list once a project or ephemeral session is loaded so
     the landing page only surfaces discovered files on a fresh launch.
@@ -3646,16 +3648,20 @@ async def list_conversations(state: AppState = Depends(get_state)):
 async def get_conversation(session_id: str, state: AppState = Depends(get_state)):
     """Return the event log for a conversation (for replay)."""
     if state.conversations is None:
-        return {"events": [], "title": "Untitled", "dashboard": _empty_dashboard()}
+        return SafeJSONResponse(
+            {"events": [], "title": "Untitled", "dashboard": _empty_dashboard()}
+        )
     data = state.conversations.get(session_id)
     dashboard = data.get("dashboard")
     if not isinstance(dashboard, dict):
         dashboard = _empty_dashboard()
-    return {
-        "events": data["events"],
-        "title": data.get("title", "Untitled"),
-        "dashboard": dashboard,
-    }
+    return SafeJSONResponse(
+        {
+            "events": data["events"],
+            "title": data.get("title", "Untitled"),
+            "dashboard": dashboard,
+        }
+    )
 
 
 @app.get("/api/conversations/{session_id}/events/{event_index}/plotly-spec")
@@ -3667,18 +3673,20 @@ async def get_conversation_plotly_spec(
     """Return the Plotly spec for a persisted chart event."""
     validate_session_id(session_id)
     if state.conversations is None:
-        return {"plotly_spec": None}
+        return SafeJSONResponse({"plotly_spec": None})
     data = state.conversations.get(session_id)
     events = data.get("events", [])
     if event_index < 0 or event_index >= len(events):
-        return {"plotly_spec": None}
+        return SafeJSONResponse({"plotly_spec": None})
     event = events[event_index]
     if event.get("event") != EventType.TOOL_RESULT:
-        return {"plotly_spec": None}
+        return SafeJSONResponse({"plotly_spec": None})
     event_data = event.get("data") or {}
-    return {
-        "plotly_spec": event_data.get("plotly_spec") or event_data.get("plotlySpec"),
-    }
+    return SafeJSONResponse(
+        {
+            "plotly_spec": event_data.get("plotly_spec") or event_data.get("plotlySpec"),
+        }
+    )
 
 
 @app.post("/api/chat")

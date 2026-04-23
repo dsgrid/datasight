@@ -1,15 +1,17 @@
 """
 Explore functionality for datasight.
 
-Provides utilities for quickly exploring CSV and Parquet files without
-setting up a full project. Creates ephemeral DuckDB sessions with views
-pointing to user files, or routes through Spark Connect when the
+Provides utilities for quickly exploring CSV, Parquet, and Excel files
+without setting up a full project. Creates ephemeral DuckDB sessions
+with views pointing to user files (Excel workbooks are materialized as
+tables, one per sheet), or routes through Spark Connect when the
 current project is configured with ``DB_MODE=spark``.
 """
 
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +40,7 @@ def detect_file_type(path: str) -> str | None:
     Returns
     -------
     One of: "csv", "parquet", "hive_parquet", "csv_dir", "duckdb", "sqlite",
-    or None if not recognized.
+    "xlsx", or None if not recognized.
     """
     p = Path(path)
 
@@ -51,6 +53,8 @@ def detect_file_type(path: str) -> str | None:
             return "csv"
         if suffix == ".parquet":
             return "parquet"
+        if suffix == ".xlsx":
+            return "xlsx"
         if suffix in (".sqlite", ".sqlite3"):
             return "sqlite"
         if suffix == ".duckdb":
@@ -75,12 +79,19 @@ def detect_file_type(path: str) -> str | None:
     return None
 
 
+_SCAN_SUFFIX_TYPES = {
+    ".csv": "csv",
+    ".parquet": "parquet",
+    ".xlsx": "xlsx",
+}
+
+
 def scan_directory_for_data_files(
     directory: str | Path,
     *,
     max_files: int = 100,
 ) -> tuple[list[dict], bool]:
-    """Find CSV and Parquet files at the top level of ``directory``.
+    """Find CSV, Parquet, and Excel files at the top level of ``directory``.
 
     Hidden files (dot-prefixed) and unreadable entries are skipped. Only
     single-file entries are returned; nested directories are ignored so the
@@ -89,8 +100,8 @@ def scan_directory_for_data_files(
     Returns
     -------
     Tuple of ``(files, truncated)`` where each file dict has ``path``, ``name``,
-    ``type`` (``"csv"`` or ``"parquet"``), and ``size_bytes``. ``truncated`` is
-    ``True`` when more than ``max_files`` matches were present.
+    ``type`` (``"csv"``, ``"parquet"``, or ``"xlsx"``), and ``size_bytes``.
+    ``truncated`` is ``True`` when more than ``max_files`` matches were present.
     """
     root = Path(directory)
     if not root.is_dir():
@@ -112,7 +123,7 @@ def scan_directory_for_data_files(
         except OSError:
             continue
         suffix = entry.suffix.lower()
-        if suffix not in (".csv", ".parquet"):
+        if suffix not in _SCAN_SUFFIX_TYPES:
             continue
         matches.append(entry)
 
@@ -127,7 +138,7 @@ def scan_directory_for_data_files(
             {
                 "path": str(entry.resolve()),
                 "name": entry.name,
-                "type": "csv" if entry.suffix.lower() == ".csv" else "parquet",
+                "type": _SCAN_SUFFIX_TYPES[entry.suffix.lower()],
                 "size_bytes": size,
             }
         )
@@ -191,6 +202,80 @@ def create_view_sql(table_name: str, file_path: str, file_type: str) -> str:
         return f"CREATE VIEW {quoted_name} AS SELECT * FROM read_csv_auto('{glob_path}')"
     else:
         raise ValueError(f"Unknown file type: {file_type}")
+
+
+def _materialize_excel_sheet(
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str,
+    file_path: str,
+    sheet_name: str,
+) -> None:
+    """Read one sheet from an Excel workbook and create a DuckDB table for it.
+
+    Excel files can't be queried lazily the way Parquet/CSV can, so the sheet
+    is loaded into memory via pandas and copied into a persistent table.
+    """
+    import pandas as pd
+
+    df = pd.read_excel(file_path, sheet_name=sheet_name)
+    tmp_name = f"__excel_tmp_{uuid.uuid4().hex}"
+    conn.register(tmp_name, df)
+    try:
+        conn.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM "{tmp_name}"')
+    finally:
+        conn.unregister(tmp_name)
+
+
+def _load_excel_workbook(
+    conn: duckdb.DuckDBPyConnection,
+    file_path: str,
+    existing_names: set[str],
+) -> list[dict]:
+    """Materialize every sheet of an Excel workbook as a DuckDB table.
+
+    Single-sheet workbooks get a table named after the file stem (matching the
+    CSV/Parquet UX). Multi-sheet workbooks get one table per sheet, named
+    after the sheet. Duplicate names collide-resolve with ``_2``, ``_3`` suffixes
+    via ``existing_names`` (mutated in place), same as other file types.
+    """
+    import pandas as pd
+
+    sheets: dict[str, Any] = pd.read_excel(file_path, sheet_name=None)
+    if not sheets:
+        raise ValueError(f"Excel file has no sheets: {file_path}")
+
+    single_sheet = len(sheets) == 1
+    file_stem = Path(file_path).stem
+    tables_info: list[dict] = []
+
+    for sheet_name, df in sheets.items():
+        base_name = file_stem if single_sheet else sheet_name
+        table_name = sanitize_table_name(base_name)
+        if table_name in existing_names:
+            counter = 2
+            while f"{table_name}_{counter}" in existing_names:
+                counter += 1
+            table_name = f"{table_name}_{counter}"
+
+        tmp_name = f"__excel_tmp_{uuid.uuid4().hex}"
+        conn.register(tmp_name, df)
+        try:
+            conn.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM "{tmp_name}"')
+        finally:
+            conn.unregister(tmp_name)
+
+        existing_names.add(table_name)
+        tables_info.append(
+            {
+                "name": table_name,
+                "path": file_path,
+                "type": "xlsx",
+                "sheet_name": sheet_name,
+            }
+        )
+        logger.info(f"Created table '{table_name}' from Excel sheet '{sheet_name}' in {file_path}")
+
+    return tables_info
 
 
 def _attach_duckdb_file(
@@ -338,6 +423,15 @@ def create_ephemeral_session(file_paths: list[str]) -> tuple[EphemeralDuckDBRunn
 
     # Handle other file types
     for path, file_type in other_files:
+        if file_type == "xlsx":
+            try:
+                xlsx_tables = _load_excel_workbook(conn, path, existing_names)
+                tables_info.extend(xlsx_tables)
+            except Exception as e:
+                errors.append(f"Failed to load Excel file {path}: {e}")
+                logger.warning(f"Failed to load Excel file {path}: {e}")
+            continue
+
         p = Path(path)
         base_name = p.stem if p.is_file() else p.name
         table_name = sanitize_table_name(base_name)
@@ -558,6 +652,14 @@ def add_files_to_connection(
                 errors.append(f"Failed to attach DuckDB file {path}: {e}")
             continue
 
+        if file_type == "xlsx":
+            try:
+                xlsx_tables = _load_excel_workbook(conn, path, names)
+                tables_info.extend(xlsx_tables)
+            except Exception as e:
+                errors.append(f"Failed to load Excel file {path}: {e}")
+            continue
+
         p = Path(path)
         base_name = p.stem if p.is_file() else p.name
         table_name = sanitize_table_name(base_name)
@@ -639,6 +741,8 @@ def build_persistent_duckdb(
                 conn.execute(
                     f'CREATE VIEW "{table["name"]}" AS SELECT * FROM "{alias}"."{source_table}"'
                 )
+            elif table["type"] == "xlsx":
+                _materialize_excel_sheet(conn, table["name"], table["path"], table["sheet_name"])
             else:
                 conn.execute(create_view_sql(table["name"], table["path"], table["type"]))
             logger.info(f"Created view '{table['name']}' in {db_path}")
@@ -731,6 +835,10 @@ def save_ephemeral_as_project(
                 view_name = table["name"]
                 db_conn.execute(
                     f'CREATE VIEW "{view_name}" AS SELECT * FROM "{alias}"."{source_table}"'
+                )
+            elif table["type"] == "xlsx":
+                _materialize_excel_sheet(
+                    db_conn, table["name"], table["path"], table["sheet_name"]
                 )
             else:
                 sql = create_view_sql(table["name"], table["path"], table["type"])

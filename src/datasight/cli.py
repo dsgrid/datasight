@@ -1408,8 +1408,8 @@ def _prepare_web_runtime(
         Use this when you want to fill in .env, schema_description.md,
         queries.yaml, and time_series.yaml by hand.
 
-        If you already have a DuckDB/SQLite database or CSV/Parquet files and
-        want datasight to inspect them and draft these files, use:
+        If you already have a DuckDB/SQLite database or CSV/Parquet/Excel
+        files and want datasight to inspect them and draft these files, use:
 
             datasight generate <file>...
         """
@@ -1767,13 +1767,16 @@ def demo_time_validation(project_dir: str):
             # Build ./database.duckdb from Parquet inputs
             datasight generate generation.parquet plants.parquet
 
-            # Build a custom project DuckDB from CSV or Parquet inputs
+            # Build ./database.duckdb from Excel inputs (one table per sheet)
+            datasight generate generation.xlsx
+
+            # Build a custom project DuckDB from CSV, Parquet, or Excel inputs
             datasight generate generation.csv --db-path project.duckdb
             datasight generate generation.parquet --db-path project.duckdb
 
         FILES are input data. --db-path is only the output DuckDB path used
-        when datasight needs to build a project database from CSV/Parquet or
-        mixed file inputs.
+        when datasight needs to build a project database from CSV/Parquet/Excel
+        or mixed file inputs.
         """
     )
 )
@@ -1798,9 +1801,9 @@ def demo_time_validation(project_dir: str):
     type=click.Path(),
     default=None,
     help=(
-        "Output DuckDB path to create from CSV/Parquet or mixed file inputs "
-        "(default: database.duckdb). Do not use this with a single existing "
-        "DuckDB or SQLite database; those are referenced directly."
+        "Output DuckDB path to create from CSV/Parquet/Excel or mixed file "
+        "inputs (default: database.duckdb). Do not use this with a single "
+        "existing DuckDB or SQLite database; those are referenced directly."
     ),
 )
 @click.option(
@@ -4124,8 +4127,8 @@ def dimensions(project_dir, table, output_format, output_path):
 def trends(files, project_dir, table, output_format, output_path):
     """Surface likely trend analyses and chart recommendations.
 
-    Run inside a configured project, or pass one or more Parquet, CSV, or
-    DuckDB files directly for a quick file-only trend scan.
+    Run inside a configured project, or pass one or more Parquet, CSV, Excel,
+    or DuckDB files directly for a quick file-only trend scan.
     """
     from rich.console import Console
     from datasight.config import load_measure_overrides
@@ -4275,7 +4278,7 @@ def trends(files, project_dir, table, output_format, output_path):
     help="Write the full report to a file instead of stdout.",
 )
 def inspect(files, output_format, output_path):
-    """Run all analyses on Parquet, CSV, or DuckDB files and print results.
+    """Run all analyses on Parquet, CSV, Excel, or DuckDB files and print results.
 
     Creates a file-backed session and runs profile, quality, measures,
     dimensions, trends, and recipes — printing everything to the console

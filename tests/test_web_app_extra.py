@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -840,6 +841,35 @@ def test_conversations_no_project(isolated_web_state: None) -> None:
         }
         assert client.post("/api/clear", json={"session_id": "x"}).json()["ok"] is True
         assert client.delete("/api/conversations").json()["ok"] is True
+
+
+def test_conversation_plotly_spec_sanitizes_pandas_missing_values(
+    isolated_web_state: None, project_dir: str
+) -> None:
+    with TestClient(web_app.app) as client:
+        client.post("/api/projects/load", json={"path": project_dir})
+        conv = web_app._state.conversations.get("nan_spec")
+        conv["events"] = [
+            {
+                "event": "tool_result",
+                "data": {
+                    "type": "chart",
+                    "plotly_spec": {
+                        "data": [
+                            {
+                                "type": "scatter",
+                                "y": [1.0, pd.NA, float("inf"), float("nan")],
+                            }
+                        ]
+                    },
+                },
+            }
+        ]
+
+        response = client.get("/api/conversations/nan_spec/events/0/plotly-spec")
+
+    assert response.status_code == 200
+    assert response.json()["plotly_spec"]["data"][0]["y"] == [1.0, None, None, None]
 
 
 # ---------------------------------------------------------------------------

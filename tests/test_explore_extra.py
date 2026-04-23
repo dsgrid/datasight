@@ -1,14 +1,24 @@
 """Extra tests for datasight.explore covering duplicate handling and error paths."""
 
 import duckdb
+import pandas as pd
 import pytest
 
 from datasight.exceptions import ConfigurationError
 from datasight.explore import (
     add_files_to_connection,
     create_ephemeral_session,
+    detect_file_type,
     save_ephemeral_as_project,
+    scan_directory_for_data_files,
 )
+
+
+def _write_xlsx(path, sheets: dict[str, pd.DataFrame]) -> None:
+    """Write a multi-sheet Excel workbook using the openpyxl engine."""
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        for name, df in sheets.items():
+            df.to_excel(writer, sheet_name=name, index=False)
 
 
 def test_multiple_duckdb_files_attached_with_aliases(tmp_path):
@@ -191,3 +201,139 @@ def test_save_project_with_mixed_duckdb_and_csv(tmp_path):
     assert "items" in schema_text
     assert "orders" in schema_text
     runner.close()
+
+
+def test_detect_file_type_xlsx(tmp_path):
+    xlsx = tmp_path / "data.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"x": [1]})})
+    assert detect_file_type(str(xlsx)) == "xlsx"
+
+
+def test_scan_directory_includes_xlsx(tmp_path):
+    csv = tmp_path / "a.csv"
+    csv.write_text("x\n1\n", encoding="utf-8")
+    xlsx = tmp_path / "b.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"y": [2]})})
+
+    files, _ = scan_directory_for_data_files(tmp_path)
+    by_name = {f["name"]: f["type"] for f in files}
+    assert by_name == {"a.csv": "csv", "b.xlsx": "xlsx"}
+
+
+def test_xlsx_single_sheet_uses_file_stem_as_table_name(tmp_path):
+    xlsx = tmp_path / "plants.xlsx"
+    _write_xlsx(
+        xlsx,
+        {"Sheet1": pd.DataFrame({"plant_id": [1, 2], "name": ["A", "B"]})},
+    )
+
+    runner, tables = create_ephemeral_session([str(xlsx)])
+    try:
+        assert [t["name"] for t in tables] == ["plants"]
+        assert tables[0]["type"] == "xlsx"
+        assert tables[0]["sheet_name"] == "Sheet1"
+        rows = runner._conn.execute(
+            "SELECT plant_id, name FROM plants ORDER BY plant_id"
+        ).fetchall()
+        assert rows == [(1, "A"), (2, "B")]
+    finally:
+        runner.close()
+
+
+def test_xlsx_multi_sheet_creates_one_table_per_sheet(tmp_path):
+    xlsx = tmp_path / "grid.xlsx"
+    _write_xlsx(
+        xlsx,
+        {
+            "generation": pd.DataFrame({"mwh": [10, 20]}),
+            "plants": pd.DataFrame({"plant_id": [1, 2, 3]}),
+        },
+    )
+
+    runner, tables = create_ephemeral_session([str(xlsx)])
+    try:
+        names = {t["name"] for t in tables}
+        assert names == {"generation", "plants"}
+        assert all(t["type"] == "xlsx" for t in tables)
+        assert runner._conn.execute("SELECT COUNT(*) FROM generation").fetchone()[0] == 2
+        assert runner._conn.execute("SELECT COUNT(*) FROM plants").fetchone()[0] == 3
+    finally:
+        runner.close()
+
+
+def test_xlsx_sheet_name_collision_with_existing_table(tmp_path):
+    """A multi-sheet workbook whose sheet name collides gets a _2 suffix."""
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n", encoding="utf-8")
+    xlsx = tmp_path / "wb.xlsx"
+    # Two sheets => sheet name (not file stem) is used for table naming
+    _write_xlsx(
+        xlsx,
+        {"generation": pd.DataFrame({"y": [9]}), "plants": pd.DataFrame({"id": [1]})},
+    )
+
+    runner, tables = create_ephemeral_session([str(csv), str(xlsx)])
+    try:
+        names = [t["name"] for t in tables]
+        assert "generation" in names  # from CSV
+        assert "generation_2" in names  # from xlsx sheet, deduped
+        assert "plants" in names
+    finally:
+        runner.close()
+
+
+def test_xlsx_single_sheet_collides_on_file_stem(tmp_path):
+    """A single-sheet workbook uses the file stem; collisions get a _2 suffix."""
+    csv = tmp_path / "report.csv"
+    csv.write_text("x\n1\n", encoding="utf-8")
+    xlsx = tmp_path / "report.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"y": [42]})})
+
+    runner, tables = create_ephemeral_session([str(csv), str(xlsx)])
+    try:
+        names = [t["name"] for t in tables]
+        assert "report" in names
+        assert "report_2" in names
+    finally:
+        runner.close()
+
+
+def test_add_files_to_connection_with_xlsx(tmp_path):
+    conn = duckdb.connect(":memory:")
+    xlsx = tmp_path / "extra.xlsx"
+    _write_xlsx(
+        xlsx,
+        {"a": pd.DataFrame({"v": [1]}), "b": pd.DataFrame({"v": [2]})},
+    )
+
+    tables = add_files_to_connection(conn, [str(xlsx)], existing_table_names=set())
+    names = {t["name"] for t in tables}
+    assert names == {"a", "b"}
+    assert conn.execute("SELECT v FROM a").fetchone() == (1,)
+    assert conn.execute("SELECT v FROM b").fetchone() == (2,)
+    conn.close()
+
+
+def test_save_project_rebuilds_xlsx_sheets(tmp_path):
+    xlsx = tmp_path / "src.xlsx"
+    _write_xlsx(
+        xlsx,
+        {
+            "raw": pd.DataFrame({"id": [1, 2]}),
+            "clean": pd.DataFrame({"id": [10]}),
+        },
+    )
+
+    runner, tables = create_ephemeral_session([str(xlsx)])
+    project_dir = tmp_path / "proj"
+    save_ephemeral_as_project(runner, tables, str(project_dir))
+    runner.close()
+
+    db_file = project_dir / "data.duckdb"
+    assert db_file.exists()
+    conn = duckdb.connect(str(db_file), read_only=True)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 2
+        assert conn.execute("SELECT id FROM clean").fetchone() == (10,)
+    finally:
+        conn.close()

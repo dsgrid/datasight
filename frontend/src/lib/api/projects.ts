@@ -79,7 +79,7 @@ export async function getExploreStatus(): Promise<{
 export interface ScannedDataFile {
   path: string;
   name: string;
-  type: "csv" | "parquet";
+  type: "csv" | "parquet" | "xlsx";
   size_bytes: number;
 }
 

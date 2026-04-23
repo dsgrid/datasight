@@ -59,7 +59,7 @@
     Explore Files
   </div>
   <p class="text-text-secondary" style="font-size: 0.85rem; margin-bottom: 20px; line-height: 1.5;">
-    Open CSV, Parquet, or DuckDB files to start exploring immediately.
+    Open CSV, Parquet, Excel, or DuckDB files to start exploring immediately.
   </p>
   <div class="flex" style="gap: 8px;">
     <input
