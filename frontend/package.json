@@ -17,7 +17,7 @@
     "codemirror": "^6.0.2",
     "dompurify": "^3.2.4",
     "highlight.js": "^11.11.1",
-    "marked": "^15.0.6",
+    "marked": "^18.0.2",
     "marked-highlight": "^2.2.1",
     "plotly.js-dist-min": "^3.5.0"
   },
