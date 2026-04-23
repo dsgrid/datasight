@@ -656,9 +656,12 @@ datasight trends [OPTIONS] [FILES]...
 
 Run all analyses on Parquet, CSV, or DuckDB files and print results.
 
-Creates an ephemeral in-memory database from the given files and runs
-profile, quality, measures, dimensions, trends, and recipes — printing
-everything to the console without creating a project.
+Creates a file-backed session and runs profile, quality, measures,
+dimensions, trends, and recipes — printing everything to the console
+without creating a project. When the current directory contains a
+``.env`` with ``DB_MODE=spark``, the files are registered as Spark
+temp views and all queries run on the cluster; otherwise an ephemeral
+in-memory DuckDB session is used.
 
 Examples:
 

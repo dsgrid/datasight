@@ -182,6 +182,39 @@ class TestSampleEnumColumns:
         conn.close()
 
     @pytest.mark.asyncio
+    async def test_orders_by_output_alias_for_spark_ansi_compatibility(self):
+        """Spark's ANSI analyzer only lets ORDER BY reference post-DISTINCT columns.
+
+        The enum sample query must be `ORDER BY val` (the alias), not
+        `ORDER BY <original column>`. DuckDB and Postgres accept either
+        form, but Spark with spark.sql.ansi.enabled=true rejects the
+        pre-DISTINCT reference with UNRESOLVED_COLUMN.WITH_SUGGESTION.
+        """
+        import pandas as pd
+
+        seen: list[str] = []
+
+        async def run_sql(sql):
+            seen.append(sql)
+            if "COUNT(DISTINCT" in sql:
+                return pd.DataFrame({"n": [3]})
+            return pd.DataFrame({"val": ["a", "b", "c"]})
+
+        tables = [
+            TableInfo(
+                name="t",
+                columns=[ColumnInfo(name="status", dtype="VARCHAR")],
+                row_count=3,
+            )
+        ]
+        await sample_enum_columns(run_sql, tables)
+
+        distinct_sql = next((s for s in seen if "SELECT DISTINCT" in s), None)
+        assert distinct_sql is not None, seen
+        assert "ORDER BY val" in distinct_sql, distinct_sql
+        assert 'ORDER BY "status"' not in distinct_sql, distinct_sql
+
+    @pytest.mark.asyncio
     async def test_skips_high_cardinality(self):
         """Skip columns with > 50 distinct values."""
         import duckdb

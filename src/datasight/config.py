@@ -16,10 +16,12 @@ from loguru import logger
 
 from datasight.exceptions import ConfigurationError
 from datasight.runner import (
+    DEFAULT_SPARK_MAX_RESULT_BYTES,
     CachingSqlRunner,
     DuckDBRunner,
     FlightSqlRunner,
     PostgresRunner,
+    SparkConnectRunner,
     SQLiteRunner,
     SqlRunner,
 )
@@ -83,19 +85,25 @@ def create_sql_runner(
     postgres_password: str = "",
     postgres_url: str = "",
     postgres_sslmode: str = "prefer",
+    spark_remote: str = "sc://localhost:15002",
+    spark_token: str | None = None,
+    spark_max_result_bytes: int = DEFAULT_SPARK_MAX_RESULT_BYTES,
 ) -> SqlRunner:
     """Create the appropriate SqlRunner based on db_mode.
 
     Parameters
     ----------
     db_mode:
-        Database mode: "duckdb", "sqlite", "postgres", or "flightsql".
+        Database mode: "duckdb", "sqlite", "postgres", "flightsql", or "spark".
     db_path:
         Path to database file (for duckdb and sqlite modes).
     flight_*:
         Flight SQL connection parameters.
     postgres_*:
         PostgreSQL connection parameters.
+    spark_*:
+        Spark Connect parameters. ``spark_max_result_bytes`` caps how much
+        Arrow data is materialized client-side before truncation.
 
     Returns
     -------
@@ -138,6 +146,13 @@ def create_sql_runner(
                 raise ConfigurationError("DB_PATH is required for DuckDB mode")
             logger.info(f"Opening local DuckDB: {db_path}")
             return DuckDBRunner(database_path=db_path)
+        case "spark":
+            logger.info(f"Connecting to Spark Connect: {spark_remote}")
+            return SparkConnectRunner(
+                remote=spark_remote,
+                token=spark_token,
+                max_result_bytes=spark_max_result_bytes,
+            )
         case _:
             raise ConfigurationError(f"Invalid database mode: {db_mode}")
 
@@ -166,6 +181,8 @@ def create_sql_runner_from_settings(
         if project_dir:
             db_path = str(Path(project_dir) / db_path)
 
+    logger.info(f"Database mode: {settings.mode} (dialect: {settings.sql_dialect})")
+
     runner = create_sql_runner(
         db_mode=settings.mode,
         db_path=db_path,
@@ -180,6 +197,9 @@ def create_sql_runner_from_settings(
         postgres_password=settings.postgres_password,
         postgres_url=settings.postgres_url,
         postgres_sslmode=settings.postgres_sslmode,
+        spark_remote=settings.spark_remote,
+        spark_token=settings.spark_token,
+        spark_max_result_bytes=settings.spark_max_result_bytes,
     )
     if sql_cache_max_bytes > 0:
         runner = CachingSqlRunner(runner, max_bytes=sql_cache_max_bytes)

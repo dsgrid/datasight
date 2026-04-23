@@ -50,6 +50,23 @@ def _epilog(text: str) -> str:
     return "\n\n".join(line.rstrip() for line in dedent(text).strip().splitlines())
 
 
+# One-line log format that shows the module name but not the function or
+# line number — ``function:line`` noise rarely helps users diagnose their
+# own CLI runs, and leaving it out makes each line fit comfortably.
+_LOG_FORMAT = "{time:HH:mm:ss} | {level: <7} | {name} - {message}"
+
+
+def _configure_logging(level: str = "INFO") -> None:
+    """Replace any existing Loguru sinks with a single stderr sink.
+
+    Call from commands that log progress so every command uses the same
+    format regardless of which module emitted the log. Safe to call
+    multiple times.
+    """
+    logger.remove()
+    logger.add(sys.stderr, level=level, format=_LOG_FORMAT)
+
+
 def _resolve_settings(
     project_dir: str,
     model_override: str | None = None,
@@ -79,6 +96,37 @@ def _resolve_settings(
     resolved_model = model_override if model_override else settings.llm.model
 
     return settings, resolved_model
+
+
+def _current_db_settings_or_none():
+    """Load database settings from the current directory's .env, or None.
+
+    Used by the file-based commands (``inspect``, ``generate --files``,
+    ``trends --files``) so that when the user is inside a project with
+    ``DB_MODE=spark``, file operations route through Spark Connect
+    instead of silently dropping the configured backend.
+
+    Returns
+    -------
+    ``DatabaseSettings`` if a ``.env`` is found in the current directory,
+    otherwise ``None`` (caller should fall back to plain DuckDB).
+    """
+    from dotenv import load_dotenv
+    from loguru import logger
+
+    env_path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(env_path):
+        logger.info(
+            f"No .env found in {os.getcwd()} — file commands will use an "
+            "in-memory DuckDB session. Set DB_MODE in a .env to route "
+            "through a configured backend (e.g. Spark)."
+        )
+        return None
+    load_dotenv(env_path, override=False)
+    load_global_env(override=False)
+    db = Settings.from_env().database
+    logger.info(f"Loaded .env from {env_path} — DB_MODE={db.mode}")
+    return db
 
 
 def _validate_settings_for_llm(settings: Settings) -> None:
@@ -1332,9 +1380,7 @@ def _prepare_web_runtime(
     load_global_env(override=False)
 
     if configure_logging:
-        level = "DEBUG" if verbose else "INFO"
-        logger.remove()
-        logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {name} {level} {message}")
+        _configure_logging("DEBUG" if verbose else "INFO")
 
     settings = Settings.from_env()
     resolved_model = model if model else settings.llm.model
@@ -1521,6 +1567,9 @@ def config_show():
             click.echo(f"  db:   {settings.database.postgres_database}")
     elif settings.database.mode == "flightsql":
         click.echo(f"  uri:  {settings.database.flight_uri}")
+    elif settings.database.mode == "spark":
+        click.echo(f"  remote: {settings.database.spark_remote}")
+        click.echo(f"  max result bytes: {settings.database.spark_max_result_bytes:,}")
 
 
 @cli.group(
@@ -1561,8 +1610,7 @@ def demo_eia_generation(project_dir: str, min_year: int):
 
     PROJECT_DIR defaults to the current directory.
     """
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging("INFO")
 
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1613,8 +1661,7 @@ def demo_dsgrid_tempo(project_dir: str):
 
     PROJECT_DIR defaults to the current directory.
     """
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging("INFO")
 
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1668,8 +1715,7 @@ def demo_time_validation(project_dir: str):
 
     PROJECT_DIR defaults to the current directory.
     """
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging("INFO")
 
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
@@ -1778,10 +1824,20 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
 
     project_dir = str(Path(project_dir).resolve())
 
+    # Configure logging and resolve settings early so the db_target
+    # preflight can respect a pre-existing DB_MODE (e.g. spark) and
+    # avoid clobbering the user's backend config.
+    level = "DEBUG" if verbose else "WARNING"
+    _configure_logging(level)
+    settings, resolved_model = _resolve_settings(project_dir, model)
+    _validate_settings_for_llm(settings)
+
     # Resolve the would-be DB path up front so we can include it in the
     # preflight check — otherwise a stale database.duckdb would abort the
     # run only after the LLM call and the doc writes, leaving behind a
-    # partial, mutated project.
+    # partial, mutated project. Skip it entirely when the project is
+    # configured for a non-DuckDB backend; we're not going to touch the
+    # local DuckDB in that case.
     use_files = bool(files)
     db_target: Path | None = None
     sqlite_source_path: Path | None = None
@@ -1823,11 +1879,13 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
                 )
                 sys.exit(1)
             duckdb_source_path = duckdb_files[0]
-        else:
+        elif settings.database.mode == "duckdb":
             _db_target = Path(db_path or "database.duckdb")
             if not _db_target.is_absolute():
                 _db_target = Path(project_dir) / _db_target
             db_target = _db_target.resolve()
+        # Any other mode (spark, postgres, flightsql, sqlite) → no
+        # local DuckDB target; we'll preserve the existing backend.
 
     # Check for existing files early
     schema_path = Path(project_dir) / "schema_description.md"
@@ -1856,15 +1914,6 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
                 err=True,
             )
             sys.exit(1)
-
-    # Logging
-    level = "DEBUG" if verbose else "WARNING"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
-
-    # Load settings and validate
-    settings, resolved_model = _resolve_settings(project_dir, model)
-    _validate_settings_for_llm(settings)
 
     if not use_files:
         resolved_db_path = _resolve_db_path(settings, project_dir)
@@ -1919,9 +1968,11 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
             sql_runner = DuckDBRunner(str(duckdb_source_path))
             tables_info = []
         elif use_files:
-            from datasight.explore import create_ephemeral_session
+            from datasight.explore import create_files_session_for_settings
 
-            sql_runner, tables_info = create_ephemeral_session(list(files))
+            sql_runner, tables_info = create_files_session_for_settings(
+                list(files), settings.database
+            )
         else:
             sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
             tables_info = []
@@ -2074,33 +2125,47 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
         set_env_vars(env_path, {"DB_MODE": db_mode, "DB_PATH": db_env_value})
         written.append(".env (updated)" if existed else ".env")
     elif use_files:
-        from datasight.config import set_env_vars
-        from datasight.explore import build_persistent_duckdb
-
-        assert db_target is not None  # set above when use_files is True
-        try:
-            build_persistent_duckdb(db_target, tables_info, overwrite=overwrite)
-        except FileExistsError:
-            # Preflight above rejects pre-existing DBs without --overwrite,
-            # so reaching here means the file appeared mid-run.
+        # The "new project from parquet files" flow creates a local DuckDB
+        # mirror and writes DB_MODE=duckdb to .env. When the user is already
+        # inside a project configured for a different backend (Spark,
+        # Postgres, Flight SQL, SQLite), doing that silently clobbers
+        # their real config. Preserve whatever they already have.
+        if settings.database.mode != "duckdb":
             click.echo(
-                f"Error: Database file already exists: {db_target}.",
-                err=True,
+                f"Existing .env has DB_MODE={settings.database.mode} — "
+                "keeping it. The schema_description.md / queries.yaml "
+                "files describe the same tables your configured backend "
+                "serves; no local DuckDB mirror was created and .env was "
+                "not modified."
             )
-            sys.exit(1)
-        db_size_mb = db_target.stat().st_size / (1024 * 1024)
-        written.append(f"{db_target.name} ({db_size_mb:.2f} MB)")
+        else:
+            from datasight.config import set_env_vars
+            from datasight.explore import build_persistent_duckdb
 
-        try:
-            rel_db = db_target.relative_to(Path(project_dir).resolve())
-            db_env_value = f"./{rel_db.as_posix()}"
-        except ValueError:
-            db_env_value = str(db_target)
+            assert db_target is not None  # set above when use_files is True
+            try:
+                build_persistent_duckdb(db_target, tables_info, overwrite=overwrite)
+            except FileExistsError:
+                # Preflight above rejects pre-existing DBs without --overwrite,
+                # so reaching here means the file appeared mid-run.
+                click.echo(
+                    f"Error: Database file already exists: {db_target}.",
+                    err=True,
+                )
+                sys.exit(1)
+            db_size_mb = db_target.stat().st_size / (1024 * 1024)
+            written.append(f"{db_target.name} ({db_size_mb:.2f} MB)")
 
-        env_path = Path(project_dir) / ".env"
-        existed = env_path.exists()
-        set_env_vars(env_path, {"DB_MODE": "duckdb", "DB_PATH": db_env_value})
-        written.append(".env (updated)" if existed else ".env")
+            try:
+                rel_db = db_target.relative_to(Path(project_dir).resolve())
+                db_env_value = f"./{rel_db.as_posix()}"
+            except ValueError:
+                db_env_value = str(db_target)
+
+            env_path = Path(project_dir) / ".env"
+            existed = env_path.exists()
+            set_env_vars(env_path, {"DB_MODE": "duckdb", "DB_PATH": db_env_value})
+            written.append(".env (updated)" if existed else ".env")
 
     click.echo()
     if written:
@@ -2228,8 +2293,7 @@ def verify(project_dir, model, queries_path, verbose):
 
     # Logging
     level = "DEBUG" if verbose else "WARNING"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging(level)
 
     # Load queries
     from datasight.config import load_example_queries
@@ -2543,8 +2607,7 @@ def ask(
 
     # Logging
     level = "DEBUG" if verbose else "WARNING"
-    logger.remove()
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} {level} {message}")
+    _configure_logging(level)
 
     # Load settings and validate
     settings, resolved_model = _resolve_settings(project_dir, model)
@@ -3853,6 +3916,7 @@ def audit_report(project_dir, table, output_path, output_format):
     Combines profile, measures, quality, integrity, distribution, and
     validation results into one HTML, Markdown, or JSON artifact.
     """
+    _configure_logging("INFO")
     project_dir = str(Path(project_dir).resolve())
     settings, _ = _resolve_settings(project_dir)
     resolved_db_path = _resolve_db_path(settings, project_dir)
@@ -4068,10 +4132,11 @@ def trends(files, project_dir, table, output_format, output_path):
 
     async def _run_trends():
         if files:
-            from datasight.explore import create_ephemeral_session
+            from datasight.explore import create_files_session_for_settings
             from datasight.schema import introspect_schema
 
-            runner, _ = create_ephemeral_session(list(files))
+            db_settings = _current_db_settings_or_none()
+            runner, _ = create_files_session_for_settings(list(files), db_settings)
             tables = await introspect_schema(runner.run_sql, runner=runner)
             schema_info = [
                 {
@@ -4212,18 +4277,37 @@ def trends(files, project_dir, table, output_format, output_path):
 def inspect(files, output_format, output_path):
     """Run all analyses on Parquet, CSV, or DuckDB files and print results.
 
-    Creates an ephemeral in-memory database from the given files and runs
-    profile, quality, measures, dimensions, trends, and recipes — printing
-    everything to the console without creating a project.
+    Creates a file-backed session and runs profile, quality, measures,
+    dimensions, trends, and recipes — printing everything to the console
+    without creating a project. When the current directory contains a
+    ``.env`` with ``DB_MODE=spark``, the files are registered as Spark
+    temp views and all queries run on the cluster; otherwise an ephemeral
+    in-memory DuckDB session is used.
     """
+    import time as _time
+
+    from loguru import logger as _logger
     from rich.console import Console
 
-    from datasight.explore import create_ephemeral_session
+    from datasight.explore import create_files_session_for_settings
     from datasight.schema import introspect_schema
 
+    _configure_logging("INFO")
+    db_settings = _current_db_settings_or_none()
+
+    async def _run_phase(name: str, coro):
+        _logger.info(f"[inspect] {name}…")
+        t0 = _time.perf_counter()
+        result = await coro
+        _logger.info(f"[inspect] {name} done in {_time.perf_counter() - t0:.1f}s")
+        return result
+
     async def _run_all():
-        runner, tables_info = create_ephemeral_session(list(files))
-        tables = await introspect_schema(runner.run_sql, runner=runner)
+        runner, tables_info = create_files_session_for_settings(list(files), db_settings)
+        tables = await _run_phase(
+            f"introspecting schema for {len(tables_info)} table(s)",
+            introspect_schema(runner.run_sql, runner=runner),
+        )
         schema_info = [
             {
                 "name": t.name,
@@ -4235,12 +4319,27 @@ def inspect(files, output_format, output_path):
             for t in tables
         ]
 
-        profile_data = await build_dataset_overview(schema_info, runner.run_sql)
-        quality_data = await build_quality_overview(schema_info, runner.run_sql)
-        measure_data = await build_measure_overview(schema_info, runner.run_sql, overrides=None)
-        dimension_data = await build_dimension_overview(schema_info, runner.run_sql)
-        trend_data = await build_trend_overview(schema_info, runner.run_sql, overrides=None)
-        recipe_list = await build_prompt_recipes(schema_info, runner.run_sql, overrides=None)
+        profile_data = await _run_phase(
+            "profiling tables", build_dataset_overview(schema_info, runner.run_sql)
+        )
+        quality_data = await _run_phase(
+            "running quality checks", build_quality_overview(schema_info, runner.run_sql)
+        )
+        measure_data = await _run_phase(
+            "discovering measures",
+            build_measure_overview(schema_info, runner.run_sql, overrides=None),
+        )
+        dimension_data = await _run_phase(
+            "discovering dimensions", build_dimension_overview(schema_info, runner.run_sql)
+        )
+        trend_data = await _run_phase(
+            "scanning for trends",
+            build_trend_overview(schema_info, runner.run_sql, overrides=None),
+        )
+        recipe_list = await _run_phase(
+            "building prompt recipes",
+            build_prompt_recipes(schema_info, runner.run_sql, overrides=None),
+        )
         recipes_data = [{"id": idx, **r} for idx, r in enumerate(recipe_list, start=1)]
 
         return {
@@ -4647,8 +4746,7 @@ def recipes_run(
     _validate_settings_for_llm(settings)
 
     if verbose:
-        logger.remove()
-        logger.add(sys.stderr, level="DEBUG")
+        _configure_logging("DEBUG")
 
     recipe_data = _load_recipe_entries(project_dir, settings, table)
     recipe = next((item for item in recipe_data if item["id"] == recipe_id), None)
@@ -4753,6 +4851,9 @@ def doctor(project_dir, output_format, output_path):
     elif settings.database.mode == "flightsql":
         db_ok = bool(settings.database.flight_uri)
         db_detail = settings.database.flight_uri
+    elif settings.database.mode == "spark":
+        db_ok = bool(settings.database.spark_remote)
+        db_detail = settings.database.spark_remote
     add_check("Database config", db_ok, db_detail or settings.database.mode)
 
     for name in ("schema_description.md", "queries.yaml"):

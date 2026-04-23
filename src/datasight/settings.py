@@ -15,6 +15,7 @@ from typing import Literal, cast
 from dotenv import load_dotenv
 
 from datasight.exceptions import ConfigurationError
+from datasight.runner import DEFAULT_SPARK_MAX_RESULT_BYTES
 
 
 def _safe_int(value: str, default: int) -> int:
@@ -70,6 +71,9 @@ _PROJECT_ENV_VARS = [
     "POSTGRES_PASSWORD",
     "POSTGRES_URL",
     "POSTGRES_SSLMODE",
+    "SPARK_REMOTE",
+    "SPARK_TOKEN",
+    "SPARK_MAX_RESULT_BYTES",
     # LLM settings
     "LLM_PROVIDER",
     "LLM_TIMEOUT",
@@ -165,7 +169,7 @@ def restore_original_env() -> None:
 # exists only for static typing and must be updated by hand when a provider
 # is added or removed (Python can't derive Literals from a runtime set).
 LLMProvider = Literal["anthropic", "ollama", "github", "openai"]
-DBMode = Literal["duckdb", "sqlite", "postgres", "flightsql"]
+DBMode = Literal["duckdb", "sqlite", "postgres", "flightsql", "spark"]
 
 # Mapping from database mode to SQL dialect for query generation
 DB_MODE_TO_DIALECT: dict[str, str] = {
@@ -173,6 +177,7 @@ DB_MODE_TO_DIALECT: dict[str, str] = {
     "sqlite": "sqlite",
     "postgres": "postgres",
     "flightsql": "duckdb",  # Flight SQL uses DuckDB dialect
+    "spark": "spark",
 }
 
 
@@ -266,6 +271,11 @@ class DatabaseSettings:
     postgres_url: str = ""
     postgres_sslmode: str = "prefer"
 
+    # Spark Connect settings
+    spark_remote: str = "sc://localhost:15002"
+    spark_token: str | None = None
+    spark_max_result_bytes: int = DEFAULT_SPARK_MAX_RESULT_BYTES
+
     @property
     def sql_dialect(self) -> str:
         """Get the SQL dialect for the current mode."""
@@ -343,8 +353,10 @@ class Settings:
                 db_mode = "postgres"
             case "flightsql":
                 db_mode = "flightsql"
+            case "spark":
+                db_mode = "spark"
             case _:
-                valid_modes = "duckdb, sqlite, postgres, flightsql"
+                valid_modes = "duckdb, sqlite, postgres, flightsql, spark"
                 raise ConfigurationError(
                     f"Invalid DB_MODE: {db_mode_raw!r}. Valid modes: {valid_modes}"
                 )
@@ -381,6 +393,12 @@ class Settings:
                 postgres_password=os.environ.get("POSTGRES_PASSWORD", ""),
                 postgres_url=os.environ.get("POSTGRES_URL", ""),
                 postgres_sslmode=os.environ.get("POSTGRES_SSLMODE", "prefer"),
+                spark_remote=os.environ.get("SPARK_REMOTE", "sc://localhost:15002"),
+                spark_token=os.environ.get("SPARK_TOKEN") or None,
+                spark_max_result_bytes=_safe_int(
+                    os.environ.get("SPARK_MAX_RESULT_BYTES", ""),
+                    DEFAULT_SPARK_MAX_RESULT_BYTES,
+                ),
             ),
             app=AppSettings(
                 port=_safe_int(os.environ.get("PORT", ""), 8084),

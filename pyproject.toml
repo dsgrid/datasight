@@ -39,6 +39,9 @@ dependencies = [
 export = [
     "kaleido>=0.2,<1",
 ]
+spark = [
+    "pyspark[connect]>=4.0,<5",
+]
 dev = [
     "pytest>=8.0,<9",
     "pytest-cov",

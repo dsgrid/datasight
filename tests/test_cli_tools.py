@@ -858,7 +858,9 @@ def test_inspect_json_output(csv_file):
     runner = CliRunner()
     result = runner.invoke(cli, ["inspect", csv_file, "--format", "json"])
     assert result.exit_code == 0
-    data = json.loads(result.output)
+    # Read stdout directly — result.output may include stderr log lines in
+    # some Click versions' default capture mode.
+    data = json.loads(result.stdout)
     assert "profile" in data
     assert "quality" in data
     assert "measures" in data
@@ -895,7 +897,7 @@ def test_inspect_multiple_files(csv_file, tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli, ["inspect", csv_file, str(second), "--format", "json"])
     assert result.exit_code == 0
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data["profile"]["table_count"] == 2
 
 

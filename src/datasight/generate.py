@@ -82,9 +82,13 @@ async def sample_enum_columns(run_sql: RunSql, tables: list[TableInfo]) -> str:
                 n_distinct = _extract_scalar(count_result, "n")
                 if n_distinct < 1 or n_distinct > 50:
                     continue
+                # ORDER BY the output alias (not the pre-DISTINCT column) so
+                # this parses under Spark's ANSI analyzer, which requires an
+                # ORDER BY after DISTINCT to reference output-list columns.
+                # DuckDB and Postgres accept either form.
                 sample_result = await run_sql(
                     f"SELECT DISTINCT {col_name} AS val FROM {table_name} "
-                    f"WHERE {col_name} IS NOT NULL ORDER BY {col_name} LIMIT 20"
+                    f"WHERE {col_name} IS NOT NULL ORDER BY val LIMIT 20"
                 )
                 values = _extract_values(sample_result, "val")
                 if values:

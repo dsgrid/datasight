@@ -81,7 +81,7 @@ For help picking a provider, see [Choosing an LLM](../concepts/choosing-an-llm.m
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_MODE` | `duckdb` | Database type: `duckdb`, `sqlite`, `postgres`, or `flightsql` |
+| `DB_MODE` | `duckdb` | Database type: `duckdb`, `sqlite`, `postgres`, `flightsql`, or `spark` |
 | `DB_PATH` | `./database.duckdb` | Path to DuckDB or SQLite file (used when `DB_MODE=duckdb` or `sqlite`) |
 
 #### PostgreSQL settings (when `DB_MODE=postgres`)
@@ -107,6 +107,16 @@ For production, use `POSTGRES_SSLMODE=verify-full` and consider using a
 | `FLIGHT_SQL_TOKEN` | — | Bearer token for Flight SQL auth |
 | `FLIGHT_SQL_USERNAME` | — | Username for Flight SQL basic auth |
 | `FLIGHT_SQL_PASSWORD` | — | Password for Flight SQL basic auth |
+
+#### Spark Connect settings (when `DB_MODE=spark`)
+
+Requires the `spark` extra: `pip install 'datasight[spark]'`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SPARK_REMOTE` | `sc://localhost:15002` | Spark Connect URI (e.g. `sc://spark.example.com:15002`) |
+| `SPARK_TOKEN` | — | Optional bearer token for Spark Connect auth |
+| `SPARK_MAX_RESULT_BYTES` | `104857600` | Client-side cap on Arrow result size (100 MiB default). Results above this are truncated to protect the web server on multi-TB backends. |
 
 ### Other settings
 

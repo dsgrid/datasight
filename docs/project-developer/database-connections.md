@@ -1,18 +1,18 @@
 # Database connections
 
-datasight supports four database backends. This guide explains when to use
+datasight supports five database backends. This guide explains when to use
 each one and how to configure the connection.
 
 ## Choosing a database
 
-| | DuckDB | SQLite | PostgreSQL | Flight SQL |
-|---|---|---|---|---|
-| **Best for** | Local analytics on Parquet/CSV files | Existing SQLite databases from other apps | Production databases, multi-user access | Remote HPC or distributed query engines |
-| **Install** | Built in | Built in | Built in | Built in |
-| **DB_MODE** | `duckdb` | `sqlite` | `postgres` | `flightsql` |
-| **Connection** | Local file path | Local file path | Host/port or connection string | gRPC URI |
-| **Concurrent users** | Single process | Single process | Multi-user | Multi-user |
-| **SQL dialect** | DuckDB SQL (Postgres-like) | SQLite SQL | PostgreSQL | Depends on server |
+| | DuckDB | SQLite | PostgreSQL | Flight SQL | Spark |
+|---|---|---|---|---|---|
+| **Best for** | Local analytics on Parquet/CSV files | Existing SQLite databases from other apps | Production databases, multi-user access | Remote HPC or distributed query engines | Multi-TB datasets on a Spark cluster |
+| **Install** | Built in | Built in | Built in | Built in | `pip install 'datasight[spark]'` |
+| **DB_MODE** | `duckdb` | `sqlite` | `postgres` | `flightsql` | `spark` |
+| **Connection** | Local file path | Local file path | Host/port or connection string | gRPC URI | Spark Connect URI |
+| **Concurrent users** | Single process | Single process | Multi-user | Multi-user | Multi-user |
+| **SQL dialect** | DuckDB SQL (Postgres-like) | SQLite SQL | PostgreSQL | Depends on server | Spark SQL |
 
 **DuckDB** is the default and recommended for most use cases. It is an
 embedded OLAP (Online Analytical Processing) database designed for
@@ -32,6 +32,14 @@ databases, data warehouses, or managed services like RDS or Cloud SQL.
 protocol, such as [GizmoSQL](https://github.com/gizmodata/gizmosql) on an
 HPC cluster. See [Connect to a remote Flight SQL backend](../end-user/how-to/connect-flight-sql.md)
 for a full walkthrough.
+
+**Spark** connects to an Apache Spark cluster via
+[Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html).
+Use this when your data is too large to fit on a single machine — typically
+multi-terabyte Parquet/Delta/Iceberg tables managed by Spark. The client
+streams Arrow batches and truncates the result once it exceeds a byte cap
+(default 100 MiB), so the web server stays responsive even when the agent
+forgets to aggregate.
 
 ## DuckDB
 
@@ -179,6 +187,31 @@ For TLS-enabled servers, use `grpc+tls://` as the URI scheme:
 FLIGHT_SQL_URI=grpc+tls://flight.example.com:31337
 FLIGHT_SQL_TOKEN=your_bearer_token
 ```
+
+## Spark
+
+Spark connects to an Apache Spark cluster over Spark Connect. Use this
+for multi-terabyte datasets that won't fit on a single machine. See
+[Connect to an Apache Spark backend](../end-user/how-to/connect-spark.md)
+for the full walkthrough.
+
+```bash
+pip install 'datasight[spark]'
+```
+
+```bash
+DB_MODE=spark
+SPARK_REMOTE=sc://spark-connect.example.com:15002
+SPARK_TOKEN=your_bearer_token        # optional
+SPARK_MAX_RESULT_BYTES=104857600     # optional, default 100 MiB
+```
+
+The client streams Arrow batches and truncates results above
+`SPARK_MAX_RESULT_BYTES` to protect the web server from OOMing. Row
+counts are skipped at introspection time (a naive `SELECT COUNT(*)` on
+a multi-TB partitioned table would kick off a full-cluster job); document
+your partition columns in `schema_description.md` so the agent uses them
+as predicates.
 
 ## All environment variables
 

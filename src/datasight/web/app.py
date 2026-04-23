@@ -71,7 +71,6 @@ from datasight.recent_projects import (
 )
 from datasight.explore import (
     add_files_to_connection,
-    create_ephemeral_session,
     save_ephemeral_as_project,
     scan_directory_for_data_files,
 )
@@ -811,6 +810,9 @@ async def _build_project_health(state: AppState) -> dict[str, Any]:
         elif settings.database.mode == "flightsql":
             db_ok = bool(settings.database.flight_uri)
             db_detail = settings.database.flight_uri
+        elif settings.database.mode == "spark":
+            db_ok = bool(settings.database.spark_remote)
+            db_detail = settings.database.spark_remote
         add_check(
             "Database config",
             db_ok,
@@ -858,9 +860,22 @@ async def _build_project_health(state: AppState) -> dict[str, Any]:
         1 for check in checks if not check["ok"] and check["category"] == "project"
     )
 
+    # Surface the configured backend identity at the top level so the UI
+    # can render compact "Project / DB / LLM" rows without parsing strings
+    # out of individual check details.
+    db_mode = settings.database.mode if settings is not None else None
+    db_target = next(
+        (c["detail"] for c in checks if c["name"] == "Database config" and c["ok"]),
+        None,
+    )
+    llm_provider = settings.llm.provider if settings is not None else None
+
     return {
         "project_loaded": state.project_loaded,
         "project_dir": state.project_dir,
+        "db_mode": db_mode,
+        "db_target": db_target,
+        "llm_provider": llm_provider,
         "checks": checks,
         "summary": {
             "ok_count": sum(1 for check in checks if check["ok"]),
@@ -2110,12 +2125,20 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         state.max_cost_usd_per_turn = settings.app.max_cost_usd_per_turn
         state.max_output_tokens = settings.app.max_output_tokens
 
-        # Create ephemeral session
-        runner, tables_info = create_ephemeral_session(file_paths)
+        # Route file-backed exploration through whichever backend the
+        # current settings point at (Spark when DB_MODE=spark, else DuckDB).
+        from datasight.explore import create_files_session_for_settings
+        from datasight.runner import SparkConnectRunner
+
+        runner, tables_info = create_files_session_for_settings(file_paths, settings.database)
         state.sql_runner = runner
         state.is_ephemeral = True
         state.ephemeral_tables_info = tables_info
-        state.sql_dialect = "duckdb"
+        # Dialect must match the effective runner, not the configured DB_MODE:
+        # for DB_MODE=postgres/flightsql/sqlite the file session falls back to
+        # an in-memory DuckDB, so SQL must be generated as DuckDB rather than
+        # the configured backend's dialect.
+        state.sql_dialect = "spark" if isinstance(runner, SparkConnectRunner) else "duckdb"
         state.project_loaded = True
 
         # Introspect schema

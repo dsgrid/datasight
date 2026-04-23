@@ -2,22 +2,26 @@
 SQL runners for datasight.
 
 Provides a common async interface for executing SQL queries against local
-DuckDB files, remote Flight SQL servers, PostgreSQL, or SQLite databases.
+DuckDB files, remote Flight SQL servers, PostgreSQL, SQLite databases, or
+Apache Spark via Spark Connect.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sqlite3
+import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 import duckdb
 import pandas as pd
 from loguru import logger
 
 from datasight.exceptions import ConnectionError, QueryError, QueryTimeoutError
+from datasight.schema_types import ColumnInfo
 
 # Default timeout for SQL queries (seconds). Can be overridden per-runner.
 DEFAULT_QUERY_TIMEOUT: float = 120.0
@@ -25,8 +29,22 @@ DEFAULT_QUERY_TIMEOUT: float = 120.0
 # Default SQL result cache size (1 GiB). 0 disables caching.
 DEFAULT_SQL_CACHE_MAX_BYTES: int = 1 << 30
 
+# Default byte cap for Spark Connect results (100 MiB on the wire).
+# Spark sits in front of multi-TB datasets, so the client cannot afford to
+# materialize an unbounded result. This protects the FastAPI process from
+# OOMing when the agent forgets to aggregate.
+DEFAULT_SPARK_MAX_RESULT_BYTES: int = 100 * 1024 * 1024
+
 # Type alias for async SQL execution function
 RunSql = Callable[[str], Awaitable[pd.DataFrame]]
+
+
+def _sql_preview(sql: str, max_len: int = 200) -> str:
+    """Collapse whitespace and truncate so a SQL log line fits one row."""
+    one_line = " ".join(sql.split())
+    if len(one_line) <= max_len:
+        return one_line
+    return one_line[:max_len] + "…"
 
 
 class SqlRunner(Protocol):
@@ -91,11 +109,21 @@ class DuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("DuckDBRunner is closed")
+        # Per-query logs at DEBUG: a single inspect / generate run can fire
+        # hundreds of these and they drown out genuinely interesting INFO
+        # output. Run with -v (or LOG_LEVEL=DEBUG) to surface them.
+        logger.debug(f"DuckDB query: {_sql_preview(sql)}")
+        t0 = time.perf_counter()
         try:
-            return self._conn.execute(sql).fetchdf()
+            df = self._conn.execute(sql).fetchdf()
         except duckdb.Error as e:
             logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.debug(
+            f"DuckDB returned {len(df)} rows, {len(df.columns)} cols in {elapsed_ms:.0f}ms"
+        )
+        return df
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
         """Execute SQL asynchronously with timeout."""
@@ -158,11 +186,21 @@ class EphemeralDuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("EphemeralDuckDBRunner is closed")
+        # Per-query logs at DEBUG: a single inspect / generate run can fire
+        # hundreds of these and they drown out genuinely interesting INFO
+        # output. Run with -v (or LOG_LEVEL=DEBUG) to surface them.
+        logger.debug(f"DuckDB query: {_sql_preview(sql)}")
+        t0 = time.perf_counter()
         try:
-            return self._conn.execute(sql).fetchdf()
+            df = self._conn.execute(sql).fetchdf()
         except duckdb.Error as e:
             logger.debug(f"DuckDB query error: {e}\nSQL: {sql[:500]}")
             raise QueryError(str(e)) from e
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        logger.debug(
+            f"DuckDB returned {len(df)} rows, {len(df.columns)} cols in {elapsed_ms:.0f}ms"
+        )
+        return df
 
     async def run_sql(self, sql: str) -> pd.DataFrame:
         """Execute SQL asynchronously with timeout."""
@@ -428,13 +466,13 @@ class FlightSqlRunner:
         if self._conn is None:
             raise ConnectionError("FlightSqlRunner is closed")
         sql = sql.strip().rstrip(";")
-        logger.info(f"Flight SQL query: {sql[:200]}")
+        logger.debug(f"Flight SQL query: {sql[:200]}")
         try:
             cursor = self._conn.cursor()
             cursor.execute(sql)
             table = cursor.fetch_arrow_table()
             df = table.to_pandas()
-            logger.info(f"Flight SQL returned {len(df)} rows, {len(df.columns)} columns")
+            logger.debug(f"Flight SQL returned {len(df)} rows, {len(df.columns)} columns")
             return df
         except Exception as e:
             logger.debug(f"Flight SQL query error: {e}\nSQL: {sql[:500]}")
@@ -452,6 +490,472 @@ class FlightSqlRunner:
                 f"Query timed out after {self.timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
+
+
+class SparkConnectRunner:
+    """Execute SQL against an Apache Spark cluster via Spark Connect.
+
+    Streams Arrow batches from the server and stops once the accumulated
+    result exceeds ``max_result_bytes``. The returned DataFrame carries
+    ``df.attrs['truncated'] = True`` and ``df.attrs['truncation_reason']``
+    when truncation occurred so the UI can surface that to the user.
+
+    Cancellation on timeout uses Spark Connect's tag-based interrupt API
+    (``addTag`` / ``interruptTag``), which actually frees cluster resources
+    rather than just abandoning the gRPC stream client-side.
+    """
+
+    def __init__(
+        self,
+        remote: str = "sc://localhost:15002",
+        *,
+        token: str | None = None,
+        max_result_bytes: int = DEFAULT_SPARK_MAX_RESULT_BYTES,
+        query_timeout: float = DEFAULT_QUERY_TIMEOUT,
+        spark: Any = None,
+    ):
+        self._remote = remote
+        self._token = token
+        self._max_result_bytes = max(0, int(max_result_bytes))
+        self._query_timeout = query_timeout
+        self._spark: Any = spark
+        if self._spark is None:
+            self._connect()
+
+    def _connect(self) -> None:
+        try:
+            from pyspark.sql import SparkSession  # ty: ignore[unresolved-import]
+        except ImportError as e:
+            raise ConnectionError(
+                "Spark Connect support requires pyspark. "
+                "Install with: pip install 'datasight[spark]'"
+            ) from e
+        try:
+            builder = SparkSession.builder.remote(self._remote)
+            if self._token:
+                builder = builder.config("spark.connect.client.token", self._token)
+            self._spark = builder.getOrCreate()
+            self._probe_connection(self._spark, self._remote)
+            logger.info(f"Connected to Spark Connect: {self._remote}")
+            self._enable_ansi_quoted_identifiers(self._spark)
+            self._log_session_info(self._spark)
+        except ConnectionError:
+            raise
+        except Exception as e:
+            logger.exception("Spark Connect connection error")
+            raise ConnectionError(f"Failed to connect to Spark Connect: {e}") from e
+
+    @staticmethod
+    def _probe_connection(spark: Any, remote: str, timeout: float = 5.0) -> None:
+        """Force a tiny gRPC round-trip so we fail loudly if the server is down.
+
+        ``SparkSession.builder.remote(...).getOrCreate()`` is lazy — it
+        returns immediately even if no Connect server is listening. The
+        first real call (a query, conf lookup, or even ``spark.version``)
+        is what blocks. Without this probe a missing/down server looks
+        like "Connected to Spark Connect …" followed by a multi-minute
+        hang. Probing here turns it into a fast, actionable error.
+        """
+        import queue
+        import threading
+
+        result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def _ping() -> None:
+            try:
+                # spark.version is a synchronous gRPC call to the server.
+                _ = spark.version
+                result_q.put(("ok", None))
+            except Exception as e:
+                result_q.put(("error", e))
+
+        threading.Thread(target=_ping, daemon=True).start()
+        try:
+            status, payload = result_q.get(timeout=timeout)
+        except queue.Empty:
+            raise ConnectionError(
+                f"Could not reach Spark Connect server at {remote} within "
+                f"{timeout:.0f}s. Is the Connect server actually running and "
+                "listening on that host/port? "
+                "(start-connect-server.sh on the cluster, then re-check the "
+                "URI in your .env)"
+            )
+        if status == "error":
+            raise ConnectionError(
+                f"Spark Connect server at {remote} rejected the handshake: {payload}"
+            )
+
+    @staticmethod
+    def _enable_ansi_quoted_identifiers(spark: Any) -> None:
+        """Make Spark accept ``"name"`` as an identifier, not a string literal.
+
+        Spark's default SQL parser treats double-quoted text as a string
+        literal (it expects backticks for quoted identifiers). The rest
+        of datasight — and the SQL the LLM agent writes — uses the SQL
+        standard ``"identifier"`` form, which Spark rejects with
+        PARSE_SYNTAX_ERROR. Setting this session-level config flips
+        Spark's behavior to the standard interpretation. Available
+        on Spark 3.4+; ANSI mode (default in Spark 4.0) must be on.
+        """
+        key = "spark.sql.ansi.doubleQuotedIdentifiers"
+        try:
+            spark.conf.set(key, "true")
+            logger.info(f"Set {key}=true so Spark accepts SQL-standard quoted identifiers")
+        except Exception as e:
+            logger.warning(
+                f"Could not set {key}: {e}. Queries that use double-quoted "
+                "identifiers may fail. Workaround: enable ANSI mode on the "
+                "Connect server, or upgrade Spark to 3.4+."
+            )
+
+    @staticmethod
+    def _log_session_info(spark: Any) -> None:
+        """Log Spark session details so users can verify they're distributed.
+
+        Surfaces version, master URL, app id, parallelism, and executor
+        configuration. When ``spark.master`` starts with ``local`` the Connect
+        server is running all work in one JVM — a common "why is only one
+        node busy" cause — so we log a loud warning pointing at the fix.
+
+        Each property and config is fetched via a synchronous gRPC call
+        to the Connect server, so we log per-key progress (in case one
+        hangs) and time-bound the whole probe so a slow cluster cannot
+        freeze the CLI. If the probe times out, the connection is still
+        usable; only the diagnostics are skipped. Runs on a daemon thread
+        so a hung gRPC call doesn't keep the process alive.
+        """
+        import queue
+        import threading
+
+        logger.info("Fetching Spark session info (one gRPC call per property)…")
+
+        def _gather() -> dict[str, Any]:
+            info: dict[str, Any] = {}
+            try:
+                info["version"] = getattr(spark, "version", None)
+                logger.info(f"  spark.version = {info['version']}")
+            except Exception as e:
+                info["version"] = None
+                logger.info(f"  spark.version unavailable: {e}")
+
+            keys = [
+                "spark.master",
+                "spark.app.name",
+                "spark.app.id",
+                "spark.default.parallelism",
+                "spark.sql.shuffle.partitions",
+                "spark.executor.instances",
+                "spark.executor.cores",
+                "spark.executor.memory",
+                "spark.dynamicAllocation.enabled",
+                "spark.dynamicAllocation.minExecutors",
+                "spark.dynamicAllocation.maxExecutors",
+            ]
+            conf = getattr(spark, "conf", None)
+            for key in keys:
+                if conf is None:
+                    info[key] = None
+                    continue
+                try:
+                    info[key] = conf.get(key)
+                except Exception:
+                    # conf.get raises on unset keys in some Spark versions;
+                    # treat that as "not configured" rather than failing.
+                    info[key] = None
+                logger.info(f"  {key} = {info[key]}")
+            return info
+
+        result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def _runner() -> None:
+            try:
+                result_q.put(("ok", _gather()))
+            except Exception as e:
+                result_q.put(("error", e))
+
+        # Daemon thread: if the gRPC calls hang forever the process can
+        # still exit cleanly when the rest of datasight finishes.
+        threading.Thread(target=_runner, daemon=True).start()
+        try:
+            status, payload = result_q.get(timeout=30.0)
+        except queue.Empty:
+            logger.warning(
+                "Spark session-info probe timed out after 30s — the Connect "
+                "server is responding slowly. Skipping the diagnostic block; "
+                "the connection itself should still be usable."
+            )
+            return
+        if status == "error":
+            logger.warning(f"Spark session-info probe failed: {payload}")
+            return
+        info: dict[str, Any] = payload
+
+        master = str(info.get("spark.master") or "")
+        if master.startswith("local"):
+            logger.warning(
+                f"Spark master is '{master}' — the Connect server is running "
+                "all work in one JVM on the driver node. If you expected "
+                "distributed execution, set spark.master on the Connect "
+                "server (e.g. spark://master:7077, yarn, or k8s://...) "
+                "and restart it."
+            )
+
+    def close(self) -> None:
+        if self._spark is not None:
+            try:
+                self._spark.stop()
+            except Exception:
+                # Best-effort cleanup: session may already be dead, and a
+                # failure here would mask the real error from the caller.
+                pass
+            self._spark = None
+
+    def __enter__(self) -> "SparkConnectRunner":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "SparkConnectRunner":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def get_table_names(self) -> list[str]:
+        """List tables via ``spark.catalog.listTables()``.
+
+        Spark's ``SHOW TABLES`` returns ``namespace | tableName | isTemporary``,
+        so the generic first-column strategy in ``schema._get_table_names``
+        would pick up database names instead of table names. The catalog
+        API returns structured ``Table`` objects with a stable ``.name``.
+        """
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+        try:
+            tables = self._spark.catalog.listTables()
+        except Exception as e:
+            logger.debug(f"Spark catalog.listTables error: {e}")
+            raise QueryError(f"Failed to list Spark tables: {e}") from e
+        names: list[str] = []
+        for t in tables:
+            name = getattr(t, "name", None)
+            if name:
+                names.append(str(name))
+        return names
+
+    async def get_row_count(self, table: str) -> int | None:  # noqa: ARG002
+        """Skip row counts for Spark.
+
+        A naive ``SELECT COUNT(*)`` on a multi-TB partitioned table kicks
+        off a full cluster job at introspection time, which is exactly
+        the foot-gun the byte-cap design exists to prevent. Return None
+        so the schema prompt simply omits row counts for Spark tables.
+        Statistics from ``DESCRIBE TABLE EXTENDED`` could be wired in
+        here later if we need approximate counts.
+        """
+        return None
+
+    def get_columns(self, table: str) -> list[ColumnInfo]:
+        """Return ``ColumnInfo`` for ``table`` via ``spark.catalog.listColumns()``.
+
+        The generic SQL probes in ``schema._get_columns`` (DESCRIBE
+        "name", information_schema.columns, PRAGMA table_info) all use
+        DuckDB / Postgres / SQLite syntax that Spark rejects with
+        PARSE_SYNTAX_ERROR or TABLE_OR_VIEW_NOT_FOUND. Spark's catalog
+        API returns the same information without any SQL.
+        """
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+        try:
+            columns = self._spark.catalog.listColumns(table)
+        except Exception as e:
+            logger.debug(f"Spark catalog.listColumns({table}) error: {e}")
+            raise QueryError(f"Failed to list Spark columns for {table}: {e}") from e
+        result: list[ColumnInfo] = []
+        for c in columns:
+            result.append(
+                ColumnInfo(
+                    name=str(getattr(c, "name", "")),
+                    dtype=str(getattr(c, "dataType", "") or "UNKNOWN"),
+                    nullable=bool(getattr(c, "nullable", True)),
+                )
+            )
+        return result
+
+    @staticmethod
+    def _iter_arrow_batches(spark: Any, sdf: Any):
+        """Yield ``pyarrow.RecordBatch`` from a Spark DataFrame.
+
+        Uses the Spark Connect client's streaming iterator so we can stop
+        before materializing the full result. Falling back to ``toArrow()`` /
+        ``toPandas()`` would defeat the byte cap (they fully materialize the
+        result client-side).
+
+        The iterator yields a ``StructType`` schema first, then one ``pa.Table``
+        per Arrow batch; we skip the schema and flatten each table to its
+        underlying batches. pyspark 4.0 also requires a ``Plan`` protobuf, so
+        we convert the DataFrame's ``LogicalPlan`` with ``to_proto(client)``.
+
+        Wraps the underlying gRPC iterator in a try/finally so early-exit on
+        truncation/timeout releases the server stream instead of leaving it
+        open until GC.
+        """
+        import pyarrow as pa
+
+        client = spark.client
+        plan_proto = sdf._plan.to_proto(client)
+        table_iter = client.to_table_as_iterator(plan_proto, observations={})
+        try:
+            for item in table_iter:
+                if not isinstance(item, pa.Table):
+                    continue
+                for batch in item.to_batches():
+                    yield batch
+        finally:
+            for name in ("close", "cancel"):
+                method = getattr(table_iter, name, None)
+                if callable(method):
+                    try:
+                        method()
+                    except Exception:
+                        # Best-effort cleanup; do not mask iteration errors.
+                        pass
+                    break
+
+    def _execute(self, sql: str) -> pd.DataFrame:
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+        import pyarrow as pa
+
+        sql = sql.strip().rstrip(";")
+        logger.debug(f"Spark SQL: {sql[:200]}")
+        try:
+            sdf = self._spark.sql(sql)
+            columns = list(getattr(sdf, "columns", []) or [])
+            iterator = self._iter_arrow_batches(self._spark, sdf)
+            batches: list[pa.RecordBatch] = []
+            schema: pa.Schema | None = None
+            total_bytes = 0
+            truncated = False
+            try:
+                for batch in iterator:
+                    # Check the cap *before* appending so the returned result
+                    # is a true upper bound (cap=0 → zero-row truncated result).
+                    if total_bytes + batch.nbytes > self._max_result_bytes:
+                        truncated = True
+                        break
+                    if schema is None:
+                        schema = batch.schema
+                    batches.append(batch)
+                    total_bytes += batch.nbytes
+            finally:
+                close = getattr(iterator, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        # Iterator cleanup is best-effort; don't mask any
+                        # primary exception raised during iteration.
+                        pass
+        except QueryError:
+            raise
+        except Exception as e:
+            logger.debug(f"Spark SQL error: {e}\nSQL: {sql[:500]}")
+            raise QueryError(str(e)) from e
+
+        if not batches:
+            # No data, but preserve the column list so downstream UI and
+            # schema logic still sees the shape of the result.
+            df = pd.DataFrame(columns=columns)
+            if truncated:
+                df.attrs["truncated"] = True
+                df.attrs["truncation_reason"] = (
+                    f"Result exceeded {self._max_result_bytes:,} bytes before any "
+                    "batch could be returned. Add aggregation or a tighter LIMIT."
+                )
+            return df
+        table = pa.Table.from_batches(batches, schema=schema)
+        df = table.to_pandas()
+        if truncated:
+            df.attrs["truncated"] = True
+            df.attrs["truncation_reason"] = (
+                f"Result exceeded {self._max_result_bytes:,} bytes "
+                f"({total_bytes:,} bytes streamed). Add aggregation or a tighter "
+                "LIMIT to your question to see the full answer."
+            )
+            logger.warning(
+                f"Spark result truncated at {total_bytes:,} bytes ({len(df):,} rows returned)"
+            )
+        else:
+            logger.debug(f"Spark returned {len(df)} rows, {len(df.columns)} columns")
+        return df
+
+    async def run_sql(self, sql: str) -> pd.DataFrame:
+        if self._spark is None:
+            raise ConnectionError("SparkConnectRunner is closed")
+
+        # Tag every query so we can interrupt server-side on timeout. Without
+        # this, asyncio.wait_for cancels the local task but the gRPC call and
+        # underlying Spark job keep running and burning cluster resources.
+        tag = f"datasight-{uuid.uuid4().hex}"
+        spark = self._spark
+        add_tag = getattr(spark, "addTag", None)
+        remove_tag = getattr(spark, "removeTag", None)
+        interrupt_tag = getattr(spark, "interruptTag", None)
+
+        def _exec() -> pd.DataFrame:
+            if add_tag is not None:
+                try:
+                    add_tag(tag)
+                except Exception:
+                    # Tag API is best-effort: without it we lose server-side
+                    # cancellation on timeout, but the query still runs.
+                    pass
+            try:
+                return self._execute(sql)
+            finally:
+                if remove_tag is not None:
+                    try:
+                        remove_tag(tag)
+                    except Exception:
+                        # Ancillary cleanup; never mask the primary result.
+                        pass
+
+        # Run on a dedicated single-worker executor rather than the shared
+        # asyncio thread pool. pyspark Connect stores tag state per-thread
+        # (ThreadLocal), so reusing a worker thread that was mid-query when
+        # we timed out could leak tags or other session state into the next
+        # query. A dedicated executor isolates this query's thread entirely
+        # — on timeout we call shutdown(wait=False) so the stuck thread is
+        # not recycled, and it exits naturally once the gRPC call returns
+        # (typically via the interruptTag below).
+        import concurrent.futures
+
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="spark-query"
+        )
+        loop = asyncio.get_running_loop()
+        try:
+            future = loop.run_in_executor(executor, _exec)
+            try:
+                return await asyncio.wait_for(future, timeout=self._query_timeout)
+            except TimeoutError:
+                if interrupt_tag is not None:
+                    try:
+                        interrupt_tag(tag)
+                    except Exception:
+                        logger.warning("Failed to interrupt Spark query on timeout")
+                raise QueryTimeoutError(
+                    f"Query timed out after {self._query_timeout:.0f}s. "
+                    "Try a simpler query or add filters to reduce the result set."
+                )
+        finally:
+            # wait=False: if the worker thread is still blocked on a gRPC
+            # call, do not block shutdown. The thread will exit after the
+            # call returns (and _exec's finally clears the tag). The key
+            # guarantee is that this thread never serves another query.
+            executor.shutdown(wait=False)
 
 
 class CachingSqlRunner:

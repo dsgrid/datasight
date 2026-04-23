@@ -107,6 +107,27 @@ _DIALECT_HINTS: dict[str, str] = {
         "SQLite has no built-in regression aggregates — compute slope/intercept "
         "manually from AVG/SUM over (x - xbar)*(y - ybar) and (x - xbar)^2.\n"
     ),
+    "spark": (
+        "Use Spark SQL (HiveQL-compatible) syntax.\n"
+        "Spark dates: date_trunc('month', col), year(col), month(col), "
+        "to_date(col), date_format(col, 'yyyy-MM').\n"
+        "Spark regression: regr_slope(y, x), regr_intercept(y, x), "
+        "regr_r2(y, x), corr(y, x). Available as window functions.\n"
+        "## Multi-TB scale — read carefully\n"
+        "This database holds multi-terabyte tables. Every query must be "
+        "designed to return a small result, not scan the world:\n"
+        "- ALWAYS aggregate (GROUP BY, SUM, AVG, COUNT) rather than returning "
+        "raw rows. A bare SELECT on a fact table will scan TBs.\n"
+        "- NEVER write SELECT *. Project only the columns you need.\n"
+        "- ALWAYS include a tight WHERE on a partition column when one exists "
+        "(commonly a date / report_date / year column) so Spark can prune "
+        "partitions instead of scanning the full table.\n"
+        "- ALWAYS include LIMIT on any non-aggregated query (LIMIT 1000 or less "
+        "for previews).\n"
+        "- Results above ~100 MB will be truncated by the client and the user "
+        "will see a 'truncated' warning — the cure is more aggregation, not "
+        "a larger LIMIT.\n"
+    ),
 }
 
 

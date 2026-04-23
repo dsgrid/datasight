@@ -3,27 +3,22 @@ Auto-discover database schema by querying INFORMATION_SCHEMA or DuckDB-specific
 system tables.
 """
 
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pandas as pd
 from loguru import logger
 
 from datasight.runner import RunSql, SQLiteRunner
+from datasight.schema_types import ColumnInfo, TableInfo
 
-
-@dataclass
-class ColumnInfo:
-    name: str
-    dtype: str
-    nullable: bool = True
-
-
-@dataclass
-class TableInfo:
-    name: str
-    columns: list[ColumnInfo] = field(default_factory=list)
-    row_count: int | None = None
+__all__ = [
+    "ColumnInfo",
+    "TableInfo",
+    "filter_tables",
+    "format_schema_context",
+    "introspect_schema",
+]
 
 
 def filter_tables(
@@ -173,16 +168,68 @@ async def introspect_schema(
     else:
         logger.info(f"Introspecting {total_discovered} tables")
 
+    runner_row_count = _runner_row_count_fn(runner)
+    runner_get_columns = _runner_get_columns_fn(runner)
     total = len(table_names)
     progress_every = max(1, total // 10) if total >= 20 else total + 1
     for idx, tname in enumerate(table_names, start=1):
-        cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
-        row_count = await _get_row_count(run_sql, tname)
+        if runner_get_columns is not None:
+            try:
+                cols = runner_get_columns(tname)
+            except Exception as e:
+                logger.warning(
+                    f"runner.get_columns({tname}) failed, falling back to SQL probes: {e}"
+                )
+                cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
+        else:
+            cols = await _get_columns(run_sql, tname, prefer_sqlite=is_sqlite)
+        if runner_row_count is not None:
+            row_count = await runner_row_count(tname)
+        else:
+            row_count = await _get_row_count(run_sql, tname)
         tables.append(TableInfo(name=tname, columns=cols, row_count=row_count))
         if idx % progress_every == 0 and idx < total:
             logger.info(f"  introspected {idx}/{total} tables")
 
     return tables
+
+
+def _runner_get_columns_fn(runner: Any) -> Callable[[str], list[ColumnInfo]] | None:
+    """Return ``runner.get_columns`` if provided, walking ``_inner`` wrappers.
+
+    Backends with a native catalog API (Spark Connect's
+    ``spark.catalog.listColumns``) implement this to avoid the
+    DuckDB/Postgres/SQLite-specific SQL probes in ``_get_columns``,
+    which Spark rejects.
+    """
+    current = runner
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        fn = getattr(current, "get_columns", None)
+        if callable(fn):
+            return fn
+        seen.add(id(current))
+        current = getattr(current, "_inner", None)
+    return None
+
+
+def _runner_row_count_fn(runner: Any) -> Callable[[str], Awaitable[int | None]] | None:
+    """Return ``runner.get_row_count`` (async) if provided, walking ``_inner``.
+
+    Runners like ``SparkConnectRunner`` override row counting to avoid
+    triggering full-table scans at schema-introspection time. The
+    ``CachingSqlRunner`` wraps other runners, so we walk ``_inner`` to find
+    the concrete backend's method.
+    """
+    current = runner
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        fn = getattr(current, "get_row_count", None)
+        if callable(fn):
+            return fn
+        seen.add(id(current))
+        current = getattr(current, "_inner", None)
+    return None
 
 
 def format_schema_context(
