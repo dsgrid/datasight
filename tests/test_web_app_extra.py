@@ -848,7 +848,7 @@ def test_conversation_plotly_spec_sanitizes_pandas_missing_values(
 ) -> None:
     with TestClient(web_app.app) as client:
         client.post("/api/projects/load", json={"path": project_dir})
-        conv = web_app._state.conversations.get("nan_spec")
+        conv = web_app._state.conversations.get("nan_spec")  # ty: ignore[unresolved-attribute]
         conv["events"] = [
             {
                 "event": "tool_result",

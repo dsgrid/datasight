@@ -228,16 +228,14 @@ def test_xlsx_single_sheet_uses_file_stem_as_table_name(tmp_path):
     )
 
     runner, tables = create_ephemeral_session([str(xlsx)])
-    try:
+    with runner:
         assert [t["name"] for t in tables] == ["plants"]
         assert tables[0]["type"] == "xlsx"
         assert tables[0]["sheet_name"] == "Sheet1"
-        rows = runner._conn.execute(
+        rows = runner._conn.execute(  # ty: ignore[unresolved-attribute]
             "SELECT plant_id, name FROM plants ORDER BY plant_id"
         ).fetchall()
         assert rows == [(1, "A"), (2, "B")]
-    finally:
-        runner.close()
 
 
 def test_xlsx_multi_sheet_creates_one_table_per_sheet(tmp_path):
@@ -251,14 +249,12 @@ def test_xlsx_multi_sheet_creates_one_table_per_sheet(tmp_path):
     )
 
     runner, tables = create_ephemeral_session([str(xlsx)])
-    try:
+    with runner:
         names = {t["name"] for t in tables}
         assert names == {"generation", "plants"}
         assert all(t["type"] == "xlsx" for t in tables)
-        assert runner._conn.execute("SELECT COUNT(*) FROM generation").fetchone()[0] == 2
-        assert runner._conn.execute("SELECT COUNT(*) FROM plants").fetchone()[0] == 3
-    finally:
-        runner.close()
+        assert runner._conn.execute("SELECT COUNT(*) FROM generation").fetchone()[0] == 2  # ty: ignore[unresolved-attribute, not-subscriptable]
+        assert runner._conn.execute("SELECT COUNT(*) FROM plants").fetchone()[0] == 3  # ty: ignore[unresolved-attribute, not-subscriptable]
 
 
 def test_xlsx_sheet_name_collision_with_existing_table(tmp_path):
@@ -273,13 +269,11 @@ def test_xlsx_sheet_name_collision_with_existing_table(tmp_path):
     )
 
     runner, tables = create_ephemeral_session([str(csv), str(xlsx)])
-    try:
+    with runner:
         names = [t["name"] for t in tables]
         assert "generation" in names  # from CSV
         assert "generation_2" in names  # from xlsx sheet, deduped
         assert "plants" in names
-    finally:
-        runner.close()
 
 
 def test_xlsx_single_sheet_collides_on_file_stem(tmp_path):
@@ -290,12 +284,10 @@ def test_xlsx_single_sheet_collides_on_file_stem(tmp_path):
     _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"y": [42]})})
 
     runner, tables = create_ephemeral_session([str(csv), str(xlsx)])
-    try:
+    with runner:
         names = [t["name"] for t in tables]
         assert "report" in names
         assert "report_2" in names
-    finally:
-        runner.close()
 
 
 def test_add_files_to_connection_with_xlsx(tmp_path):
@@ -333,7 +325,7 @@ def test_save_project_rebuilds_xlsx_sheets(tmp_path):
     assert db_file.exists()
     conn = duckdb.connect(str(db_file), read_only=True)
     try:
-        assert conn.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 2  # ty: ignore[not-subscriptable]
         assert conn.execute("SELECT id FROM clean").fetchone() == (10,)
     finally:
         conn.close()

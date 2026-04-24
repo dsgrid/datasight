@@ -203,7 +203,10 @@ class ConversationStore:
         data = self._cache.get(session_id)
         if not data:
             return
-        self._path(session_id).write_text(json.dumps(data), encoding="utf-8")
+        self._path(session_id).write_text(
+            json.dumps(_sanitize_non_finite(data), allow_nan=False),
+            encoding="utf-8",
+        )
 
     def delete(self, session_id: str) -> None:
         self._cache.pop(session_id, None)

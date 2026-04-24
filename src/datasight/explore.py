@@ -741,11 +741,14 @@ def build_persistent_duckdb(
                 conn.execute(
                     f'CREATE VIEW "{table["name"]}" AS SELECT * FROM "{alias}"."{source_table}"'
                 )
+                object_type = "view"
             elif table["type"] == "xlsx":
                 _materialize_excel_sheet(conn, table["name"], table["path"], table["sheet_name"])
+                object_type = "table"
             else:
                 conn.execute(create_view_sql(table["name"], table["path"], table["type"]))
-            logger.info(f"Created view '{table['name']}' in {db_path}")
+                object_type = "view"
+            logger.info(f"Created {object_type} '{table['name']}' in {db_path}")
     finally:
         conn.close()
 
@@ -836,14 +839,17 @@ def save_ephemeral_as_project(
                 db_conn.execute(
                     f'CREATE VIEW "{view_name}" AS SELECT * FROM "{alias}"."{source_table}"'
                 )
+                object_type = "view"
             elif table["type"] == "xlsx":
                 _materialize_excel_sheet(
                     db_conn, table["name"], table["path"], table["sheet_name"]
                 )
+                object_type = "table"
             else:
                 sql = create_view_sql(table["name"], table["path"], table["type"])
                 db_conn.execute(sql)
-            logger.info(f"Created persistent view '{table['name']}' in {db_path}")
+                object_type = "view"
+            logger.info(f"Created persistent {object_type} '{table['name']}' in {db_path}")
 
         db_conn.close()
         db_path_str = "data.duckdb"  # Use relative path for newly created file
