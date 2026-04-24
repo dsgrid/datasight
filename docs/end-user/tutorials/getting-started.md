@@ -76,8 +76,8 @@ Click **Pin** on any result to add it to the dashboard.
 - **Use your own data.** [Set up a project](../../project-developer/set-up-project.md)
   walks through connecting your own database or files.
 - **Explore files directly.** [Explore files without a project](../how-to/explore-files.md)
-  skips project setup entirely — point datasight at a CSV, Parquet, or DuckDB
-  file and start asking.
+  skips project setup entirely — point datasight at a CSV, Parquet, Excel, or
+  DuckDB file and start asking.
 
 !!! note "PNG chart export"
     The `datasight ask --chart-format png` CLI command needs the optional

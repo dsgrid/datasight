@@ -1,8 +1,10 @@
-# Query CSV and Parquet files directly
+# Query files directly
 
 DuckDB can query CSV and Parquet files using SQL — without importing or
 copying any data. datasight creates lightweight **views** that point at your
-files and treats them like regular database tables.
+files and treats them like regular database tables. Excel workbooks are also
+supported, with each sheet materialized as a DuckDB table (see
+[Excel files](#excel-files) below for the caveats).
 
 ## Quick explore (no setup)
 
@@ -69,6 +71,40 @@ SELECT * FROM read_csv(
     }
 );
 ```
+
+### Excel files
+
+Unlike CSV and Parquet, DuckDB cannot read `.xlsx` lazily. datasight reads
+Excel workbooks through pandas (with the `openpyxl` engine) and inserts
+each sheet as a full DuckDB **table** — not a view:
+
+- A **single-sheet** workbook produces one table named after the file
+  (e.g. `plants.xlsx` → `plants`).
+- A **multi-sheet** workbook produces one table per sheet, named after
+  the sheet (e.g. sheets `generation` and `plants` → tables `generation`
+  and `plants`). Collisions with existing tables are deduped with a
+  numeric suffix (`generation_2`).
+
+Excel is handled automatically by `datasight run`'s **Explore Files** flow
+and by `datasight generate` / `datasight inspect` when you pass `.xlsx`
+paths — there is no SQL syntax to write yourself. If you want to rebuild
+the project DuckDB from Excel inputs, point `datasight generate` at the
+workbooks:
+
+```bash
+datasight generate generation.xlsx plants.xlsx
+```
+
+!!! warning "Excel data is copied, not referenced"
+    Because sheets are materialized, edits to the underlying `.xlsx` file
+    are **not** picked up on the next query the way CSV/Parquet view
+    changes are. Re-run `datasight generate` (or reload the Explore
+    session) after editing the workbook.
+
+!!! tip "Convert large workbooks to Parquet"
+    Excel sheets are read in full into memory during load. If the
+    workbook is large or queried often, convert it to Parquet once so
+    DuckDB can read it lazily with predicate and column pushdown.
 
 ### Multiple files with globs
 

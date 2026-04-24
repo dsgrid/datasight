@@ -5,7 +5,7 @@ This guide walks you through creating a datasight project for your database.
 ## Prerequisites
 
 - Python 3.11+
-- A database: DuckDB file, SQLite file, PostgreSQL server, or CSV/Parquet files
+- A database: DuckDB file, SQLite file, PostgreSQL server, or CSV/Parquet/Excel files
 - An LLM provider: Anthropic API key, OpenAI API key, GitHub account (free, public), or Ollama (free, local). Not sure which? See [Choosing an LLM](../concepts/choosing-an-llm.md).
 
 ## Install datasight
@@ -162,6 +162,9 @@ datasight generate generation.csv plants.csv
 # Parquet inputs: datasight creates ./database.duckdb
 datasight generate generation.parquet plants.parquet
 
+# Excel inputs: each sheet becomes a table in ./database.duckdb
+datasight generate generation.xlsx plants.xlsx
+
 # CSV inputs with a custom output DuckDB path
 datasight generate generation.csv plants.csv --db-path db/project.duckdb
 
@@ -172,10 +175,12 @@ datasight generate generation.parquet plants.parquet --db-path db/project.duckdb
 For a single existing DuckDB or SQLite file, datasight creates or updates
 `.env` to point at that database directly.
 
-When CSV, Parquet, or mixed file inputs are passed, datasight also:
+When CSV, Parquet, Excel, or mixed file inputs are passed, datasight also:
 
 - Writes a persistent DuckDB file (`database.duckdb` by default in the
-  project directory) with views pointing at each input file.
+  project directory) with views pointing at each CSV/Parquet input file.
+  Excel sheets are materialized as tables (one table per sheet — see
+  [Query files directly](querying-files.md#excel-files)).
 - Creates or updates `.env` with `DB_MODE=duckdb` and `DB_PATH` set to
   the new database. Existing entries are replaced in place; other env
   values (like `ANTHROPIC_API_KEY`) are preserved.

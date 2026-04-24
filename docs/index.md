@@ -7,7 +7,7 @@ hide:
 # datasight
 
 **AI-powered data exploration with natural language.** Point datasight at
-your CSV, Parquet, or DuckDB files and start asking questions — no setup
+your CSV, Parquet, Excel, or DuckDB files and start asking questions — minimal setup
 required. Or create a curated project with schema descriptions and example
 queries for your team. Start with guided starter workflows in the web UI or
 use deterministic CLI inspection commands before involving the LLM.

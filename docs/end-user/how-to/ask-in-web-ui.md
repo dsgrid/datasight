@@ -14,8 +14,8 @@ From the landing page you have three entry points:
 - **Guided starter** — pick a workflow like *Profile this dataset* or *Audit
   nulls and outliers* before loading data. datasight runs the starter as
   soon as your data loads.
-- **Explore Files** — enter a path to a CSV, Parquet, or DuckDB file (or a
-  directory of Parquet files) and click **Explore**.
+- **Explore Files** — enter a path to a CSV, Parquet, Excel, or DuckDB file
+  (or a directory of CSV/Parquet/Excel files) and click **Explore**.
 - **Open Project** — click a recent project or enter a project directory
   path. A project directory must contain `schema_description.md`.
 
