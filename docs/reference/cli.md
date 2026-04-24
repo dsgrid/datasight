@@ -69,7 +69,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `audit-report`: Generate a comprehensive audit report combining all checks.
 - `dimensions`: Surface likely grouping dimensions and category breakdowns.
 - `trends`: Surface likely trend analyses and chart recommendations.
-- `inspect`: Run all analyses on Parquet, CSV, or DuckDB files and print results.
+- `inspect`: Run all analyses on Parquet, CSV, Excel, or DuckDB files and print results.
 - `recipes`: Generate and run reusable deterministic prompt recipes.
 - `doctor`: Check project configuration, local files, and database connectivity.
 - `export`: Export a conversation session as a self-contained HTML page.
@@ -85,9 +85,9 @@ PROJECT_DIR defaults to the current directory.
 
 Use this when you want to fill in .env, schema_description.md,
 queries.yaml, and time_series.yaml by hand.
-If you already have a DuckDB/SQLite database or CSV/Parquet files and
+If you already have a DuckDB/SQLite database or CSV/Parquet/Excel
 
-want datasight to inspect them and draft these files, use:
+files and want datasight to inspect them and draft these files, use:
 
     datasight generate <file>...
 
@@ -271,13 +271,15 @@ Examples:
     datasight generate generation.csv plants.csv
     # Build ./database.duckdb from Parquet inputs
     datasight generate generation.parquet plants.parquet
-    # Build a custom project DuckDB from CSV or Parquet inputs
+    # Build ./database.duckdb from Excel inputs (one table per sheet)
+    datasight generate generation.xlsx
+    # Build a custom project DuckDB from CSV, Parquet, or Excel inputs
     datasight generate generation.csv --db-path project.duckdb
     datasight generate generation.parquet --db-path project.duckdb
 
 FILES are input data. --db-path is only the output DuckDB path used
-when datasight needs to build a project database from CSV/Parquet or
-mixed file inputs.
+when datasight needs to build a project database from CSV/Parquet/Excel
+or mixed file inputs.
 
 ```bash
 datasight generate [OPTIONS] [FILES]...
@@ -292,7 +294,7 @@ datasight generate [OPTIONS] [FILES]...
 | `--model` | Model name (overrides .env). |
 | `--overwrite` | Overwrite existing files. |
 | `--table`, `-t` | Table or view to include (can be specified multiple times). If omitted, all tables are included. |
-| `--db-path` | Output DuckDB path to create from CSV/Parquet or mixed file inputs (default: database.duckdb). Do not use this with a single existing DuckDB or SQLite database; those are referenced directly. |
+| `--db-path` | Output DuckDB path to create from CSV/Parquet/Excel or mixed file inputs (default: database.duckdb). Do not use this with a single existing DuckDB or SQLite database; those are referenced directly. |
 | `--compact-schema` | Write schema.yaml with table names only. Default adds an empty 'excluded_columns: []' placeholder per table so you can fill in glob patterns for columns to hide. |
 | `-v`, `--verbose` | Enable debug logging. |
 
@@ -628,8 +630,8 @@ datasight dimensions [OPTIONS]
 
 Surface likely trend analyses and chart recommendations.
 
-Run inside a configured project, or pass one or more Parquet, CSV, or
-DuckDB files directly for a quick file-only trend scan.
+Run inside a configured project, or pass one or more Parquet, CSV, Excel,
+or DuckDB files directly for a quick file-only trend scan.
 
 Examples:
 
@@ -654,7 +656,7 @@ datasight trends [OPTIONS] [FILES]...
 
 ### `datasight inspect`
 
-Run all analyses on Parquet, CSV, or DuckDB files and print results.
+Run all analyses on Parquet, CSV, Excel, or DuckDB files and print results.
 
 Creates a file-backed session and runs profile, quality, measures,
 dimensions, trends, and recipes — printing everything to the console

@@ -136,7 +136,7 @@ Failed queries are highlighted with an orange border.
 Select the **SQL** tab in the header (or press **S**) to open a direct
 SQL editor over the currently loaded project or explore session. Useful
 when you want to tweak a query the agent generated, or write one from
-scratch against the ephemeral DuckDB of your CSV/Parquet files without
+scratch against the ephemeral DuckDB of your CSV/Parquet/Excel files without
 leaving datasight.
 
 ![SQL editor view with syntax-highlighted query and history](../../assets/screenshots/03-sql-editor.png)

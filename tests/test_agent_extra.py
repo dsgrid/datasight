@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any
 
 import pandas as pd
@@ -49,6 +50,19 @@ def test_resolve_plotly_spec_nested_list_and_dict():
     # Nested column references resolved within list/dict
     assert out["data"][0]["extra"][0] == [1, 2]
     assert out["data"][0]["extra"][1]["nested"] == [1, 2]
+
+
+def test_resolve_plotly_spec_nullable_float_column_serialized():
+    df = pd.DataFrame(
+        {
+            "x": [1, 2, 3],
+            "y": pd.Series([1.0, pd.NA, float("inf")], dtype="Float64"),
+        }
+    )
+    spec = {"data": [{"type": "scatter", "x": "x", "y": "y"}]}
+    out = resolve_plotly_spec(spec, df)
+    assert out["data"][0]["y"] == [1.0, None, None]
+    assert json.dumps(out, allow_nan=False)
 
 
 def test_split_traces_by_group_datetime_column():

@@ -7,7 +7,7 @@ hide:
 # datasight
 
 **AI-powered data exploration with natural language.** Point datasight at
-your CSV, Parquet, or DuckDB files and start asking questions — no setup
+your CSV, Parquet, Excel, or DuckDB files and start asking questions — minimal setup
 required. Or create a curated project with schema descriptions and example
 queries for your team. Start with guided starter workflows in the web UI or
 use deterministic CLI inspection commands before involving the LLM.
@@ -39,7 +39,7 @@ overview.
 
 <div class="grid cards" markdown>
 
--   :material-account:{ .lg .middle } **[End user](end-user/tutorials/getting-started.md)**
+-   :material-account:{ .lg .middle } **[End user](end-user/how-to/install.md)**
 
     ---
 
@@ -49,14 +49,14 @@ overview.
     [:octicons-arrow-right-24: Explore US electricity generation](end-user/tutorials/getting-started.md)
     [:octicons-arrow-right-24: Explore files without a project](end-user/how-to/explore-files.md)
 
--   :material-database-cog:{ .lg .middle } **[Project developer](project-developer/schema-description.md)**
+-   :material-database-cog:{ .lg .middle } **[Project developer](project-developer/set-up-project.md)**
 
     ---
 
     Set up a datasight project for your team. Connect a database, write schema
     descriptions, curate example queries, and verify results across models.
 
-    [:octicons-arrow-right-24: Schema description](project-developer/schema-description.md)
+    [:octicons-arrow-right-24: Set up a project](project-developer/set-up-project.md)
 
 -   :material-code-braces:{ .lg .middle } **[Tool developer](tool-developer/architecture.md)**
 

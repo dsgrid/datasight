@@ -78,10 +78,11 @@ typically outperform PostgreSQL for analytical queries without any tuning.
 
 DuckDB can query Parquet and CSV files directly using SQL — no import
 step, no data duplication. Create lightweight views that point at your
-files and datasight treats them like regular tables.
+files and datasight treats them like regular tables. Excel workbooks are
+also supported, with each sheet materialized as a DuckDB table.
 
-See [Query CSV and Parquet files](querying-files.md) for a full guide
-covering globs, Hive partitioning, and tips.
+See [Query files directly](querying-files.md) for a full guide covering
+globs, Hive partitioning, Excel workbooks, and tips.
 
 ## SQLite
 
