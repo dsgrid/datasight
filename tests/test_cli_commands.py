@@ -528,10 +528,11 @@ def test_run_command_invokes_uvicorn(monkeypatch, tv_project):
     """
     captured = {}
 
-    def fake_uvicorn_run(app, *, host, port, log_level):  # noqa: ARG001
+    def fake_uvicorn_run(app, *, host=None, port=None, uds=None, log_level):  # noqa: ARG001
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
+        captured["uds"] = uds
 
     # The CLI does `import uvicorn` inside the function body, so patch on the
     # real module.
@@ -555,7 +556,72 @@ def test_run_command_invokes_uvicorn(monkeypatch, tv_project):
     assert result.exit_code == 0, result.output
     assert captured["port"] == 9999
     assert captured["host"] == "127.0.0.1"
+    assert captured["uds"] is None
     assert captured["app"] == "datasight.web.app:app"
+
+
+def test_run_command_defaults_to_loopback(monkeypatch, tv_project):
+    """`datasight run` should default to a loopback-only TCP bind."""
+    captured = {}
+
+    def fake_uvicorn_run(app, *, host=None, port=None, uds=None, log_level):  # noqa: ARG001
+        captured["host"] = host
+        captured["port"] = port
+        captured["uds"] = uds
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["run", "--project-dir", tv_project])
+    assert result.exit_code == 0, result.output
+    assert captured["host"] == "127.0.0.1"
+    assert captured["uds"] is None
+
+
+def test_run_command_supports_unix_socket(monkeypatch, tv_project, tmp_path):
+    """`datasight run --unix-socket` should switch uvicorn to UDS mode."""
+    captured = {}
+    socket_path = tmp_path / "datasight.sock"
+
+    def fake_uvicorn_run(app, *, host=None, port=None, uds=None, log_level):  # noqa: ARG001
+        captured["host"] = host
+        captured["port"] = port
+        captured["uds"] = uds
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["run", "--project-dir", tv_project, "--unix-socket", str(socket_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["host"] is None
+    assert captured["port"] is None
+    assert captured["uds"] == str(socket_path)
+
+
+def test_run_command_rejects_port_with_unix_socket(tv_project, tmp_path):
+    """`--port` is invalid when the server is running on a UNIX socket."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "run",
+            "--project-dir",
+            tv_project,
+            "--port",
+            "9999",
+            "--unix-socket",
+            str(tmp_path / "datasight.sock"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--port cannot be used with --unix-socket" in result.output
 
 
 # ---------------------------------------------------------------------------

@@ -2,8 +2,9 @@
 
 If your data lives on an HPC filesystem, the simplest setup is to run
 datasight itself on a compute node and query it from your laptop. No
-Flight SQL server, no extra infrastructure — just install datasight on
-the HPC and an SSH tunnel if you want the browser UI.
+Flight SQL server, no extra infrastructure. For the browser UI, prefer
+an SSH-forwarded UNIX domain socket over exposing a TCP port on the
+compute node.
 
 For a multi-user shared backend or a non-DuckDB engine, see
 [Connect to a remote Flight SQL backend](connect-flight-sql.md)
@@ -98,21 +99,46 @@ You have two low-friction options on the compute node:
     See [Ask questions from the CLI](ask-from-cli.md) for the full CLI
     reference.
 
-=== "Web UI via SSH tunnel"
+=== "Web UI via SSH-forwarded UNIX socket"
 
-    Start the server on the compute node (it binds to `0.0.0.0` by
-    default so the login node can reach it):
+    Start the server on the compute node with a UNIX domain socket:
+
+    ```bash
+    datasight run --unix-socket /tmp/datasight.sock
+    ```
+
+    From your laptop, forward a local TCP port to that remote socket
+    through the login node. Replace `compute-node-42` with your actual
+    hostname (`hostname` on the compute node, or
+    `squeue --me --format="%N" --noheader`):
+
+    ```bash
+    ssh -N \
+      -L 8084:/tmp/datasight.sock \
+      -J user@hpc-login-node \
+      user@compute-node-42
+    ```
+
+    Open <http://localhost:8084> in your browser.
+
+    This keeps datasight off the compute node's TCP listener table
+    entirely. It also avoids choosing and coordinating an open port for
+    each interactive job.
+
+=== "Web UI via SSH TCP tunnel"
+
+    If your local OpenSSH build or site policy does not support socket
+    forwarding, datasight now binds to loopback by default. Start it on
+    the compute node:
 
     ```bash
     datasight run
     ```
 
-    From your laptop, tunnel port 8084 through the login node. Replace
-    `compute-node-42` with your actual hostname (`hostname` on the compute
-    node, or `squeue --me --format="%N" --noheader`):
+    Then forward a TCP port through the compute node itself:
 
     ```bash
-    ssh -N -L 8084:compute-node-42:8084 user@hpc-login-node
+    ssh -N -L 8084:127.0.0.1:8084 -J user@hpc-login-node user@compute-node-42
     ```
 
     Open <http://localhost:8084> in your browser.

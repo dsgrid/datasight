@@ -33,7 +33,10 @@ datasight init
 datasight run
 ```
 
-Open http://localhost:8084 and start asking questions.
+Open http://localhost:8084 and start asking questions. By default, the web UI
+binds to `127.0.0.1`; use `--host` to expose TCP intentionally, or
+`--unix-socket /path/to/datasight.sock` for SSH-forwarded socket workflows on
+HPC systems.
 
 ### Explore CSV, Parquet, or Excel files with no setup
 
