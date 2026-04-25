@@ -116,8 +116,9 @@ Kestrel's `debug` partition lets you request up to half a GPU node for
 models before committing resources.
 
 See [Run on an HPC compute node](../end-user/how-to/run-on-hpc.md) for the
-deployment pattern (datasight runs on the compute node, tunnels back to
-your laptop browser).
+deployment pattern (datasight runs on the compute node and the web UI is
+typically forwarded back to your laptop over SSH, preferably via a UNIX
+domain socket).
 
 ### When hosted beats local
 

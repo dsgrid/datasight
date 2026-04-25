@@ -1133,12 +1133,16 @@ async def _startup() -> None:
         except ProjectError as e:
             logger.error(f"Failed to auto-load project {auto_load_project}: {e}")
 
+    socket_path = os.environ.get("DATASIGHT_UNIX_SOCKET", "").strip()
     port = os.environ.get("PORT", "8084")
     if _state.project_loaded:
         logger.info(f"datasight ready (model={_state.model}, project={_state.project_dir})")
     else:
         logger.info(f"datasight ready (model={_state.model}, no project loaded)")
-    print(f"\n  Ready — open http://localhost:{port} in your browser\n")
+    if socket_path:
+        print(f"\n  Ready — listening on UNIX socket {socket_path}\n")
+    else:
+        print(f"\n  Ready — open http://localhost:{port} in your browser\n")
 
 
 # ---------------------------------------------------------------------------

@@ -311,6 +311,7 @@ Examples:
     datasight run
     datasight run --project-dir eia-demo
     datasight run --port 9000 --model gpt-4o
+    datasight run --unix-socket /tmp/datasight.sock
 
 ```bash
 datasight run [OPTIONS]
@@ -321,7 +322,8 @@ datasight run [OPTIONS]
 | Name | Details |
 | --- | --- |
 | `--port` | Web UI port (default: 8084). |
-| `--host` | Bind address. Default: `0.0.0.0`. |
+| `--host` | Bind address for TCP mode. Default: `127.0.0.1`. |
+| `--unix-socket` | Listen on this UNIX domain socket instead of TCP. |
 | `--model` | LLM model name (overrides .env). |
 | `--project-dir` | Auto-load this project on startup (optional). |
 | `-v`, `--verbose` | Enable debug logging. |
