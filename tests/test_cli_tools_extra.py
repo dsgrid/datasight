@@ -734,6 +734,35 @@ def test_log_cost_summary(tmp_path):
     assert "0.0012" in result.output
 
 
+def test_log_cost_summary_zero_cost_includes_token_totals(tmp_path):
+    _write_query_log(
+        tmp_path,
+        [
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "tool": "run_sql",
+                "sql": "SELECT 1",
+                "execution_time_ms": 1.0,
+            },
+            {
+                "timestamp": "2024-01-01T00:00:01Z",
+                "type": "cost",
+                "user_question": "free test",
+                "api_calls": 1,
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "estimated_cost": 0.0,
+            },
+        ],
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["log", "--project-dir", str(tmp_path), "--cost"])
+    assert result.exit_code == 0
+    assert "LLM Cost Summary" in result.output
+    assert "$0.0000" in result.output
+    assert "10 input tokens, 5 output tokens" in result.output
+
+
 def test_log_full_shows_questions(tmp_path):
     _write_query_log(
         tmp_path,

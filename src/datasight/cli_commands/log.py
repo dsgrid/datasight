@@ -209,7 +209,7 @@ def log_cmd(project_dir, tail_n, errors, full, cost, sql_index):
             out = entry.get("output_tokens", 0)
             cost = entry.get("estimated_cost")
             cost_str = f"${cost:.4f}" if cost is not None else ""
-            if cost:
+            if cost is not None:
                 total_cost += cost
             total_input += inp
             total_output += out

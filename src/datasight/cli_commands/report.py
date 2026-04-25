@@ -204,21 +204,31 @@ def report_run(report_id, project_dir, output_format, chart_format, output_path)
     if result.df is not None and not result.df.empty:
         match output_format:
             case "csv":
-                click.echo(result.df.to_csv(index=False))
+                _write_or_print(
+                    result.df.to_csv(index=False), output_path if not chart_format else None
+                )
             case "json":
-                click.echo(result.df.to_json(orient="records", indent=2))
+                json_output = result.df.to_json(orient="records", indent=2)
+                assert json_output is not None
+                _write_or_print(
+                    json_output,
+                    output_path if not chart_format else None,
+                )
             case _:
                 from rich import box
                 from rich.table import Table as RichTable
 
+                output_console = Console(record=bool(output_path and not chart_format))
                 rt = RichTable(box=box.ROUNDED)
                 for col in result.df.columns:
                     rt.add_column(str(col))
                 for _, row in result.df.head(50).iterrows():
                     rt.add_row(*[str(v) for v in row])
-                console.print(rt)
+                output_console.print(rt)
                 if len(result.df) > 50:
-                    console.print(f"[dim]... showing 50 of {len(result.df)} rows[/dim]")
+                    output_console.print(f"[dim]... showing 50 of {len(result.df)} rows[/dim]")
+                if output_path and not chart_format:
+                    _write_or_print(output_console.export_text(), output_path)
 
     if result.plotly_spec and chart_format:
         import json as json_mod

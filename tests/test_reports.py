@@ -314,3 +314,51 @@ class TestReportRunCLI:
         data = json.loads(result.output[json_start:])
         assert isinstance(data, list)
         assert len(data) >= 1
+
+    def test_run_csv_writes_output_file(self, project_dir, test_duckdb_path, tmp_path):
+        _seed_reports(project_dir)
+        output_path = tmp_path / "report.csv"
+        runner = CliRunner(env={"DB_PATH": test_duckdb_path})
+        result = runner.invoke(
+            cli,
+            [
+                "report",
+                "run",
+                "1",
+                "--project-dir",
+                project_dir,
+                "--format",
+                "csv",
+                "--output",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 0, f"stderr: {result.output}"
+        assert output_path.exists()
+        text = output_path.read_text(encoding="utf-8")
+        assert "count_star()" in text
+        assert "5" in text
+        assert f"Data saved to {output_path}" in result.output
+
+    def test_run_table_writes_output_file(self, project_dir, test_duckdb_path, tmp_path):
+        _seed_reports(project_dir)
+        output_path = tmp_path / "report.txt"
+        runner = CliRunner(env={"DB_PATH": test_duckdb_path})
+        result = runner.invoke(
+            cli,
+            [
+                "report",
+                "run",
+                "1",
+                "--project-dir",
+                project_dir,
+                "--output",
+                str(output_path),
+            ],
+        )
+        assert result.exit_code == 0, f"stderr: {result.output}"
+        assert output_path.exists()
+        text = output_path.read_text(encoding="utf-8")
+        assert "count_star()" in text
+        assert "5" in text
+        assert f"Data saved to {output_path}" in result.output
