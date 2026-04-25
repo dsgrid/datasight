@@ -122,6 +122,7 @@ def run(
     if unix_socket:
         if port is not None:
             raise click.UsageError("--port cannot be used with --unix-socket")
+        os.environ["DATASIGHT_UNIX_SOCKET"] = str(unix_socket)
         click.echo(f"Starting web UI on UNIX socket {unix_socket} ...")
         uvicorn.run(
             "datasight.web.app:app",
@@ -130,6 +131,7 @@ def run(
         )
         return
 
+    os.environ.pop("DATASIGHT_UNIX_SOCKET", None)
     click.echo(f"Starting web UI at http://{host}:{resolved_port} ...")
     uvicorn.run(
         "datasight.web.app:app",

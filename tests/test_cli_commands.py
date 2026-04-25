@@ -18,6 +18,7 @@ deterministic stub.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -563,6 +564,7 @@ def test_run_command_invokes_uvicorn(monkeypatch, tv_project):
 def test_run_command_defaults_to_loopback(monkeypatch, tv_project):
     """`datasight run` should default to a loopback-only TCP bind."""
     captured = {}
+    monkeypatch.delenv("DATASIGHT_UNIX_SOCKET", raising=False)
 
     def fake_uvicorn_run(app, *, host=None, port=None, uds=None, log_level):  # noqa: ARG001
         captured["host"] = host
@@ -578,12 +580,14 @@ def test_run_command_defaults_to_loopback(monkeypatch, tv_project):
     assert result.exit_code == 0, result.output
     assert captured["host"] == "127.0.0.1"
     assert captured["uds"] is None
+    assert "DATASIGHT_UNIX_SOCKET" not in os.environ
 
 
 def test_run_command_supports_unix_socket(monkeypatch, tv_project, tmp_path):
     """`datasight run --unix-socket` should switch uvicorn to UDS mode."""
     captured = {}
     socket_path = tmp_path / "datasight.sock"
+    monkeypatch.delenv("DATASIGHT_UNIX_SOCKET", raising=False)
 
     def fake_uvicorn_run(app, *, host=None, port=None, uds=None, log_level):  # noqa: ARG001
         captured["host"] = host
@@ -603,6 +607,7 @@ def test_run_command_supports_unix_socket(monkeypatch, tv_project, tmp_path):
     assert captured["host"] is None
     assert captured["port"] is None
     assert captured["uds"] == str(socket_path)
+    assert os.environ["DATASIGHT_UNIX_SOCKET"] == str(socket_path)
 
 
 def test_run_command_rejects_port_with_unix_socket(tv_project, tmp_path):
