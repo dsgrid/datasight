@@ -1,0 +1,2992 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI-powered data exploration with natural language">
+      
+      
+      
+      
+        <link rel="prev" href="../connect-flight-sql/">
+      
+      
+        <link rel="next" href="../../tutorials/getting-started/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/datasight-icon.svg">
+      <meta name="generator" content="zensical-0.0.32">
+    
+    
+      
+        <title>Connect to an Apache Spark backend - datasight</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.53a7feaf.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,a=__md_scope)=>JSON.parse(t.getItem(a.pathname+"."+e)),__md_set=(e,t,a=localStorage,_=__md_scope)=>{try{a.setItem(_.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#connect-to-an-apache-spark-backend" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="datasight" class="md-header__button md-logo" aria-label="datasight" data-md-component="logo">
+      
+  <img src="../../../assets/datasight-icon.svg" alt="datasight">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            datasight
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Connect to an Apache Spark backend
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/dsgrid/datasight" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    datasight
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../install/" class="md-tabs__link">
+          
+  
+  End user
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../project-developer/set-up-project/" class="md-tabs__link">
+          
+  
+  Project developer
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../tool-developer/architecture/" class="md-tabs__link">
+          
+  
+  Tool developer
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../reference/configuration/" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../concepts/users-and-roles/" class="md-tabs__link">
+          
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="datasight" class="md-nav__button md-logo" aria-label="datasight" data-md-component="logo">
+      
+  <img src="../../../assets/datasight-icon.svg" alt="datasight">
+
+    </a>
+    datasight
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dsgrid/datasight" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    datasight
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    End user
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    End user
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install datasight
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explore-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explore files without a project
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ask-in-web-ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ask questions in the web UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ask-from-cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ask questions from the CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../create-visualizations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Create visualizations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../build-a-dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build a dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../save-dashboard-template/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Save a dashboard as a template
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../save-and-rerun/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Save and rerun results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../audit-data-quality/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Audit data quality
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configure-measures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configure semantic measures
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../declare-time-series/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Declare time series
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../review-query-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review the SQL query log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../run-on-hpc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run on an HPC compute node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../connect-flight-sql/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect to a remote Flight SQL backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect to an Apache Spark backend
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect to an Apache Spark backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-use-this" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use this
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-install-the-spark-extra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Install the Spark extra
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-configure-the-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Configure the connection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 2: Configure the connection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tuning-the-byte-cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning the byte cap
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-describe-the-schema-for-multi-tb-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Describe the schema for multi-TB scale
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-4-run-datasight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Run datasight
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 4: Run datasight">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file-based-commands-also-route-through-spark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File-based commands also route through Spark
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verifying-youre-actually-distributed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verifying you're actually distributed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-spark-in-the-cloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running Spark in the cloud
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-spark-on-an-hpc-compute-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running Spark on an HPC compute node
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running Spark on an HPC compute node">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-sparkctl-multi-node-standalone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended: sparkctl (multi-node standalone)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallback-hand-rolled-single-node-driver-local-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback: hand-rolled single-node driver (local mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hpc-gotchas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HPC gotchas
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explore US electricity generation (EIA)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/tempo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explore EV charging demand (TEMPO)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/time-validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Time validation demo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/web-ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/keyboard-shortcuts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keyboard shortcuts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/query-confidence-toggles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Query confidence toggles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/query-confidence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why clarifying questions appear
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/trusting-ai-results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trusting AI-generated results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/semantic-measures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What semantic measures are
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project developer
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project developer
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/set-up-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Set up a project
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/database-connections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database connections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/querying-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Query files directly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/schema-description/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write a schema description
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/schema-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Limit schema sent to the LLM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/example-queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Create example queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../project-developer/verification/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verify queries across models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool developer
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tool developer
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tool-developer/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../tool-developer/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../concepts/users-and-roles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users and roles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../concepts/choosing-an-llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an LLM
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../concepts/how-the-agent-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How the agent works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../concepts/sql-result-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQL result cache
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-use-this" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use this
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-1-install-the-spark-extra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1: Install the Spark extra
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-2-configure-the-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2: Configure the connection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 2: Configure the connection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tuning-the-byte-cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tuning the byte cap
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-3-describe-the-schema-for-multi-tb-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3: Describe the schema for multi-TB scale
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#step-4-run-datasight" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4: Run datasight
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Step 4: Run datasight">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file-based-commands-also-route-through-spark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File-based commands also route through Spark
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verifying-youre-actually-distributed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verifying you're actually distributed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-spark-in-the-cloud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running Spark in the cloud
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-spark-on-an-hpc-compute-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running Spark on an HPC compute node
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Running Spark on an HPC compute node">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recommended-sparkctl-multi-node-standalone" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommended: sparkctl (multi-node standalone)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fallback-hand-rolled-single-node-driver-local-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fallback: hand-rolled single-node driver (local mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hpc-gotchas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HPC gotchas
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+  
+
+
+<h1 id="connect-to-an-apache-spark-backend">Connect to an Apache Spark backend<a class="headerlink" href="#connect-to-an-apache-spark-backend" title="Permanent link">&para;</a></h1>
+<p>This guide covers configuring datasight to talk to an Apache Spark cluster
+over <a href="https://spark.apache.org/docs/latest/spark-connect-overview.html">Spark Connect</a>.
+Use this when your data is too large to fit on a single machine — typically
+multi-terabyte Parquet, Delta, or Iceberg tables managed by Spark.</p>
+<h2 id="when-to-use-this">When to use this<a class="headerlink" href="#when-to-use-this" title="Permanent link">&para;</a></h2>
+<p>Reach for the Spark backend when:</p>
+<ul>
+<li><strong>Your data is on a Spark cluster.</strong> Generation data partitioned across
+  years of <code>report_date</code>, plant-level fuel consumption at sub-hourly
+  resolution, or any other multi-TB table set that a single laptop cannot
+  scan.</li>
+<li><strong>Someone else runs the cluster.</strong> A data platform team at your
+  organization already operates Spark with Spark Connect enabled — you just
+  need a URI and credentials.</li>
+<li><strong>You want aggregations, not row dumps.</strong> datasight's agent is steered
+  (via the system prompt) to always aggregate, always filter on partition
+  columns, and never <code>SELECT *</code> on Spark tables. The results come back as
+  small summaries suitable for a chart, not multi-gigabyte exports.</li>
+</ul>
+<p>If your data fits on one machine, prefer DuckDB — it will be much faster
+for interactive exploration.</p>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>Spark Connect decouples the client from the cluster. datasight (the web UI
+and LLM agent) runs on your laptop; the Spark driver and executors run on
+your cluster. Your laptop never materializes more than a bounded slice of
+any result.</p>
+<pre class="mermaid"><code>flowchart LR
+    subgraph laptop ["Your laptop"]
+        DS[datasight web UI&lt;br&gt;+ LLM agent]
+    end
+    subgraph cluster ["Spark cluster"]
+        SC[Spark Connect server]
+        DR[Spark driver&lt;br&gt;+ executors]
+        DATA["Parquet / Delta / Iceberg&lt;br&gt;multi-TB tables"]
+        SC --&gt; DR --&gt; DATA
+    end
+    DS &lt;--&gt;|"SQL over&lt;br&gt;gRPC + Arrow"| SC
+
+    style DS fill:#15a8a8,stroke:#023d60,color:#fff
+    style SC fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style DR fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style DATA fill:#8a7d55,stroke:#6b6040,color:#fff
+    style laptop fill:#1a8a8a,stroke:#15a8a8,color:#fff
+    style cluster fill:#c44a1e,stroke:#fe5d26,color:#fff</code></pre>
+<p>Queries travel as Spark logical plans over gRPC. Results stream back as
+Arrow record batches. datasight stops reading the stream once the
+accumulated result exceeds <code>SPARK_MAX_RESULT_BYTES</code> (default 100 MiB) and
+surfaces a truncation warning in the UI and to the LLM.</p>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A Spark cluster running <strong>Spark 3.5 or newer</strong> with the Spark Connect
+  server enabled.</li>
+<li>The <strong>Spark Connect URI</strong> for that cluster — typically <code>sc://host:15002</code>.
+  Ask your data platform team if you don't know it.</li>
+<li>A <strong>bearer token</strong> if the cluster requires authentication.</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>If you're not sure whether Spark Connect is enabled, ask for the URI.
+Clusters running Databricks, EMR, or self-managed Spark with the
+<code>spark.api.mode=connect</code> config have a Connect endpoint.</p>
+</div>
+<h2 id="step-1-install-the-spark-extra">Step 1: Install the Spark extra<a class="headerlink" href="#step-1-install-the-spark-extra" title="Permanent link">&para;</a></h2>
+<p>The Spark Connect client isn't bundled by default because it pulls in
+pyspark. Install the extra on your laptop:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;datasight[spark]&#39;</span>
+</code></pre></div>
+<p>This adds <code>pyspark[connect]&gt;=4.0,&lt;5</code> to your environment. No Java is
+required — the Connect client is pure Python and talks to the cluster
+over gRPC.</p>
+<h2 id="step-2-configure-the-connection">Step 2: Configure the connection<a class="headerlink" href="#step-2-configure-the-connection" title="Permanent link">&para;</a></h2>
+<p>In your project's <code>.env</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Use any LLM provider (see Getting Started for options)</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nv">ANTHROPIC_API_KEY</span><span class="o">=</span>sk-ant-...
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="nv">DB_MODE</span><span class="o">=</span>spark
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nv">SPARK_REMOTE</span><span class="o">=</span>sc://spark-connect.example.com:15002
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nv">SPARK_TOKEN</span><span class="o">=</span>your_bearer_token<span class="w">            </span><span class="c1"># optional, only if the cluster requires auth</span>
+</code></pre></div>
+<h3 id="tuning-the-byte-cap">Tuning the byte cap<a class="headerlink" href="#tuning-the-byte-cap" title="Permanent link">&para;</a></h3>
+<p>datasight caps client-side result size to protect your laptop (and, if you
+host the web UI for others, the web server) from OOMing when the agent
+writes a query that returns too much data. The default is 100 MiB on the
+wire, which inflates to roughly 250–500 MiB as a pandas DataFrame.</p>
+<p>Raise or lower the cap to match your environment:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Default — safe for most laptops and small web deployments</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nv">SPARK_MAX_RESULT_BYTES</span><span class="o">=</span><span class="m">104857600</span><span class="w">         </span><span class="c1"># 100 MiB</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Lower for memory-constrained environments</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nv">SPARK_MAX_RESULT_BYTES</span><span class="o">=</span><span class="m">26214400</span><span class="w">          </span><span class="c1"># 25 MiB</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Higher if you trust the queries and have the RAM</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nv">SPARK_MAX_RESULT_BYTES</span><span class="o">=</span><span class="m">524288000</span><span class="w">         </span><span class="c1"># 500 MiB</span>
+</code></pre></div>
+<p>When a result is truncated, the UI shows a banner and the LLM sees a
+partial-result warning in its tool output — so the agent can say "showing
+the first 2M rows; add aggregation for the full answer" instead of
+silently misreporting truncated data.</p>
+<h2 id="step-3-describe-the-schema-for-multi-tb-scale">Step 3: Describe the schema for multi-TB scale<a class="headerlink" href="#step-3-describe-the-schema-for-multi-tb-scale" title="Permanent link">&para;</a></h2>
+<p>datasight introspects tables automatically, but for Spark it deliberately
+<strong>skips row counts</strong> — a naive <code>SELECT COUNT(*)</code> on a partitioned
+multi-TB table kicks off a full-cluster job every time the project loads.</p>
+<p>To help the agent write cheap queries, document your partition columns
+explicitly in <code>schema_description.md</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gu">## generation_fuel</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Daily net generation and fuel consumption by plant, aggregated from the
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>EIA-923 hourly feed. Approximately 4 billion rows.
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="gs">**Partition columns:**</span> <span class="sb">`report_date`</span> (daily), <span class="sb">`energy_source_code`</span>.
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>Always include a <span class="sb">`report_date`</span> filter — e.g. `WHERE report_date &gt;=
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>&#39;2024-01-01&#39;` — otherwise the query scans the full history.
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="gs">**Columns:**</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">-</span><span class="w"> </span><span class="sb">`plant_id`</span> (int) — EIA plant identifier
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="k">-</span><span class="w"> </span><span class="sb">`report_date`</span> (date) — partition key
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="k">-</span><span class="w"> </span><span class="sb">`energy_source_code`</span> (varchar) — partition key; &#39;NG&#39;, &#39;COL&#39;, &#39;NUC&#39;, &#39;WND&#39;, etc.
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="k">-</span><span class="w"> </span><span class="sb">`net_generation_mwh`</span> (double) — MWh produced in the period
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="k">-</span><span class="w"> </span><span class="sb">`fuel_consumed_units`</span> (double) — physical units of fuel consumed
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="k">-</span><span class="w"> </span><span class="sb">`fuel_consumed_mmbtu`</span> (double) — heat content consumed
+</code></pre></div>
+<p>Partition hints in the schema description flow into the system prompt, so
+the agent learns to write <code>WHERE report_date &gt;= '2024-01-01' AND
+energy_source_code = 'NG'</code> instead of full-table scans.</p>
+<h2 id="step-4-run-datasight">Step 4: Run datasight<a class="headerlink" href="#step-4-run-datasight" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datasight<span class="w"> </span>run
+</code></pre></div>
+<p>datasight connects to the Spark Connect server via <code>spark.catalog.listTables()</code>,
+pulls column metadata for each table, and starts the web UI at
+<a href="http://localhost:8084">http://localhost:8084</a>. Ask a question and the agent writes Spark SQL
+against your tables.</p>
+<h3 id="file-based-commands-also-route-through-spark">File-based commands also route through Spark<a class="headerlink" href="#file-based-commands-also-route-through-spark" title="Permanent link">&para;</a></h3>
+<p>When <code>DB_MODE=spark</code> is set in your <code>.env</code>, commands that accept explicit
+file arguments — <code>datasight inspect foo.parquet</code>, <code>datasight generate
+--files</code>, <code>datasight trends --files</code>, and the web UI's "explore files"
+flow — register the given Parquet/CSV paths as Spark temp views and run
+introspection on the cluster instead of opening a local in-memory
+DuckDB. Your <code>SPARK_REMOTE</code> appears in the startup log so you can
+confirm Spark was used:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>INFO  File inspection routed through Spark Connect: sc://localhost:15002
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>INFO  Connected to Spark Connect: sc://localhost:15002
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>INFO  Spark session info: ...
+</code></pre></div>
+<p>The file paths you pass must be reachable from the Spark workers at the
+same absolute path — Spark does not upload local files to the cluster.
+On HPC this is usually fine because <code>/scratch</code> / <code>/projects</code> are shared;
+on a laptop-only Spark-Connect setup it won't work, so use DuckDB mode
+in that case.</p>
+<h3 id="verifying-youre-actually-distributed">Verifying you're actually distributed<a class="headerlink" href="#verifying-youre-actually-distributed" title="Permanent link">&para;</a></h3>
+<p>On startup, datasight logs the Spark session details it sees from the
+Connect server. Look for a block like this in the terminal output:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>INFO  Spark session info:
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  version                                   = 3.5.1
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  spark.master                              = spark://master-node:7077
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  spark.app.name                            = datasight
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  spark.app.id                              = app-20260422-0001
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  spark.default.parallelism                 = 208
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  spark.sql.shuffle.partitions              = 200
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>  spark.executor.instances                  = 2
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>  spark.executor.cores                      = 104
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>  spark.executor.memory                     = 200g
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>  spark.dynamicAllocation.enabled           = false
+</code></pre></div>
+<p>The field to check first is <strong><code>spark.master</code></strong>:</p>
+<ul>
+<li><code>spark://host:7077</code> — connected to a standalone cluster. ✓ distributed</li>
+<li><code>yarn</code> / <code>k8s://...</code> — connected to a YARN / Kubernetes cluster. ✓</li>
+<li><code>local</code> or <code>local[*]</code> — <strong>the Connect server is running all work in
+  one JVM on the driver node.</strong> No executors on other nodes are used.
+  This is almost always the reason only one node shows CPU activity.</li>
+</ul>
+<p>If you see <code>local[*]</code> and you expected distribution, datasight also emits
+a warning pointing at the fix:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>WARNING Spark master is &#39;local[*]&#39; — the Connect server is running all
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>work in one JVM on the driver node. If you expected distributed
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>execution, set spark.master on the Connect server (e.g.
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>spark://master:7077, yarn, or k8s://...) and restart it.
+</code></pre></div>
+<p><code>spark.master</code> is set on the <strong>Connect server</strong> side when it starts, not
+on the datasight client. If you launched Spark with
+<code>start-connect-server.sh --master local[104]</code>, that's where the setting
+lives — restart the server with the correct master URL.</p>
+<p>Also useful to check:</p>
+<ul>
+<li><code>spark.executor.instances</code> — should be ≥ 1 for a real cluster. <code>None</code>
+  or missing means dynamic allocation, in which case look at
+  <code>spark.dynamicAllocation.minExecutors</code> / <code>maxExecutors</code>.</li>
+<li><code>spark.default.parallelism</code> — roughly <code>executor_count × cores_per_executor</code>.
+  If this number looks like a single machine's core count, you're local.</li>
+</ul>
+<h2 id="running-spark-in-the-cloud">Running Spark in the cloud<a class="headerlink" href="#running-spark-in-the-cloud" title="Permanent link">&para;</a></h2>
+<p>Most managed Spark services expose a Spark Connect endpoint — all
+datasight needs is the <code>sc://…</code> URI and (if auth is enabled) a bearer
+token.</p>
+<p><strong>Databricks</strong> — connection strings embed the PAT and target cluster
+right in the URI. Datasight forwards this as-is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nv">DB_MODE</span><span class="o">=</span>spark
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nv">SPARK_REMOTE</span><span class="o">=</span>sc://&lt;workspace&gt;.cloud.databricks.com:443/<span class="p">;</span><span class="nv">token</span><span class="o">=</span>&lt;personal-access-token&gt;<span class="p">;</span>x-databricks-cluster-id<span class="o">=</span>&lt;cluster-id&gt;
+</code></pre></div>
+<p><strong>Self-managed on K8s / EKS / GKE / AKS / Dataproc / EMR</strong> — you or
+your team started a Spark Connect server on the cluster. The URI is
+the service hostname and port, TLS if configured, plus optional token:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nv">DB_MODE</span><span class="o">=</span>spark
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nv">SPARK_REMOTE</span><span class="o">=</span>sc://spark-connect.example.com:15002
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="c1"># Or with TLS + bearer auth:</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># SPARK_REMOTE=sc://spark-connect.example.com:443/;use_ssl=true</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="nv">SPARK_TOKEN</span><span class="o">=</span>&lt;bearer-token&gt;
+</code></pre></div>
+<p>No tunnel needed in either case — datasight connects directly to the
+public endpoint. If your cluster is VPC-private, the usual options
+apply: VPN, bastion tunnel, Cloud IAP, etc. — all of which terminate
+at a local port that <code>SPARK_REMOTE=sc://localhost:&lt;port&gt;</code> points at.</p>
+<h2 id="running-spark-on-an-hpc-compute-node">Running Spark on an HPC compute node<a class="headerlink" href="#running-spark-on-an-hpc-compute-node" title="Permanent link">&para;</a></h2>
+<p>If your organization doesn't have a shared Spark cluster but does have
+HPC, you can start a short-lived Spark cluster on Slurm-allocated
+compute nodes and tunnel to it from your laptop.</p>
+<p>The cleanest path is <strong><a href="https://github.com/NatLabRockies/sparkctl">sparkctl</a></strong>
+— an NLR-developed tool that orchestrates a Spark standalone cluster
+across Slurm-allocated compute nodes for you. It handles the master,
+workers, and Connect server in a handful of commands. Fall back to the
+hand-rolled single-node variant below only if sparkctl isn't available
+on your cluster.</p>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p><strong>Do not run Spark on the login node.</strong> Spark drivers and executors
+can consume significant memory and CPU. Always allocate compute
+nodes with Slurm first, then start the services on those nodes.</p>
+</div>
+<h3 id="recommended-sparkctl-multi-node-standalone">Recommended: sparkctl (multi-node standalone)<a class="headerlink" href="#recommended-sparkctl-multi-node-standalone" title="Permanent link">&para;</a></h3>
+<p>sparkctl stands up a Spark standalone cluster across the compute nodes
+in your Slurm allocation — one head (master + driver) and N workers —
+and starts the Connect server on the head node.</p>
+<p><strong>Step 1: Install sparkctl</strong> (one-time, on a login node)</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>module<span class="w"> </span>load<span class="w"> </span>python
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>python<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>~/python-envs/sparkctl
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nb">source</span><span class="w"> </span>~/python-envs/sparkctl/bin/activate
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>pip<span class="w"> </span>install<span class="w"> </span>sparkctl
+</code></pre></div>
+<p>See the <a href="https://natlabrockies.github.io/sparkctl/">sparkctl install guide</a>
+for supported Spark versions and OS notes.</p>
+<p><strong>Step 2: Allocate compute nodes</strong></p>
+<p>sparkctl uses the Slurm env vars to discover the allocation. This
+example reserves 1 node for the master + driver + your interactive
+session, and 2 full nodes for workers:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>salloc<span class="w"> </span>-t<span class="w"> </span><span class="m">04</span>:00:00<span class="w"> </span>-n4<span class="w"> </span>--partition<span class="o">=</span>shared<span class="w"> </span>--mem<span class="o">=</span>30G<span class="w"> </span>:<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">       </span>-N2<span class="w"> </span>--account<span class="o">=</span>&lt;your-account&gt;<span class="w"> </span>--mem<span class="o">=</span>240G
+</code></pre></div>
+<p><strong>Step 3: Configure and start the cluster</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nb">source</span><span class="w"> </span>~/python-envs/sparkctl/bin/activate
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>sparkctl<span class="w"> </span>configure<span class="w">           </span><span class="c1"># inspects the allocation, writes ./conf</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>sparkctl<span class="w"> </span>start<span class="w">               </span><span class="c1"># starts master, workers, and Connect server</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># Set the env vars sparkctl prints so subsequent commands use this cluster.</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SPARK_CONF_DIR</span><span class="o">=</span><span class="k">$(</span><span class="nb">pwd</span><span class="k">)</span>/conf
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="nb">export</span><span class="w"> </span><span class="nv">JAVA_HOME</span><span class="o">=</span>&lt;path<span class="w"> </span>printed<span class="w"> </span>by<span class="w"> </span>sparkctl&gt;
+</code></pre></div>
+<p>The Connect server binds to port 15002 on the head node (the box your
+interactive session is on). Verify with <code>hostname</code> and pick that up as
+<code>$HEAD_NODE</code> for the next step.</p>
+<p><strong>Step 4: SSH tunnel from your laptop</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>ssh<span class="w"> </span>-N<span class="w"> </span>-L<span class="w"> </span><span class="m">15002</span>:&lt;head-node-hostname&gt;:15002<span class="w"> </span>user@hpc-login-node
+</code></pre></div>
+<p><strong>Step 5: Configure datasight</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nv">DB_MODE</span><span class="o">=</span>spark
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nv">SPARK_REMOTE</span><span class="o">=</span>sc://localhost:15002
+</code></pre></div>
+<p><strong>Step 6: When you're done</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>sparkctl<span class="w"> </span>stop
+</code></pre></div>
+<p>Shutting down cleanly returns cluster resources to the scheduler and
+avoids leaked JVMs.</p>
+<p>See the <a href="https://github.com/NatLabRockies/sparkctl/blob/main/docs/tutorials/run_python_spark_jobs_spark_connect.md">sparkctl Spark Connect tutorial</a>
+for the full reference, including how to tune worker memory and
+customize the Spark config before <code>sparkctl start</code>.</p>
+<h3 id="fallback-hand-rolled-single-node-driver-local-mode">Fallback: hand-rolled single-node driver (local mode)<a class="headerlink" href="#fallback-hand-rolled-single-node-driver-local-mode" title="Permanent link">&para;</a></h3>
+<p>Use this only if sparkctl isn't installed on your cluster and you need
+a quick smoke test. Everything runs in one JVM on one node, so there's
+no cross-node parallelism — good for datasets that fit in a single
+compute node's memory, bad for real multi-TB workloads.</p>
+<pre class="mermaid"><code>flowchart LR
+    subgraph laptop ["Your laptop"]
+        DS[datasight web UI&lt;br&gt;+ LLM agent]
+    end
+    subgraph login ["Login node"]
+        SSH[SSH tunnel&lt;br&gt;passthrough only]
+    end
+    subgraph compute ["Compute node · Slurm-allocated"]
+        SC[Spark Connect server]
+        DR[Spark driver&lt;br&gt;+ local executors]
+        PQ["/scratch parquet files"]
+        SC --&gt; DR --&gt; PQ
+    end
+    DS &lt;--&gt;|"SQL over&lt;br&gt;gRPC + Arrow"| SSH &lt;--&gt;|port 15002| SC
+
+    style DS fill:#15a8a8,stroke:#023d60,color:#fff
+    style SSH fill:#bf1363,stroke:#8a0d42,color:#fff
+    style SC fill:#fe5d26,stroke:#c44a1e,color:#fff
+    style DR fill:#2e7ebb,stroke:#1a5c8a,color:#fff
+    style PQ fill:#8a7d55,stroke:#6b6040,color:#fff
+    style laptop fill:#1a8a8a,stroke:#15a8a8,color:#fff
+    style login fill:#9e1050,stroke:#bf1363,color:#fff
+    style compute fill:#c44a1e,stroke:#fe5d26,color:#fff</code></pre>
+<p><strong>Step A1: Allocate one compute node</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>salloc<span class="w"> </span>--time<span class="o">=</span><span class="m">4</span>:00:00<span class="w"> </span>--mem<span class="o">=</span>240G<span class="w"> </span>--cpus-per-task<span class="o">=</span><span class="m">104</span><span class="w"> </span>--account<span class="w"> </span>&lt;your-account&gt;
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>hostname<span class="w">     </span><span class="c1"># note the compute node hostname (e.g. compute-node-42)</span>
+</code></pre></div>
+<p><strong>Step A2: Start Spark Connect on the compute node</strong></p>
+<p>Spark 3.5+ ships a helper script that launches a local driver with the
+Connect server enabled:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># On the compute node, inside your allocation</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nv">$SPARK_HOME</span>/sbin/start-connect-server.sh<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">    </span>--master<span class="w"> </span><span class="s2">&quot;local[104]&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span>--packages<span class="w"> </span>org.apache.spark:spark-connect_2.13:3.5.1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">    </span>--conf<span class="w"> </span>spark.driver.memory<span class="o">=</span>200g<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">    </span>--conf<span class="w"> </span>spark.sql.execution.arrow.pyspark.enabled<span class="o">=</span><span class="nb">true</span>
+</code></pre></div>
+<ul>
+<li><code>--master local[104]</code> runs driver and executors in one JVM using all
+  allocated cores (tune to <code>--cpus-per-task</code>).</li>
+<li><code>--packages</code> pulls the Connect server jar matching your Spark version.
+  Some Spark distributions bundle it already — if so, omit this flag.</li>
+<li><code>--conf spark.driver.memory=...</code> must fit inside your Slurm <code>--mem</code>
+  allocation with headroom for the Python gRPC process and OS cache.</li>
+</ul>
+<p>The script binds the Connect gRPC server to <code>0.0.0.0:15002</code> by default.
+Override with <code>--conf spark.connect.grpc.binding.port=&lt;port&gt;</code> if 15002
+is taken. Check the driver log — it prints the exact bound address.</p>
+<p><strong>Step A3: SSH tunnel from your laptop</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>ssh<span class="w"> </span>-N<span class="w"> </span>-L<span class="w"> </span><span class="m">15002</span>:&lt;compute-node-hostname&gt;:15002<span class="w"> </span>user@hpc-login-node
+</code></pre></div>
+<p>Leave this running in a separate terminal.</p>
+<p><strong>Step A4: Configure datasight</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nv">DB_MODE</span><span class="o">=</span>spark
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="nv">SPARK_REMOTE</span><span class="o">=</span>sc://localhost:15002
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c1"># No SPARK_TOKEN needed — the SSH tunnel already authenticates you</span>
+</code></pre></div>
+<h3 id="hpc-gotchas">HPC gotchas<a class="headerlink" href="#hpc-gotchas" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Use the compute node hostname in the <code>-L</code> target, not the login
+  node.</strong> Spark is on the compute node; the login node is a passthrough.
+  If you tunnel only to the login node, you'll hit <code>connection refused</code>.</li>
+<li><strong>Watch for port collisions.</strong> 15002 is the Spark Connect default;
+  if a previous job on the same node is still bound to it, startup
+  will fail. Either pick a different port (<code>spark.connect.grpc.binding.port</code>)
+  or kill the old job.</li>
+<li><strong>The tunnel dies when the allocation ends.</strong> Request generous
+  <code>--time</code>, or use <code>salloc</code> so you can extend interactively.</li>
+<li><strong>Package resolution requires login-node internet.</strong> The first
+  <code>--packages</code> invocation downloads jars to <code>~/.ivy2</code>. If your compute
+  nodes lack outbound network, pre-resolve on the login node first, or
+  install the Connect jar into <code>$SPARK_HOME/jars</code>.</li>
+<li><strong>Shared filesystem paths must match on every node</strong> — workers
+  executing the query need the parquet data at the exact same path the
+  query references. sparkctl handles this for you; if you're hand-rolling,
+  prefer <code>/scratch</code> or <code>/projects</code> (identically mounted on every node)
+  over per-user paths.</li>
+</ul>
+<h2 id="tips">Tips<a class="headerlink" href="#tips" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Let the agent aggregate.</strong> Questions like "total wind generation by
+  month in 2024" return a tiny result (12 rows) even though the underlying
+  table is terabytes. Questions like "show me every generation record in
+  2024" will hit the byte cap — the agent will be told, and should
+  re-plan as an aggregation.</li>
+<li><strong>Document partition columns</strong> explicitly in <code>schema_description.md</code>.
+  This is the single highest-leverage thing you can do to make Spark
+  queries fast.</li>
+<li><strong>Watch for truncation banners</strong> in the UI. If they appear on
+  aggregated queries, your aggregation isn't grouping enough — the result
+  is still too wide. Either narrow the time range or bucket more
+  aggressively.</li>
+<li><strong>Server-side cancellation works.</strong> If a query hits the <code>LLM_TIMEOUT</code>
+  or you kill the session, datasight calls Spark Connect's <code>interruptTag</code>
+  API so the cluster stops executing the job — cluster resources are
+  freed, not left running in the background.</li>
+<li><strong>Keep credentials out of git.</strong> <code>.env</code> should be in <code>.gitignore</code>
+  (datasight adds it by default).</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["navigation.instant","navigation.tabs","navigation.sections","navigation.expand","navigation.top","search.suggest","search.highlight","content.code.copy","content.tabs.link"],"search":"../../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.91a19a9e.min.js"></script>
+      
+    
+  </body>
+</html>
