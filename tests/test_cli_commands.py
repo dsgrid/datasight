@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -625,8 +626,11 @@ def test_run_command_rejects_port_with_unix_socket(tv_project, tmp_path):
             str(tmp_path / "datasight.sock"),
         ],
     )
-    assert result.exit_code != 0
-    assert "--port cannot be used with --unix-socket" in result.output
+    assert result.exit_code == 2
+    clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--port" in clean_output
+    assert "--unix-socket" in clean_output
+    assert "cannot be used" in clean_output
 
 
 # ---------------------------------------------------------------------------
