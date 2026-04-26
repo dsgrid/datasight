@@ -102,7 +102,7 @@ jobs:
         run: uv run pytest -q -m "not integration" --cov=datasight --cov-report=xml:coverage.xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4.2.0
+        uses: codecov/codecov-action@v6.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
