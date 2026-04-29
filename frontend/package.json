@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
-    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tailwindcss/vite": "^4.2.4",
     "jsdom": "^29.0.2",
     "svelte": "^5.55.5",
