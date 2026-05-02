@@ -39,12 +39,6 @@
     }
   }
 
-  function handleTitleChange(e: Event) {
-    const target = e.target as HTMLInputElement;
-    dashboardStore.updateItem(item.id, { title: target.value });
-    saveDashboard();
-  }
-
   function removeCard() {
     dashboardStore.removeItem(item.id);
     saveDashboard();
@@ -70,20 +64,15 @@
   ondragend={() => (dragOver = false)}
 >
   <!-- Header -->
-  <div class="flex items-center gap-1 px-3 py-1.5 border-b border-border/50">
+  <div class="flex items-center gap-2 px-3 py-1.5 border-b border-border/50">
     <span
       class="cursor-grab text-text-secondary/40 hover:text-text-secondary select-none text-xs"
     >
       ⠿
     </span>
-    <input
-      type="text"
-      value={item.title || ""}
-      onchange={handleTitleChange}
-      placeholder="Section title..."
-      class="flex-1 bg-transparent text-sm font-semibold text-text-primary
-        placeholder:text-text-secondary/40 focus:outline-none"
-    />
+    <span class="flex-1 text-[10px] uppercase tracking-wide text-text-secondary/60">
+      Section
+    </span>
     <button
       class="text-[10px] text-text-secondary hover:text-teal cursor-pointer
         transition-colors"
@@ -107,30 +96,28 @@
         bind:value={markdown}
         oninput={handleInput}
         spellcheck="false"
-        placeholder="Section description (markdown)..."
-        class="w-full min-h-[80px] px-3 py-2 text-xs font-mono bg-bg
+        placeholder="Section content — markdown supported (**bold**, *italic*, ## heading, lists, code, links)..."
+        class="w-full min-h-[120px] px-3 py-2 text-sm font-mono bg-bg
           text-text-primary rounded border border-border resize-y
           focus:outline-none focus:ring-1 focus:ring-teal/40"
       ></textarea>
-      <button
-        class="mt-2 px-3 py-1 text-xs rounded bg-teal text-white
-          hover:opacity-90 cursor-pointer"
-        onclick={handleSave}
-      >
-        Save
-      </button>
     </div>
   {:else if markdown}
     <div
-      class="px-3 py-2 text-xs text-text-primary
-        [&_h1]:text-base [&_h1]:font-bold [&_h2]:text-sm [&_h2]:font-semibold
-        [&_code]:text-[10px] [&_code]:bg-surface-alt [&_code]:px-1
-        [&_ul]:list-disc [&_ul]:pl-4"
+      class="px-4 py-3 text-sm text-text-primary
+        [&_h1]:text-lg [&_h1]:font-bold [&_h1]:mb-2
+        [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mb-2
+        [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mb-1
+        [&_p]:mb-2 [&_strong]:font-semibold
+        [&_code]:text-xs [&_code]:bg-surface-alt [&_code]:px-1 [&_code]:rounded
+        [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5
+        [&_a]:text-teal [&_a]:underline"
     >
       {@html renderedHtml}
     </div>
+  {:else}
+    <div class="px-4 py-3 text-sm text-text-secondary/50 italic">
+      Empty section — click Edit to add content.
+    </div>
   {/if}
-
-  <!-- Separator line -->
-  <div class="border-t border-dashed border-border/50"></div>
 </div>

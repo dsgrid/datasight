@@ -121,12 +121,6 @@
     background: linear-gradient(180deg, #edf9f8 0%, white 100%);
     overflow: hidden;
   }
-  .dashboard-section .section-title {
-    margin: 0 0 8px;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #023d60;
-  }
   .section-body h1, .section-body h2, .section-body h3 {
     margin: 0 0 8px;
     color: #023d60;
@@ -212,7 +206,6 @@
 {{#cards}}
 {{#is_section}}
 <div class="dashboard-section">
-  {{#card_title}}<div class="section-title">{{card_title}}</div>{{/card_title}}
   <div class="section-body" data-markdown="{{{markdown}}}"></div>
 </div>
 {{/is_section}}

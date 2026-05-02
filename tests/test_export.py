@@ -236,7 +236,6 @@ def test_export_dashboard_includes_sections():
             {
                 "id": 2,
                 "type": "section",
-                "title": "Overview Section",
                 "markdown": "## Overview\n\nOpening context.",
             }
         ],
@@ -245,9 +244,9 @@ def test_export_dashboard_includes_sections():
     )
 
     assert "Section Export" in html
-    assert "Overview Section" in html
     assert "section-body" in html
     assert "Overview" in html
+    assert "Opening context." in html
 
 
 def test_export_dashboard_section_is_full_width_row_not_card():
@@ -257,7 +256,6 @@ def test_export_dashboard_section_is_full_width_row_not_card():
             {
                 "id": 1,
                 "type": "section",
-                "title": "Banner",
                 "markdown": "Divider text.",
             },
             {
