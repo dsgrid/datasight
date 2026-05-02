@@ -86,19 +86,21 @@ def escape_html(text: str) -> str:
     )
 
 
-_SCRIPT_JSON_ESCAPES = {
-    # `<` would let `</script>` (or `<!--`) terminate or comment-open the script.
-    "<": "\\u003c",
-    # `>` doesn't itself end a script tag, but escape for symmetry/defense in depth.
-    ">": "\\u003e",
-    # `&` is safe inside <script> but escaping avoids surprises if the JSON is
-    # ever fed through HTML-aware processors.
-    "&": "\\u0026",
-    # JSON allows raw U+2028/U+2029 but pre-ES2019 JS parsers treat them as
-    # line terminators inside string literals and reject the program.
-    " ": "\\u2028",
-    " ": "\\u2029",
-}
+_SCRIPT_JSON_TRANSLATIONS = str.maketrans(
+    {
+        # `<` would let `</script>` (or `<!--`) terminate or comment-open the script.
+        "<": "\\u003c",
+        # `>` doesn't itself end a script tag, but escape for symmetry/defense in depth.
+        ">": "\\u003e",
+        # `&` is safe inside <script> but escaping avoids surprises if the JSON is
+        # ever fed through HTML-aware processors.
+        "&": "\\u0026",
+        # JSON allows raw U+2028/U+2029 but pre-ES2019 JS parsers treat them as
+        # line terminators inside string literals and reject the program.
+        "\u2028": "\\u2028",
+        "\u2029": "\\u2029",
+    }
+)
 
 
 def json_for_script(value: Any) -> str:
@@ -110,10 +112,7 @@ def json_for_script(value: Any) -> str:
     that matter to ``\\uXXXX`` form — still valid JSON, still produces the
     same string when parsed by JS, but inert to the HTML parser.
     """
-    encoded = json.dumps(value)
-    for bad, safe in _SCRIPT_JSON_ESCAPES.items():
-        encoded = encoded.replace(bad, safe)
-    return encoded
+    return json.dumps(value).translate(_SCRIPT_JSON_TRANSLATIONS)
 
 
 def escape_html_attr(text: str) -> str:

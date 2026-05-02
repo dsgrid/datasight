@@ -157,9 +157,9 @@ def test_json_for_script_escapes_script_terminator():
 def test_json_for_script_escapes_line_separators():
     # U+2028 and U+2029 are valid in JSON but break pre-ES2019 JS parsers
     # when they appear inside a string literal.
-    encoded = json_for_script({"sep": "  "})
-    assert " " not in encoded
-    assert " " not in encoded
+    encoded = json_for_script({"sep": "\u2028\u2029"})
+    assert "\u2028" not in encoded
+    assert "\u2029" not in encoded
     assert "\\u2028" in encoded and "\\u2029" in encoded
 
 
