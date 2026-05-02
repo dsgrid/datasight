@@ -286,7 +286,7 @@ async def test_postgres_runner_query_error():
     with patch.dict(sys.modules, {"psycopg": fake}):
         runner = PostgresRunner(host="h", dbname="d")
         # Make execute raise the fake Error
-        runner._conn.execute.side_effect = fake.Error("syntax error")  # ty: ignore[unresolved-attribute, invalid-assignment]
+        runner._conn.execute.side_effect = fake.Error("syntax error")  # ty: ignore[unresolved-attribute]
         with pytest.raises(QueryError, match="syntax error"):
             await runner.run_sql("BADSQL")
         runner.close()
@@ -321,7 +321,7 @@ def test_postgres_runner_close_swallows_errors():
     fake = _make_fake_psycopg(rows=[])
     with patch.dict(sys.modules, {"psycopg": fake}):
         runner = PostgresRunner(host="h", dbname="d")
-        runner._conn.close.side_effect = RuntimeError("boom")  # ty: ignore[unresolved-attribute, invalid-assignment]
+        runner._conn.close.side_effect = RuntimeError("boom")  # ty: ignore[unresolved-attribute]
         runner.close()  # Should not raise
 
 
@@ -476,7 +476,7 @@ def test_flightsql_runner_get_table_names_error():
         {"adbc_driver_flightsql": fake_pkg, "adbc_driver_flightsql.dbapi": fake_dbapi},
     ):
         runner = FlightSqlRunner()
-        runner._conn.adbc_get_objects.side_effect = RuntimeError("no objects")  # ty: ignore[unresolved-attribute, invalid-assignment]
+        runner._conn.adbc_get_objects.side_effect = RuntimeError("no objects")  # ty: ignore[unresolved-attribute]
         with pytest.raises(QueryError, match="Failed to get table names"):
             runner.get_table_names()
         runner.close()
@@ -524,5 +524,5 @@ def test_flightsql_runner_close_swallows_errors():
         {"adbc_driver_flightsql": fake_pkg, "adbc_driver_flightsql.dbapi": fake_dbapi},
     ):
         runner = FlightSqlRunner()
-        runner._conn.close.side_effect = RuntimeError("boom")  # ty: ignore[unresolved-attribute, invalid-assignment]
+        runner._conn.close.side_effect = RuntimeError("boom")  # ty: ignore[unresolved-attribute]
         runner.close()  # Should not raise
