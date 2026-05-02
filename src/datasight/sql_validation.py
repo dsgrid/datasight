@@ -178,6 +178,8 @@ def validate_sql(
         return ValidationResult(valid=True, errors=[])
 
     tree = parsed[0]
+    if not isinstance(tree, exp.Expression):
+        return ValidationResult(valid=True, errors=[])
     errors: list[str] = []
 
     # Collect CTE names so we don't flag them as unknown tables
