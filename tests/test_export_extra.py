@@ -96,6 +96,30 @@ def test_export_dashboard_chart_prefers_render_over_unbound_plotly_spec():
     assert '"col_x"' not in html
 
 
+def test_export_dashboard_chart_prefers_html_spec_over_unbound_plotly_spec():
+    # When render_plotly_spec is absent but html embeds a bound spec, the
+    # html-extracted spec wins over a possibly-unbound plotly_spec.
+    bound_html = (
+        '<html><script>var spec = {"data": [{"type": "bar", "x": [7], "y": [8]}], '
+        '"layout": {}};</script></html>'
+    )
+    unbound = {"data": [{"type": "bar", "x": "col_x", "y": "col_y"}], "layout": {}}
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "FromHtml",
+                "html": bound_html,
+                "plotly_spec": unbound,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    assert "[7]" in html
+    assert '"col_x"' not in html
+
+
 def test_export_dashboard_chart_falls_back_to_plotly_spec_when_no_render():
     # When only plotly_spec is provided (e.g. spec already has data inline),
     # we should still use it.

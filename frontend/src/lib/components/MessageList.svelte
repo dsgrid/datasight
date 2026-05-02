@@ -32,6 +32,20 @@
     onToggleExclude,
   }: Props = $props();
 
+  // Map each event to its turn index. A turn is a user_message and the
+  // tool/assistant events that follow it. Backend export semantics treat
+  // exclude_indices as turn ordinals (incremented per user_message), so the
+  // checkbox lives on the user_message row and dims the whole turn.
+  let turnIndices = $derived.by(() => {
+    const result: number[] = [];
+    let count = -1;
+    for (const m of chatStore.messages) {
+      if (m.type === "user_message") count++;
+      result.push(count);
+    }
+    return result;
+  });
+
   let messagesEl = $state<HTMLElement | null>(null);
 
   /** Auto-scroll to bottom on new messages. */
@@ -202,21 +216,28 @@
   {/if}
 
   {#each chatStore.messages as event, idx (idx)}
-    {@const excluded = excludeIndices.has(idx)}
+    {@const turnIdx = turnIndices[idx]}
+    {@const excluded = turnIdx >= 0 && excludeIndices.has(turnIdx)}
+    {@const isTurnAnchor = event.type === "user_message"}
     <div
       class="flex items-start gap-2 transition-opacity"
       style:opacity={exportMode && excluded ? "0.4" : "1"}
     >
-      {#if exportMode}
+      {#if exportMode && isTurnAnchor}
         <input
           type="checkbox"
           checked={!excluded}
-          title={excluded ? "Include in export" : "Exclude from export"}
-          onchange={() => onToggleExclude?.(idx)}
+          title={excluded ? "Include turn in export" : "Exclude turn from export"}
+          aria-label={excluded
+            ? "Include this turn in export"
+            : "Exclude this turn from export"}
+          onchange={() => onToggleExclude?.(turnIdx)}
           class="cursor-pointer flex-shrink-0"
           style="margin-top: 14px; accent-color: var(--teal);
             width: 16px; height: 16px;"
         />
+      {:else if exportMode}
+        <div class="flex-shrink-0" style="width: 16px;" aria-hidden="true"></div>
       {/if}
       <div class="flex-1 min-w-0">
     {#if event.type === "user_message"}
