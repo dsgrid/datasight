@@ -8,6 +8,7 @@ and the cancellation-tag plumbing.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
@@ -72,8 +73,8 @@ class _FakeSpark:
         version: str = "3.5.1",
     ):
         self.client = _FakeClient(batches)
-        self.catalog = _FakeCatalog(table_names or [])
-        self.conf = _FakeConf(conf)
+        self.catalog: Any = _FakeCatalog(table_names or [])
+        self.conf: Any = _FakeConf(conf)
         self.version = version
         self._sql_seen: list[str] = []
         self.tags_added: list[str] = []
