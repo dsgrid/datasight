@@ -245,12 +245,18 @@ def _build_dashboard_cards(
         }
 
         if item_type == "chart":
-            spec = _extract_plotly_spec(item.get("html", ""))
+            # Prefer render_plotly_spec — it has actual data arrays bound in.
+            # plotly_spec is the unbound template (e.g. x: "column_name") which
+            # Plotly cannot render on its own. Fall back to regex-extracting
+            # from html for the template-driven dashboard apply path.
+            spec = item.get("render_plotly_spec") or item.get("plotly_spec")
+            if not isinstance(spec, dict):
+                spec = _extract_plotly_spec(item.get("html", ""))
             if spec:
                 chart_specs.append({"idx": idx, "spec": spec})
                 card["is_chart"] = True
             else:
-                # Fallback to iframe if spec extraction fails
+                # Fallback to iframe if no spec is available
                 card["is_iframe"] = True
                 card["html"] = escape_html_attr(item.get("html", ""))
         elif item_type == "note":
