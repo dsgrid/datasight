@@ -20,6 +20,18 @@
   import RunDetails from "./RunDetails.svelte";
   import { tick } from "svelte";
 
+  interface Props {
+    exportMode?: boolean;
+    excludeIndices?: Set<number>;
+    onToggleExclude?: (idx: number) => void;
+  }
+
+  let {
+    exportMode = false,
+    excludeIndices = new Set<number>(),
+    onToggleExclude,
+  }: Props = $props();
+
   let messagesEl = $state<HTMLElement | null>(null);
 
   /** Auto-scroll to bottom on new messages. */
@@ -190,6 +202,23 @@
   {/if}
 
   {#each chatStore.messages as event, idx (idx)}
+    {@const excluded = excludeIndices.has(idx)}
+    <div
+      class="flex items-start gap-2 transition-opacity"
+      style:opacity={exportMode && excluded ? "0.4" : "1"}
+    >
+      {#if exportMode}
+        <input
+          type="checkbox"
+          checked={!excluded}
+          title={excluded ? "Include in export" : "Exclude from export"}
+          onchange={() => onToggleExclude?.(idx)}
+          class="cursor-pointer flex-shrink-0"
+          style="margin-top: 14px; accent-color: var(--teal);
+            width: 16px; height: 16px;"
+        />
+      {/if}
+      <div class="flex-1 min-w-0">
     {#if event.type === "user_message"}
       <MessageBubble
         role="user"
@@ -287,5 +316,7 @@
         </div>
       </div>
     {/if}
+      </div>
+    </div>
   {/each}
 </div>

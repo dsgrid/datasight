@@ -80,6 +80,16 @@
     exportExcludeIndices = new Set();
   }
 
+  function toggleExportExclude(idx: number) {
+    const next = new Set(exportExcludeIndices);
+    if (next.has(idx)) {
+      next.delete(idx);
+    } else {
+      next.add(idx);
+    }
+    exportExcludeIndices = next;
+  }
+
   /** Load all data after a project is opened. */
   async function onProjectReady(path?: string) {
     sessionStore.projectLoaded = true;
@@ -389,7 +399,11 @@
     <Sidebar onOpenMeasureEditor={() => (measureEditorOpen = true)} />
     {#if dashboardStore.currentView === "chat"}
       <div class="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
-        <ChatView />
+        <ChatView
+          {exportMode}
+          excludeIndices={exportExcludeIndices}
+          onToggleExclude={toggleExportExclude}
+        />
         <ExportBar
           open={exportMode}
           excludeIndices={exportExcludeIndices}
