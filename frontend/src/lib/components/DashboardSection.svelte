@@ -21,10 +21,22 @@
 
   let renderedHtml = $derived(renderMarkdown(markdown));
 
+  function handleInput() {
+    dashboardStore.updateItem(item.id, { markdown });
+  }
+
   function handleSave() {
     dashboardStore.updateItem(item.id, { markdown });
     editing = false;
     saveDashboard();
+  }
+
+  function toggleEditing() {
+    if (editing) {
+      handleSave();
+    } else {
+      editing = true;
+    }
   }
 
   function handleTitleChange(e: Event) {
@@ -75,7 +87,7 @@
     <button
       class="text-[10px] text-text-secondary hover:text-teal cursor-pointer
         transition-colors"
-      onclick={() => (editing = !editing)}
+      onclick={toggleEditing}
     >
       {editing ? "Done" : "Edit"}
     </button>
@@ -93,6 +105,7 @@
     <div class="p-3">
       <textarea
         bind:value={markdown}
+        oninput={handleInput}
         spellcheck="false"
         placeholder="Section description (markdown)..."
         class="w-full min-h-[80px] px-3 py-2 text-xs font-mono bg-bg
