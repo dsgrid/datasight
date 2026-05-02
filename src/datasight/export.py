@@ -13,7 +13,7 @@ from typing import Any
 
 from datasight.chart import build_chart_html
 from datasight.events import EventType
-from datasight.templating import escape_html_attr, render_template
+from datasight.templating import escape_html_attr, json_for_script, render_template
 
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 MARKED_CDN = "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
@@ -403,7 +403,7 @@ def export_dashboard_html(
             "dompurify_cdn": DOMPURIFY_CDN,
             "columns": columns,
             "cards": cards,
-            "chart_specs_json": json.dumps(chart_specs),
+            "chart_specs_json": json_for_script(chart_specs),
             "has_filters": bool(filter_chips),
             "filter_chips": filter_chips,
         },

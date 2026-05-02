@@ -1,6 +1,10 @@
 """Additional tests for export covering dashboard chart/iframe/error paths."""
 
+import json
+
+from datasight.chart import build_chart_html
 from datasight.export import _extract_plotly_spec, export_dashboard_html
+from datasight.templating import json_for_script
 
 
 def test_extract_plotly_spec_valid():
@@ -138,6 +142,60 @@ def test_export_dashboard_chart_falls_back_to_plotly_spec_when_no_render():
     )
     assert "FromPlotlySpec" in html
     assert '"y": [2]' in html or '"y":[2]' in html
+
+
+def test_json_for_script_escapes_script_terminator():
+    encoded = json_for_script({"title": "</script><script>alert(1)</script>"})
+    # Must NOT contain a raw `</script>` — that would break out of the
+    # surrounding script element and let the browser parse what follows.
+    assert "</script>" not in encoded
+    assert "\\u003c/script\\u003e" in encoded
+    # Round-trips back to the original string.
+    assert json.loads(encoded)["title"] == "</script><script>alert(1)</script>"
+
+
+def test_json_for_script_escapes_line_separators():
+    # U+2028 and U+2029 are valid in JSON but break pre-ES2019 JS parsers
+    # when they appear inside a string literal.
+    encoded = json_for_script({"sep": "  "})
+    assert " " not in encoded
+    assert " " not in encoded
+    assert "\\u2028" in encoded and "\\u2029" in encoded
+
+
+def test_export_dashboard_chart_escapes_script_in_spec_strings():
+    # Hostile string values inside the Plotly spec must not break out of the
+    # <script> block in the exported HTML.
+    spec = {
+        "data": [{"type": "bar", "x": [1], "y": [2]}],
+        "layout": {"title": "</script><img src=x onerror=alert(1)>"},
+    }
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "X",
+                "html": "",
+                "render_plotly_spec": spec,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    # The literal injection payload must be escaped.
+    assert "</script><img src=x onerror=alert(1)>" not in html
+    # And the safe-encoded form should be present.
+    assert "\\u003c/script\\u003e" in html
+
+
+def test_build_chart_html_escapes_script_in_spec_strings():
+    spec = {
+        "data": [{"type": "bar", "x": [1], "y": [2]}],
+        "layout": {"title": "</script><img src=x onerror=alert(1)>"},
+    }
+    html = build_chart_html(spec, title="X")
+    assert "</script><img src=x onerror=alert(1)>" not in html
+    assert "\\u003c/script\\u003e" in html
 
 
 def test_export_dashboard_source_error_shown():
