@@ -13,7 +13,7 @@ from typing import Any
 
 from datasight.chart import build_chart_html
 from datasight.events import EventType
-from datasight.templating import escape_html_attr, render_template
+from datasight.templating import escape_html_attr, json_for_script, render_template
 
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 MARKED_CDN = "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
@@ -245,12 +245,22 @@ def _build_dashboard_cards(
         }
 
         if item_type == "chart":
-            spec = _extract_plotly_spec(item.get("html", ""))
+            # Prefer render_plotly_spec — it has actual data arrays bound in.
+            # Otherwise extract a bound spec from a fully-rendered html (the
+            # template-driven dashboard apply path ships chart html). Only
+            # fall through to plotly_spec last, since it can be the unbound
+            # template (e.g. x: "column_name") that Plotly cannot render.
+            spec = item.get("render_plotly_spec")
+            if not isinstance(spec, dict):
+                spec = _extract_plotly_spec(item.get("html", ""))
+            if not isinstance(spec, dict):
+                candidate = item.get("plotly_spec")
+                spec = candidate if isinstance(candidate, dict) else None
             if spec:
                 chart_specs.append({"idx": idx, "spec": spec})
                 card["is_chart"] = True
             else:
-                # Fallback to iframe if spec extraction fails
+                # Fallback to iframe if no spec is available
                 card["is_iframe"] = True
                 card["html"] = escape_html_attr(item.get("html", ""))
         elif item_type == "note":
@@ -393,7 +403,7 @@ def export_dashboard_html(
             "dompurify_cdn": DOMPURIFY_CDN,
             "columns": columns,
             "cards": cards,
-            "chart_specs_json": json.dumps(chart_specs),
+            "chart_specs_json": json_for_script(chart_specs),
             "has_filters": bool(filter_chips),
             "filter_chips": filter_chips,
         },

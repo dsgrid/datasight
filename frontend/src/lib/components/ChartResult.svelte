@@ -33,7 +33,10 @@
 <div class="tool-result group w-full animate-fade-in" style="position: relative; margin-bottom: 16px;">
   <!-- Floating action buttons (visible on hover) -->
   {#if onBookmark || onSaveReport || onPin || onDelete}
-    <div class="tool-action-bar opacity-0 group-hover:opacity-100">
+    <div
+      class="tool-action-bar opacity-0 group-hover:opacity-100"
+      style="left: 4px; right: auto; justify-content: flex-start;"
+    >
       {#if onBookmark}
         <button
           class="tool-action-btn"

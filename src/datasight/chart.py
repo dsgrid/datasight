@@ -7,10 +7,9 @@ inside an iframe, with light/dark theme support and customization controls.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from datasight.templating import render_template
+from datasight.templating import json_for_script, render_template
 
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 
@@ -33,7 +32,7 @@ def build_chart_html(chart_dict: dict[str, Any], title: str) -> str:
         "chart",
         {
             "plotly_cdn": PLOTLY_CDN,
-            "chart_json": json.dumps(chart_dict),
+            "chart_json": json_for_script(chart_dict),
             "title": title,
         },
     )

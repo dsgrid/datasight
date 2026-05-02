@@ -7,6 +7,7 @@ from the templates directory.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,35 @@ def escape_html(text: str) -> str:
         .replace('"', "&quot;")
         .replace("'", "&#x27;")
     )
+
+
+_SCRIPT_JSON_TRANSLATIONS = str.maketrans(
+    {
+        # `<` would let `</script>` (or `<!--`) terminate or comment-open the script.
+        "<": "\\u003c",
+        # `>` doesn't itself end a script tag, but escape for symmetry/defense in depth.
+        ">": "\\u003e",
+        # `&` is safe inside <script> but escaping avoids surprises if the JSON is
+        # ever fed through HTML-aware processors.
+        "&": "\\u0026",
+        # JSON allows raw U+2028/U+2029 but pre-ES2019 JS parsers treat them as
+        # line terminators inside string literals and reject the program.
+        "\u2028": "\\u2028",
+        "\u2029": "\\u2029",
+    }
+)
+
+
+def json_for_script(value: Any) -> str:
+    """Serialize ``value`` as JSON safe to embed inside an HTML ``<script>`` tag.
+
+    ``json.dumps`` does not escape ``<``, so a string value containing
+    ``</script>`` would terminate the surrounding script element and let
+    everything after it be parsed as HTML. Escape the handful of characters
+    that matter to ``\\uXXXX`` form — still valid JSON, still produces the
+    same string when parsed by JS, but inert to the HTML parser.
+    """
+    return json.dumps(value).translate(_SCRIPT_JSON_TRANSLATIONS)
 
 
 def escape_html_attr(text: str) -> str:

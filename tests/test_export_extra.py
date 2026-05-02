@@ -1,6 +1,10 @@
 """Additional tests for export covering dashboard chart/iframe/error paths."""
 
+import json
+
+from datasight.chart import build_chart_html
 from datasight.export import _extract_plotly_spec, export_dashboard_html
+from datasight.templating import json_for_script
 
 
 def test_extract_plotly_spec_valid():
@@ -49,6 +53,149 @@ def test_export_dashboard_chart_fallback_to_iframe_when_spec_missing():
         columns=1,
     )
     assert "Broken" in html
+
+
+def test_export_dashboard_chart_uses_render_plotly_spec():
+    # The live UI streams chart tool_results with html="" and renders the
+    # data-bound spec from render_plotly_spec. The export must use that
+    # rendered spec rather than try to regex it back out of an empty html.
+    spec = {"data": [{"type": "scatter", "x": [0], "y": [9]}], "layout": {}}
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "FromRenderSpec",
+                "html": "",
+                "render_plotly_spec": spec,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    assert "FromRenderSpec" in html
+    assert '"y": [9]' in html or '"y":[9]' in html
+    assert 'srcdoc=""' not in html
+
+
+def test_export_dashboard_chart_prefers_render_over_unbound_plotly_spec():
+    # plotly_spec is an unbound template referencing column names; only
+    # render_plotly_spec has actual data arrays. We must pick the rendered one.
+    unbound = {"data": [{"type": "box", "x": "col_x", "y": "col_y"}], "layout": {}}
+    rendered = {"data": [{"type": "box", "x": [1, 2, 3], "y": [4, 5, 6]}], "layout": {}}
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "Bound",
+                "html": "",
+                "plotly_spec": unbound,
+                "render_plotly_spec": rendered,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    # Concrete values present, the column-name template is not.
+    assert "[1, 2, 3]" in html
+    assert '"col_x"' not in html
+
+
+def test_export_dashboard_chart_prefers_html_spec_over_unbound_plotly_spec():
+    # When render_plotly_spec is absent but html embeds a bound spec, the
+    # html-extracted spec wins over a possibly-unbound plotly_spec.
+    bound_html = (
+        '<html><script>var spec = {"data": [{"type": "bar", "x": [7], "y": [8]}], '
+        '"layout": {}};</script></html>'
+    )
+    unbound = {"data": [{"type": "bar", "x": "col_x", "y": "col_y"}], "layout": {}}
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "FromHtml",
+                "html": bound_html,
+                "plotly_spec": unbound,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    assert "[7]" in html
+    assert '"col_x"' not in html
+
+
+def test_export_dashboard_chart_falls_back_to_plotly_spec_when_no_render():
+    # When only plotly_spec is provided (e.g. spec already has data inline),
+    # we should still use it.
+    spec = {"data": [{"type": "bar", "x": [1], "y": [2]}], "layout": {}}
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "FromPlotlySpec",
+                "html": "",
+                "plotly_spec": spec,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    assert "FromPlotlySpec" in html
+    assert '"y": [2]' in html or '"y":[2]' in html
+
+
+def test_json_for_script_escapes_script_terminator():
+    encoded = json_for_script({"title": "</script><script>alert(1)</script>"})
+    # Must NOT contain a raw `</script>` — that would break out of the
+    # surrounding script element and let the browser parse what follows.
+    assert "</script>" not in encoded
+    assert "\\u003c/script\\u003e" in encoded
+    # Round-trips back to the original string.
+    assert json.loads(encoded)["title"] == "</script><script>alert(1)</script>"
+
+
+def test_json_for_script_escapes_line_separators():
+    # U+2028 and U+2029 are valid in JSON but break pre-ES2019 JS parsers
+    # when they appear inside a string literal.
+    encoded = json_for_script({"sep": "\u2028\u2029"})
+    assert "\u2028" not in encoded
+    assert "\u2029" not in encoded
+    assert "\\u2028" in encoded and "\\u2029" in encoded
+
+
+def test_export_dashboard_chart_escapes_script_in_spec_strings():
+    # Hostile string values inside the Plotly spec must not break out of the
+    # <script> block in the exported HTML.
+    spec = {
+        "data": [{"type": "bar", "x": [1], "y": [2]}],
+        "layout": {"title": "</script><img src=x onerror=alert(1)>"},
+    }
+    html = export_dashboard_html(
+        [
+            {
+                "type": "chart",
+                "title": "X",
+                "html": "",
+                "render_plotly_spec": spec,
+            }
+        ],
+        title="Dash",
+        columns=1,
+    )
+    # The literal injection payload must be escaped.
+    assert "</script><img src=x onerror=alert(1)>" not in html
+    # And the safe-encoded form should be present.
+    assert "\\u003c/script\\u003e" in html
+
+
+def test_build_chart_html_escapes_script_in_spec_strings():
+    spec = {
+        "data": [{"type": "bar", "x": [1], "y": [2]}],
+        "layout": {"title": "</script><img src=x onerror=alert(1)>"},
+    }
+    html = build_chart_html(spec, title="X")
+    assert "</script><img src=x onerror=alert(1)>" not in html
+    assert "\\u003c/script\\u003e" in html
 
 
 def test_export_dashboard_source_error_shown():
