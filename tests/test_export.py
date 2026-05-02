@@ -236,7 +236,6 @@ def test_export_dashboard_includes_sections():
             {
                 "id": 2,
                 "type": "section",
-                "title": "Overview Section",
                 "markdown": "## Overview\n\nOpening context.",
             }
         ],
@@ -245,9 +244,40 @@ def test_export_dashboard_includes_sections():
     )
 
     assert "Section Export" in html
-    assert "Overview Section" in html
     assert "section-body" in html
     assert "Overview" in html
+    assert "Opening context." in html
+
+
+def test_export_dashboard_section_is_full_width_row_not_card():
+    """Sections must render as full-width rows, not chart-style cards."""
+    html = export_dashboard_html(
+        [
+            {
+                "id": 1,
+                "type": "section",
+                "markdown": "Divider text.",
+            },
+            {
+                "id": 2,
+                "type": "table",
+                "title": "Numbers",
+                "html": "<table><tr><td>1</td></tr></table>",
+            },
+        ],
+        title="Mixed",
+        columns=2,
+    )
+
+    section_idx = html.index('<div class="dashboard-section">')
+    # The next opened div tag after the section opener is the section's children
+    # (section-title or section-body) — never a dashboard-card wrapper.
+    next_card_idx = html.find('<div class="dashboard-card">', section_idx)
+    next_section_close = html.find("</div>\n</div>", section_idx)
+    assert next_card_idx == -1 or next_card_idx > next_section_close, (
+        "section is wrapped inside a dashboard-card chart tile"
+    )
+    assert "grid-column: 1 / -1" in html  # full-width CSS rule present
 
 
 def test_export_dashboard_includes_source_metadata():
