@@ -113,9 +113,19 @@
   .note-container {
     padding: 16px 18px;
   }
-  .section-container {
-    padding: 18px 18px 14px;
-    background: linear-gradient(180deg, #edf9f8, white);
+  .dashboard-section {
+    grid-column: 1 / -1;
+    padding: 16px 20px 14px;
+    border: 1px dashed #bcd6d6;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #edf9f8 0%, white 100%);
+    overflow: hidden;
+  }
+  .dashboard-section .section-title {
+    margin: 0 0 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #023d60;
   }
   .section-body h1, .section-body h2, .section-body h3 {
     margin: 0 0 8px;
@@ -123,6 +133,7 @@
     line-height: 1.2;
   }
   .section-body p { margin: 0 0 10px; color: #3b4a56; }
+  .section-body ul, .section-body ol { margin: 0 0 10px 22px; color: #3b4a56; }
   .note-body {
     color: #24323d;
   }
@@ -199,13 +210,19 @@
 {{/has_filters}}
 <div class="dashboard-grid">
 {{#cards}}
+{{#is_section}}
+<div class="dashboard-section">
+  {{#card_title}}<div class="section-title">{{card_title}}</div>{{/card_title}}
+  <div class="section-body" data-markdown="{{{markdown}}}"></div>
+</div>
+{{/is_section}}
+{{^is_section}}
 <div class="dashboard-card">
 {{#card_title}}<div class="card-title">{{card_title}}</div>{{/card_title}}
 {{#is_chart}}<div class="chart-container" id="chart-{{idx}}"></div>{{/is_chart}}
 {{#is_iframe}}<iframe sandbox="allow-scripts allow-same-origin" srcdoc="{{{html}}}"></iframe>{{/is_iframe}}
 {{#is_table}}<div class="table-container">{{{html}}}</div>{{/is_table}}
 {{#is_note}}<div class="note-container"><div class="note-body" data-markdown="{{{markdown}}}"></div></div>{{/is_note}}
-{{#is_section}}<div class="section-container"><div class="section-body" data-markdown="{{{markdown}}}"></div></div>{{/is_section}}
 {{#has_source_meta}}
 <details class="source-details">
   <summary>Source</summary>
@@ -219,6 +236,7 @@
 </details>
 {{/has_source_meta}}
 </div>
+{{/is_section}}
 {{/cards}}
 </div>
 <div class="footer">Exported from datasight</div>
