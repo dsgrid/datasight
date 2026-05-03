@@ -1,5 +1,8 @@
 """Extra tests for datasight.explore covering duplicate handling and error paths."""
 
+from types import SimpleNamespace
+from typing import Any, cast
+
 import duckdb
 import pandas as pd
 import pytest
@@ -8,6 +11,7 @@ from datasight.exceptions import ConfigurationError
 from datasight.explore import (
     add_files_to_connection,
     create_ephemeral_session,
+    create_files_session_for_settings,
     detect_file_type,
     save_ephemeral_as_project,
     scan_directory_for_data_files,
@@ -171,6 +175,46 @@ def test_create_ephemeral_session_csv_table_mode_materializes(tmp_path):
             "WHERE table_schema='main' AND table_name='generation'"
         ).fetchone()
         assert relation == ("BASE TABLE",)
+
+
+def test_create_ephemeral_session_invalid_import_mode_raises(tmp_path):
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="Unsupported import mode"):
+        create_ephemeral_session([str(csv)], import_mode=cast(Any, "bogus"))
+
+
+def test_create_ephemeral_session_rejects_excel_view_mode(tmp_path):
+    xlsx = tmp_path / "plants.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"plant_id": [1]})})
+
+    with pytest.raises(ConfigurationError, match="Excel inputs are always materialized"):
+        create_ephemeral_session([str(xlsx)], import_mode="view")
+
+
+def test_add_files_to_connection_rejects_excel_view_mode(tmp_path):
+    conn = duckdb.connect(":memory:")
+    xlsx = tmp_path / "plants.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"plant_id": [1]})})
+
+    with pytest.raises(ConfigurationError, match="Excel inputs are always materialized"):
+        add_files_to_connection(conn, [str(xlsx)], existing_table_names=set(), import_mode="view")
+    conn.close()
+
+
+def test_create_files_session_for_settings_rejects_spark_table_mode(tmp_path):
+    parquet = tmp_path / "generation.parquet"
+    pd.DataFrame({"x": [1]}).to_parquet(parquet)
+    settings = SimpleNamespace(
+        mode="spark",
+        spark_remote="sc://cluster:15002",
+        spark_token=None,
+        spark_max_result_bytes=1_000_000,
+    )
+
+    with pytest.raises(ConfigurationError, match="--import-mode=table is not supported"):
+        create_files_session_for_settings([str(parquet)], cast(Any, settings), import_mode="table")
 
 
 def test_add_files_to_connection_with_duckdb(tmp_path):

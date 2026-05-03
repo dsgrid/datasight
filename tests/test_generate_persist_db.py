@@ -333,6 +333,56 @@ def test_generate_import_mode_view_keeps_csv_as_view(tmp_path, stub_llm):
         assert relation == ("VIEW",)
 
 
+def test_generate_import_mode_table_inspects_with_views_but_persists_tables(
+    tmp_path, stub_llm, monkeypatch
+):
+    csv_path = tmp_path / "generation.csv"
+    csv_path.write_text(
+        "energy_source_code,net_generation_mwh\nWND,100\nSUN,80\n", encoding="utf-8"
+    )
+
+    from datasight import explore as explore_module
+
+    original_session = explore_module.create_files_session_for_settings
+    original_build = explore_module.build_persistent_duckdb
+    captured: dict[str, object] = {}
+
+    def _capturing_session(file_paths, settings, import_mode="auto"):
+        captured["session_import_mode"] = import_mode
+        return original_session(file_paths, settings, import_mode=import_mode)
+
+    def _capturing_build(db_path, tables_info, *, overwrite=False):
+        captured["persistent_import_modes"] = [t.get("import_mode") for t in tables_info]
+        return original_build(db_path, tables_info, overwrite=overwrite)
+
+    monkeypatch.setattr(explore_module, "create_files_session_for_settings", _capturing_session)
+    monkeypatch.setattr(explore_module, "build_persistent_duckdb", _capturing_build)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(csv_path),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "table",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["session_import_mode"] == "auto"
+    assert captured["persistent_import_modes"] == ["table"]
+
+    db_path = tmp_path / "database.duckdb"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("BASE TABLE",)
+
+
 def test_generate_rejects_import_mode_with_existing_duckdb(tmp_path, stub_llm):
     db_path = tmp_path / "generation.duckdb"
     conn = duckdb.connect(str(db_path))

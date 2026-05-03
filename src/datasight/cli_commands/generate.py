@@ -173,6 +173,9 @@ def generate(
     # configured for a non-DuckDB backend; we're not going to touch the
     # local DuckDB in that case.
     use_files = bool(files)
+    inspection_import_mode = (
+        "auto" if use_files and normalized_import_mode == "table" else normalized_import_mode
+    )
     db_target: Path | None = None
     sqlite_source_path: Path | None = None
     duckdb_source_path: Path | None = None
@@ -341,7 +344,7 @@ def generate(
             from datasight.explore import create_files_session_for_settings
 
             sql_runner, tables_info = create_files_session_for_settings(
-                list(files), settings.database, import_mode=normalized_import_mode
+                list(files), settings.database, import_mode=inspection_import_mode
             )
         else:
             sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
@@ -513,8 +516,16 @@ def generate(
             from datasight.explore import build_persistent_duckdb
 
             assert db_target is not None  # set above when use_files is True
+            persistent_tables_info = tables_info
+            if normalized_import_mode == "table":
+                persistent_tables_info = []
+                for table_info in tables_info:
+                    updated = dict(table_info)
+                    if updated.get("type") not in {"duckdb", "xlsx"}:
+                        updated["import_mode"] = "table"
+                    persistent_tables_info.append(updated)
             try:
-                build_persistent_duckdb(db_target, tables_info, overwrite=overwrite)
+                build_persistent_duckdb(db_target, persistent_tables_info, overwrite=overwrite)
             except FileExistsError:
                 # Preflight above rejects pre-existing DBs without --overwrite,
                 # so reaching here means the file appeared mid-run.

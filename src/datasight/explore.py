@@ -40,6 +40,8 @@ _AUTO_IMPORT_MODES: dict[str, Literal["view", "table"]] = {
     "xlsx": "table",
 }
 
+_VALID_IMPORT_MODES = {"auto", "view", "table"}
+
 
 def detect_file_type(path: str) -> str | None:
     """Detect the type of a data file or directory.
@@ -182,8 +184,10 @@ def sanitize_table_name(name: str) -> str:
 
 def resolve_import_mode(file_type: str, import_mode: ImportMode) -> Literal["view", "table"]:
     """Resolve an explicit or automatic import mode for a supported file type."""
-    if import_mode != "auto":
+    if import_mode == "view" or import_mode == "table":
         return import_mode
+    if import_mode != "auto":
+        raise ValueError(f"Unsupported import mode: {import_mode}")
     try:
         return _AUTO_IMPORT_MODES[file_type]
     except KeyError as e:
@@ -409,11 +413,18 @@ def create_ephemeral_session(
     """
     if not file_paths:
         raise ConfigurationError("No file paths provided")
+    if import_mode not in _VALID_IMPORT_MODES:
+        raise ConfigurationError(f"Unsupported import mode: {import_mode}")
 
     # Categorize files by type
     resolved_paths = [
         (str(Path(p).resolve()), detect_file_type(str(Path(p).resolve()))) for p in file_paths
     ]
+    if import_mode == "view" and any(file_type == "xlsx" for _, file_type in resolved_paths):
+        raise ConfigurationError(
+            "Excel inputs are always materialized as DuckDB tables; "
+            "--import-mode=view is not supported for .xlsx files."
+        )
     duckdb_files = [p for p, t in resolved_paths if t == "duckdb"]
     other_files = [(p, t) for p, t in resolved_paths if t is not None and t != "duckdb"]
     invalid_files = [p for p, t in resolved_paths if t is None]
@@ -633,6 +644,8 @@ def create_files_session_for_settings(
     - ``postgres`` / ``flightsql``: fall back to DuckDB with a warning —
       those backends can't read arbitrary local files.
     """
+    if import_mode not in _VALID_IMPORT_MODES:
+        raise ConfigurationError(f"Unsupported import mode: {import_mode}")
     if settings is None:
         logger.info("File session: in-memory DuckDB (no settings / no .env)")
         return create_ephemeral_session(file_paths, import_mode=import_mode)
@@ -640,6 +653,11 @@ def create_files_session_for_settings(
         logger.info(f"File session: in-memory DuckDB (DB_MODE={settings.mode})")
         return create_ephemeral_session(file_paths, import_mode=import_mode)
     if settings.mode == "spark":
+        if import_mode == "table":
+            raise ConfigurationError(
+                "--import-mode=table is not supported when DB_MODE=spark; "
+                "Spark file sessions always register temp views."
+            )
         logger.info(
             f"File session: Spark Connect at {settings.spark_remote} "
             f"(DB_MODE=spark, byte cap {settings.spark_max_result_bytes:,})"
@@ -687,11 +705,20 @@ def add_files_to_connection(
     tables_info: list[dict] = []
     errors: list[str] = []
     names = set(existing_table_names)
+    if import_mode not in _VALID_IMPORT_MODES:
+        raise ConfigurationError(f"Unsupported import mode: {import_mode}")
 
+    resolved_paths: list[tuple[str, str | None]] = []
     for path in file_paths:
-        path = str(Path(path).resolve())
-        file_type = detect_file_type(path)
+        resolved_path = str(Path(path).resolve())
+        resolved_paths.append((resolved_path, detect_file_type(resolved_path)))
+    if import_mode == "view" and any(file_type == "xlsx" for _, file_type in resolved_paths):
+        raise ConfigurationError(
+            "Excel inputs are always materialized as DuckDB tables; "
+            "--import-mode=view is not supported for .xlsx files."
+        )
 
+    for path, file_type in resolved_paths:
         if file_type is None:
             errors.append(f"Unrecognized or missing file: {path}")
             continue
