@@ -52,7 +52,7 @@ conn = duckdb.connect(DB_PATH, read_only=True)
 
 
 def run_sql(sql: str) -> pd.DataFrame:
-    return conn.execute(sql).df()
+    return conn.execute(sql).fetchdf()
 {{/is_duckdb}}
 {{#is_sqlite}}
 conn = sqlite3.connect(DB_PATH)
