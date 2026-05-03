@@ -1,6 +1,17 @@
 """Tests for session export."""
 
-from datasight.export import export_dashboard_html, export_session_html
+import ast
+import subprocess
+import sys
+from pathlib import Path
+
+import duckdb
+
+from datasight.export import (
+    export_dashboard_html,
+    export_session_html,
+    export_session_python,
+)
 
 
 def _make_events():
@@ -307,3 +318,334 @@ def test_export_dashboard_includes_source_metadata():
     assert "run_sql" in html
     assert "42 ms" in html
     assert "select state from totals" in html
+
+
+def test_export_dashboard_omits_h1_when_title_is_empty():
+    """Empty title must not render any heading and must not insert
+    'datasight dashboard' or any other marketing fallback."""
+    html = export_dashboard_html(
+        [
+            {
+                "id": 1,
+                "type": "table",
+                "title": "Numbers",
+                "html": "<table><tr><td>1</td></tr></table>",
+            }
+        ],
+        title="",
+        columns=1,
+    )
+
+    assert "<h1>" not in html
+    assert "datasight dashboard" not in html
+    # Browser tab still needs *something*; "Dashboard" is the neutral fallback.
+    assert "<title>Dashboard</title>" in html
+
+
+def test_export_dashboard_renders_user_title_when_provided():
+    html = export_dashboard_html(
+        [
+            {
+                "id": 1,
+                "type": "table",
+                "title": "Numbers",
+                "html": "<table><tr><td>1</td></tr></table>",
+            }
+        ],
+        title="Q3 Generation Review",
+        columns=1,
+    )
+
+    assert "<h1>Q3 Generation Review</h1>" in html
+    assert "<title>Q3 Generation Review</title>" in html
+
+
+# ---------------------------------------------------------------------------
+# export_session_python
+# ---------------------------------------------------------------------------
+
+
+def _python_export_events():
+    """Two-turn session: a chart turn followed by a plain SQL turn."""
+    chart_spec = {
+        "data": [{"type": "bar", "x": ["coal", "gas", "solar"], "y": [100, 60, 40]}],
+        "layout": {"title": "Generation by fuel"},
+    }
+    return [
+        {"event": "user_message", "data": {"text": "Generation by fuel"}},
+        {
+            "event": "tool_start",
+            "data": {
+                "tool": "visualize_data",
+                "input": {
+                    "sql": "SELECT fuel, SUM(mwh) AS mwh FROM gen GROUP BY 1 ORDER BY 2 DESC",
+                },
+            },
+        },
+        {
+            "event": "tool_result",
+            "data": {
+                "type": "chart",
+                "title": "Generation by fuel",
+                "plotly_spec": chart_spec,
+            },
+        },
+        {
+            "event": "tool_done",
+            "data": {
+                "sql": "SELECT fuel, SUM(mwh) AS mwh FROM gen GROUP BY 1 ORDER BY 2 DESC",
+                "tool": "visualize_data",
+            },
+        },
+        {"event": "assistant_message", "data": {"text": "Coal led."}},
+        {"event": "user_message", "data": {"text": "Total MWh?"}},
+        {
+            "event": "tool_start",
+            "data": {"tool": "run_sql", "input": {"sql": "SELECT SUM(mwh) FROM gen"}},
+        },
+        {
+            "event": "tool_done",
+            "data": {"sql": "SELECT SUM(mwh) FROM gen", "tool": "run_sql"},
+        },
+        {"event": "assistant_message", "data": {"text": "200 MWh."}},
+    ], chart_spec
+
+
+def test_export_python_emits_valid_script_with_per_turn_sql_and_chart():
+    events, _ = _python_export_events()
+    script = export_session_python(
+        events,
+        title="Smoke",
+        db_path="/tmp/x.duckdb",
+        db_mode="duckdb",
+    )
+
+    # Must parse as Python.
+    ast.parse(script)
+
+    # Headers and structure
+    assert "Exported from datasight: Smoke" in script
+    assert "import argparse" in script
+    assert "import duckdb" in script
+    # Defaults are editable at the top of the file; both are also overridable
+    # via --db / --output-dir at runtime.
+    assert "DEFAULT_DB_PATH = '/tmp/x.duckdb'" in script
+    assert 'DEFAULT_OUTPUT_DIR = "."' in script
+    assert '_parser.add_argument("--db"' in script
+    assert '_parser.add_argument("--output-dir"' in script
+
+    # Turn 1: SQL constant + chart spec
+    assert "Turn 1: Generation by fuel" in script
+    assert "SQL_1 = " in script
+    assert "FROM gen GROUP BY 1 ORDER BY 2 DESC" in script
+    assert "CHART_1_SPEC = json.loads" in script
+    assert 'fig_1.write_html(OUTPUT_DIR / "turn_1_chart.html")' in script
+
+    # Turn 2: plain SQL, no chart
+    assert "Turn 2: Total MWh?" in script
+    assert "SQL_2 = " in script
+    assert "CHART_2_SPEC" not in script
+
+    # Assistant narrative is preserved as comments
+    assert "# Assistant: Coal led." in script
+    assert "# Assistant: 200 MWh." in script
+
+
+def test_export_python_sqlite_uses_pandas_read_sql_query():
+    events, _ = _python_export_events()
+    script = export_session_python(events, title="t", db_path="/tmp/x.sqlite", db_mode="sqlite")
+    ast.parse(script)
+    assert "import sqlite3" in script
+    assert "pd.read_sql_query(sql, conn)" in script
+
+
+def test_export_python_preserves_multiple_assistant_text_blocks():
+    """The agent emits one ASSISTANT_MESSAGE per text block — both before tool
+    calls (intro narrative) and after (final answer). Earlier code overwrote
+    intro_text/final_text on each event, silently dropping all but the first
+    intro and the last final. Both phases now accumulate."""
+    events = [
+        {"event": "user_message", "data": {"text": "q"}},
+        {"event": "assistant_message", "data": {"text": "First intro paragraph."}},
+        {"event": "assistant_message", "data": {"text": "Second intro paragraph."}},
+        {
+            "event": "tool_start",
+            "data": {"tool": "run_sql", "input": {"sql": "SELECT 1"}},
+        },
+        {"event": "tool_done", "data": {"sql": "SELECT 1", "tool": "run_sql"}},
+        {"event": "assistant_message", "data": {"text": "First final paragraph."}},
+        {"event": "assistant_message", "data": {"text": "Second final paragraph."}},
+    ]
+    script = export_session_python(events, title="t", db_path="/tmp/x.duckdb", db_mode="duckdb")
+    ast.parse(script)
+    assert "First intro paragraph." in script
+    assert "Second intro paragraph." in script
+    assert "First final paragraph." in script
+    assert "Second final paragraph." in script
+
+
+def test_export_python_unknown_db_mode_emits_todo_scaffold():
+    events, _ = _python_export_events()
+    script = export_session_python(events, title="t", db_path="", db_mode="postgres")
+    ast.parse(script)
+    assert "Database mode: postgres" in script
+    # run_sql still raises so the user knows exactly where to wire in their driver
+    assert "raise NotImplementedError" in script
+
+
+def test_export_python_respects_exclude_indices():
+    events, _ = _python_export_events()
+    script = export_session_python(
+        events,
+        title="t",
+        db_path="/tmp/x.duckdb",
+        db_mode="duckdb",
+        exclude_indices={0},  # drop turn 0 (the chart turn)
+    )
+    ast.parse(script)
+    assert "Turn 1: Generation by fuel" not in script
+    assert "CHART_1_SPEC" not in script
+    assert "Turn 2: Total MWh?" in script
+
+
+def test_export_python_runs_against_real_duckdb(tmp_path):
+    """End-to-end: generated script imports cleanly, queries a real .duckdb,
+    and writes the chart HTML into the cwd by default (output-dir defaults to '.')."""
+    db_path = tmp_path / "session.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE gen AS SELECT * FROM (VALUES "
+        "('coal', 100), ('gas', 60), ('solar', 40)) t(fuel, mwh)"
+    )
+    conn.close()
+
+    events, _ = _python_export_events()
+    script = export_session_python(events, title="Live", db_path=str(db_path), db_mode="duckdb")
+
+    script_path = tmp_path / "session.py"
+    script_path.write_text(script, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(script_path)],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "[turn 1] 3 rows" in result.stdout
+    assert "[turn 2] 1 rows" in result.stdout
+    assert (tmp_path / "turn_1_chart.html").exists()
+
+
+def test_export_python_argparse_overrides_db_and_output_dir(tmp_path):
+    """--db and --output-dir override the hardcoded defaults at runtime."""
+    real_db = tmp_path / "real.duckdb"
+    duckdb.connect(str(real_db)).execute(
+        "CREATE TABLE gen AS SELECT * FROM (VALUES "
+        "('coal', 100), ('gas', 60), ('solar', 40)) t(fuel, mwh)"
+    ).close()
+
+    events, _ = _python_export_events()
+    # The hardcoded default points somewhere that does NOT exist; --db must win.
+    script = export_session_python(
+        events,
+        title="Override",
+        db_path="/nonexistent/wrong.duckdb",
+        db_mode="duckdb",
+    )
+    script_path = tmp_path / "session.py"
+    script_path.write_text(script, encoding="utf-8")
+
+    charts_dir = tmp_path / "charts"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            "--db",
+            str(real_db),
+            "--output-dir",
+            str(charts_dir),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert (charts_dir / "turn_1_chart.html").exists()
+    # The default-cwd location must NOT be written when --output-dir is set.
+    assert not (tmp_path / "turn_1_chart.html").exists()
+
+
+def test_export_python_help_lists_db_and_output_dir(tmp_path):
+    """`python script.py --help` documents both flags with their defaults."""
+    events, _ = _python_export_events()
+    script = export_session_python(
+        events,
+        title="t",
+        db_path="/some/where.duckdb",
+        db_mode="duckdb",
+    )
+    script_path = tmp_path / "s.py"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(script_path), "--help"],
+        capture_output=True,
+        text=True,
+        cwd=str(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--db" in result.stdout
+    assert "--output-dir" in result.stdout
+    assert "/some/where.duckdb" in result.stdout
+
+
+def test_cli_export_format_py_writes_runnable_script(tmp_path, monkeypatch):
+    """CLI: `datasight export <id> --format py` writes a parseable script
+    whose DB_PATH points at the project's database."""
+    import json
+    import re
+
+    from click.testing import CliRunner
+
+    from datasight.cli import cli
+
+    # Don't let the host shell's DATASIGHT_* / DB_PATH leak into Settings.from_env.
+    for key in ("DB_PATH", "DB_MODE", "DATASIGHT_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+
+    project_dir = tmp_path / "proj"
+    (project_dir / ".datasight" / "conversations").mkdir(parents=True)
+    db_path = project_dir / "data.duckdb"
+    duckdb.connect(str(db_path)).close()
+    # The settings loader reads .env from the project directory.
+    (project_dir / ".env").write_text(f"DB_MODE=duckdb\nDB_PATH={db_path}\n")
+
+    events, _ = _python_export_events()
+    (project_dir / ".datasight" / "conversations" / "abc123.json").write_text(
+        json.dumps({"title": "Live", "messages": [], "events": events})
+    )
+
+    out_path = tmp_path / "session.py"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "export",
+            "abc123",
+            "--format",
+            "py",
+            "--project-dir",
+            str(project_dir),
+            "--output",
+            str(out_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert out_path.exists()
+    text = out_path.read_text()
+    ast.parse(text)
+    assert "import duckdb" in text
+    # Compare by realpath so /private/var vs /var on macOS doesn't trip the test.
+    match = re.search(r"DEFAULT_DB_PATH\s*=\s*'([^']+)'", text)
+    assert match, "DEFAULT_DB_PATH constant not found in script"
+    assert Path(match.group(1)).resolve() == db_path.resolve()

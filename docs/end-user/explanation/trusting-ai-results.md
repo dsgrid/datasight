@@ -43,3 +43,31 @@ what the data represents.
 - Be specific when asking questions — specify temporal granularity, include
   counts, name the metric, use explicit date ranges. See
   [Why clarifying questions appear](query-confidence.md#tips-for-getting-consistent-results).
+- [Export a finished analysis as a Python script](../how-to/save-and-rerun.md#export-a-session-as-a-python-script)
+  to lock in the exact SQL, audit it line-by-line, and re-run it deterministically
+  outside the AI loop.
+
+## Reproducing a result without the AI
+
+A chat session is a working draft. Once you have an answer worth keeping,
+**export it to a Python script**. The exported file contains the literal
+SQL the AI wrote, the chart spec it produced, and a hardcoded path to the
+project's database — no LLM, no datasight install required to run it.
+
+This converts an AI-assisted exploration into:
+
+- **An auditable artifact.** Every SQL statement is visible, named
+  (`SQL_1`, `SQL_2`, ...), and easy to read. A reviewer can sign off on
+  the queries without knowing how datasight works.
+- **A reproducible result.** Running `python datasight-session.py`
+  re-executes the same queries against the same database and writes the
+  same charts. There is no model temperature, no prompt drift, no
+  variation between runs.
+- **A starting point you control.** Edit any `SQL_N` constant to change a
+  filter or group-by and re-run. The AI's contribution is now version-
+  controllable code that you own, not a chat transcript that has to be
+  re-executed in the app.
+
+If you publish, share, or hand off a result, exporting first is the
+single most effective way to demonstrate that the analysis is reproducible
+and that the SQL has been seen by a human.

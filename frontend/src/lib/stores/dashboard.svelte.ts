@@ -103,6 +103,7 @@ function createDashboardStore() {
   let columns = $state(0); // 0 = auto
   let filters = $state<DashboardFilter[]>([]);
   let filterIdCounter = $state(0);
+  let title = $state("");
 
   return {
     get currentView() {
@@ -147,6 +148,12 @@ function createDashboardStore() {
     set filters(v: DashboardFilter[]) {
       filters = v;
       filterIdCounter = v.reduce((max, item) => Math.max(max, item.id), 0);
+    },
+    get title() {
+      return title;
+    },
+    set title(v: string) {
+      title = v;
     },
 
     nextId(): number {
@@ -208,6 +215,7 @@ function createDashboardStore() {
       columns = 0;
       filters = [];
       filterIdCounter = 0;
+      title = "";
     },
   };
 }

@@ -666,6 +666,7 @@ def test_dashboard_crud(isolated_web_state: None, project_dir: str) -> None:
             "items": [],
             "columns": 0,
             "filters": [],
+            "title": "",
         }
         saved = client.post(
             "/api/dashboard",
@@ -682,8 +683,29 @@ def test_dashboard_no_project(isolated_web_state: None) -> None:
             "items": [],
             "columns": 0,
             "filters": [],
+            "title": "",
         }
         assert client.delete("/api/dashboard").json()["ok"] is True
+
+
+def test_dashboard_persists_user_title(isolated_web_state: None, project_dir: str) -> None:
+    """The user-set dashboard title round-trips through save and reload, and
+    a fresh GET reflects the latest title without a stray default."""
+    with TestClient(web_app.app) as client:
+        client.post("/api/projects/load", json={"path": project_dir})
+
+        saved = client.post(
+            "/api/dashboard",
+            json={"items": [], "columns": 2, "title": "Q3 Generation Review"},
+        ).json()
+        assert saved["title"] == "Q3 Generation Review"
+
+        reloaded = client.get("/api/dashboard").json()
+        assert reloaded["title"] == "Q3 Generation Review"
+
+        # Updating the title alone (without re-sending all items) should stick.
+        client.post("/api/dashboard", json={"items": [], "title": ""}).json()
+        assert client.get("/api/dashboard").json()["title"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -837,7 +859,7 @@ def test_conversations_no_project(isolated_web_state: None) -> None:
         assert client.get("/api/conversations/anything").json() == {
             "events": [],
             "title": "Untitled",
-            "dashboard": {"items": [], "columns": 0, "filters": []},
+            "dashboard": {"items": [], "columns": 0, "filters": [], "title": ""},
         }
         assert client.post("/api/clear", json={"session_id": "x"}).json()["ok"] is True
         assert client.delete("/api/conversations").json()["ok"] is True

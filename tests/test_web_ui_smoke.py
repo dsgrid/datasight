@@ -84,7 +84,12 @@ def test_ui_boot_contract_when_unloaded(isolated_web_state: None) -> None:
     assert bookmarks_response.json() == {"bookmarks": []}
     assert reports_response.json() == {"reports": []}
     assert conversations_response.json() == {"conversations": []}
-    assert dashboard_response.json() == {"items": [], "columns": 0, "filters": []}
+    assert dashboard_response.json() == {
+        "items": [],
+        "columns": 0,
+        "filters": [],
+        "title": "",
+    }
 
     settings = settings_response.json()
     assert settings == {
@@ -161,7 +166,12 @@ def test_ui_boot_contract_when_project_loaded(isolated_web_state: None, project_
     assert bookmarks_response.json() == {"bookmarks": []}
     assert reports_response.json() == {"reports": []}
     assert conversations_response.json() == {"conversations": []}
-    assert dashboard_response.json() == {"items": [], "columns": 0, "filters": []}
+    assert dashboard_response.json() == {
+        "items": [],
+        "columns": 0,
+        "filters": [],
+        "title": "",
+    }
 
 
 def test_dashboard_run_card_applies_result_filter(

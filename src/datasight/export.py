@@ -213,6 +213,233 @@ def export_session_html(
     )
 
 
+def _shorten_for_header(text: str, max_len: int = 80) -> str:
+    """Collapse whitespace and clip to one short line for a section header."""
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= max_len:
+        return collapsed
+    return collapsed[: max_len - 1] + "…"
+
+
+def _wrap_as_comments(text: str, prefix: str = "# ") -> list[str]:
+    """Wrap multi-line text as Python comment lines (no line wrapping)."""
+    if not text:
+        return []
+    return [f"{prefix}{line}" if line else "#" for line in text.splitlines()]
+
+
+def _group_events_into_turns(
+    events: list[dict[str, Any]],
+    exclude_indices: set[int],
+) -> list[dict[str, Any]]:
+    """Group an evt_log into turns keyed by user message ordinal.
+
+    Each returned turn is::
+
+        {
+            "index": int,                 # 0-based turn index
+            "question": str,
+            "intro_texts": list[str],     # assistant text blocks before tools
+            "final_texts": list[str],     # assistant text blocks after tools
+            "tool_calls": list[ToolCall], # SQL / chart calls in order
+        }
+
+    The agent can emit multiple ``ASSISTANT_MESSAGE`` events per phase (one per
+    text block streamed before tools, plus the final answer), so we accumulate
+    them as lists and let the renderer join them — overwriting would silently
+    drop narrative text.
+
+    A ToolCall is::
+
+        {
+            "tool_name": str,
+            "sql": str | None,
+            "plotly_spec": dict | None,
+            "chart_title": str | None,
+            "error": str | None,
+        }
+    """
+    turns: list[dict[str, Any]] = []
+    user_count = -1
+    current: dict[str, Any] | None = None
+    pending_start: dict[str, Any] | None = None
+    pending_result: dict[str, Any] | None = None
+
+    for evt in events:
+        etype = evt.get("event")
+        data = evt.get("data") or {}
+
+        if etype == EventType.USER_MESSAGE:
+            if current is not None:
+                turns.append(current)
+            user_count += 1
+            if user_count in exclude_indices:
+                current = None
+            else:
+                current = {
+                    "index": user_count,
+                    "question": data.get("text", ""),
+                    "intro_texts": [],
+                    "final_texts": [],
+                    "tool_calls": [],
+                }
+            pending_start = None
+            pending_result = None
+            continue
+
+        if current is None:
+            continue
+
+        if etype == EventType.ASSISTANT_MESSAGE:
+            text = data.get("text", "")
+            if not text:
+                continue
+            # Bucket by phase: text emitted before any tool call is intro
+            # narrative; text emitted after is the final answer.
+            if not current["tool_calls"]:
+                current["intro_texts"].append(text)
+            else:
+                current["final_texts"].append(text)
+        elif etype == EventType.TOOL_START:
+            pending_start = data
+            pending_result = None
+        elif etype == EventType.TOOL_RESULT:
+            pending_result = data
+        elif etype == EventType.TOOL_DONE:
+            tool_name = (pending_start or {}).get("tool") or data.get("tool") or "tool"
+            sql = (
+                data.get("formatted_sql")
+                or data.get("sql")
+                or ((pending_start or {}).get("input") or {}).get("sql")
+            )
+            spec = None
+            chart_title = None
+            if pending_result:
+                spec = pending_result.get("plotly_spec") or pending_result.get("plotlySpec")
+                chart_title = pending_result.get("title")
+            current["tool_calls"].append(
+                {
+                    "tool_name": tool_name,
+                    "sql": sql,
+                    "plotly_spec": spec,
+                    "chart_title": chart_title,
+                    "error": data.get("error"),
+                }
+            )
+            pending_start = None
+            pending_result = None
+
+    if current is not None:
+        turns.append(current)
+    return turns
+
+
+def _python_tool_call_context(
+    turn_number: int, index_in_turn: int | None, call: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the Mustache context for one SQL / chart tool call."""
+    suffix = f"_{index_in_turn}" if index_in_turn is not None else ""
+    name = f"{turn_number}{suffix}"
+    spec = call.get("plotly_spec")
+    chart_title = call.get("chart_title") or f"turn {turn_number}{suffix}"
+    return {
+        "name": name,
+        "turn_number": turn_number,
+        "suffix": suffix,
+        "has_error": bool(call.get("error")),
+        "error_short": _shorten_for_header(call.get("error") or ""),
+        "has_sql": bool(call.get("sql")),
+        # Mustache emits the literal SQL between triple-quote fences, so strip
+        # any trailing whitespace to keep the closing fence flush.
+        "sql_text": (call.get("sql") or "").rstrip(),
+        "has_chart": bool(spec),
+        # Embed the spec as a JSON string the user can re-edit. Escape any
+        # accidental triple-quotes so the surrounding `r"""..."""` stays valid.
+        "chart_spec_json": (
+            json.dumps(spec, ensure_ascii=False, indent=2).replace('"""', '\\"\\"\\"')
+            if spec
+            else ""
+        ),
+        "chart_title_short": _shorten_for_header(chart_title),
+    }
+
+
+def _python_turn_context(turn: dict[str, Any]) -> dict[str, Any] | None:
+    """Build the Mustache context for one turn, or None if nothing to render."""
+    runnable = [c for c in turn.get("tool_calls", []) if c.get("sql") or c.get("plotly_spec")]
+    # Each phase can carry multiple ASSISTANT_MESSAGE events; preserve them all
+    # by concatenating with a blank line so paragraph boundaries survive in the
+    # rendered comment block.
+    intro = _wrap_as_comments("\n\n".join(turn.get("intro_texts") or []))
+    final = _wrap_as_comments("\n\n".join(turn.get("final_texts") or []), prefix="# Assistant: ")
+    if not runnable and not intro and not final:
+        return None
+    multi = len(runnable) > 1
+    return {
+        "turn_number": turn["index"] + 1,
+        "header_question": _shorten_for_header(turn.get("question") or ""),
+        "intro_comments": intro,
+        "tool_calls": [
+            _python_tool_call_context(turn["index"] + 1, i if multi else None, call)
+            for i, call in enumerate(runnable, start=1)
+        ],
+        "final_comments": final,
+    }
+
+
+def export_session_python(
+    events: list[dict[str, Any]],
+    *,
+    title: str = "datasight session",
+    db_path: str = "",
+    db_mode: str = "duckdb",
+    exclude_indices: set[int] | None = None,
+) -> str:
+    """Render conversation events as a runnable, hand-editable Python script.
+
+    Each turn becomes a labelled section with the user question as a comment,
+    SQL as a top-of-section ``SQL_N`` constant (the obvious thing to tweak),
+    and any Plotly chart embedded as a JSON string fed into ``go.Figure``.
+    The output script accepts ``--db`` and ``--output-dir`` so the user can
+    move it between machines or redirect chart output without editing.
+
+    Parameters
+    ----------
+    events:
+        Event log from a session (same shape as stored in ``conversations/``).
+    title:
+        Used in the script's docstring for traceability.
+    db_path:
+        Default value baked into the script as ``DEFAULT_DB_PATH``. The user
+        can override at runtime with ``--db``.
+    db_mode:
+        ``"duckdb"`` (default), ``"sqlite"``, or another value (renders a
+        scaffold whose ``run_sql`` raises NotImplementedError).
+    exclude_indices:
+        Optional set of 0-based turn indices to skip — same semantics as
+        ``export_session_html``.
+
+    Returns
+    -------
+    The complete script text.
+    """
+    exclude = exclude_indices or set()
+    turns = _group_events_into_turns(events, exclude)
+    contexts = [_python_turn_context(t) for t in turns]
+    return render_template(
+        "export_session_python",
+        {
+            "title": (title or "datasight session").replace('"""', "'''"),
+            "default_db_path_repr": repr(db_path),
+            "db_mode": db_mode,
+            "is_duckdb": db_mode == "duckdb",
+            "is_sqlite": db_mode == "sqlite",
+            "is_unknown_mode": db_mode not in ("duckdb", "sqlite"),
+            "turns": [c for c in contexts if c is not None],
+        },
+    )
+
+
 def _extract_plotly_spec(srcdoc: str) -> dict[str, Any] | None:
     """Extract the Plotly spec JSON from a chart iframe's srcdoc."""
     match = re.search(r"var spec = ({.*?});", srcdoc, re.DOTALL)
@@ -369,7 +596,7 @@ def _build_filter_chips(filters: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 def export_dashboard_html(
     items: list[dict[str, Any]],
-    title: str = "datasight dashboard",
+    title: str = "",
     columns: int = 2,
     filters: list[dict[str, Any]] | None = None,
 ) -> str:
@@ -383,7 +610,8 @@ def export_dashboard_html(
         - html: For charts, the iframe srcdoc; for tables, the HTML content
         - title: Optional card title
     title:
-        Page title.
+        Page heading shown above the cards. Empty (default) skips the heading
+        — the export carries no title unless the user supplies one.
     columns:
         Number of grid columns (1, 2, or 3).
 
@@ -397,7 +625,14 @@ def export_dashboard_html(
     return render_template(
         "export_dashboard",
         {
-            "title": title,  # Let Mustache escape via {{title}}
+            "title": title,  # Let Mustache escape via {{title}}.
+            # has_title gates the <h1> via {{#has_title}}...{{/has_title}}. Using
+            # the title string itself as the section condition would push it as a
+            # new context — {{title}} inside would then resolve to str.title.
+            "has_title": bool(title),
+            # Browser tab title can't be empty without looking broken — fall back to
+            # a neutral label that doesn't editorialize about datasight.
+            "html_title": title or "Dashboard",
             "plotly_cdn": PLOTLY_CDN,
             "marked_cdn": MARKED_CDN,
             "dompurify_cdn": DOMPURIFY_CDN,

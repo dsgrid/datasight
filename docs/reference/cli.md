@@ -72,7 +72,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `inspect`: Run all analyses on Parquet, CSV, Excel, or DuckDB files and print results.
 - `recipes`: Generate and run reusable deterministic prompt recipes.
 - `doctor`: Check project configuration, local files, and database connectivity.
-- `export`: Export a conversation session as a self-contained HTML page.
+- `export`: Export a conversation session as a self-contained HTML page or Python script.
 - `log`: Display the SQL query log in a formatted table.
 - `report`: Manage saved reports.
 - `templates`: Save and re-apply dashboards as templates across datasets.
@@ -788,7 +788,7 @@ datasight doctor [OPTIONS]
 
 ### `datasight export`
 
-Export a conversation session as a self-contained HTML page.
+Export a conversation session as a self-contained HTML page or Python script.
 
 SESSION_ID is the conversation ID (use --list-sessions to see available IDs).
 
@@ -796,6 +796,7 @@ Examples:
 
     datasight export --list-sessions
     datasight export abc123def -o my-analysis.html
+    datasight export abc123def --format py -o my-analysis.py
     datasight export abc123def --exclude 2,3
 
 ```bash
@@ -807,7 +808,8 @@ datasight export [OPTIONS] [SESSION_ID]
 | Name | Details |
 | --- | --- |
 | `SESSION_ID` |   |
-| `--output`, `-o` | Output file path (default: <session_id>.html). |
+| `--output`, `-o` | Output file path. Defaults to <session_id>.<format> with the session ID truncated to 20 characters. |
+| `--format` | html (self-contained viewer, default) or py (runnable Python script). Default: `html`. |
 | `--project-dir` | Project directory containing .datasight/conversations/. Default: `.`. |
 | `--exclude` | Comma-separated turn indices to exclude (0-based, each turn is a Q&A pair). |
 | `--list-sessions` | List available sessions and exit. |

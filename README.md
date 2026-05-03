@@ -76,7 +76,10 @@ datasight ask --file questions.txt --output-dir batch-output
 - **Example queries** — seed the AI with question/SQL pairs
 - **Reusable prompt recipes** — project-specific analysis prompts derived from the schema
 - **Multi-chart dashboard** — pin results, filter cards, and configure layouts
-- **Session export** — export conversations as shareable HTML pages
+- **Session export** — share a session as a self-contained HTML page, or
+  export it as a runnable Python script (editable SQL constants, embedded
+  Plotly specs, hardcoded DB path with `--db` / `--output-dir` overrides)
+  that re-runs the analysis without datasight or the AI in the loop
 - **Keyboard shortcuts** — `?` to see all shortcuts, `/` to focus input
 - **Streaming responses** — real-time SSE streaming from the LLM
 

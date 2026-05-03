@@ -174,6 +174,17 @@
     saveDashboard();
   }
 
+  function handleTitleBlur() {
+    void saveDashboard();
+  }
+
+  function handleTitleKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      (e.currentTarget as HTMLInputElement).blur();
+    }
+  }
+
   function addNote() {
     dashboardStore.addItem({
       type: "note",
@@ -272,7 +283,7 @@
         body: JSON.stringify({
           items: dashboardStore.pinnedItems,
           columns: dashboardStore.columns || 2,
-          title: "datasight dashboard",
+          title: dashboardStore.title.trim(),
           filters: dashboardStore.filters.filter((f) => f.enabled !== false),
         }),
       });
@@ -340,6 +351,17 @@
 </script>
 
 <div class="dashboard-toolbar">
+  <!-- Title -->
+  <input
+    class="toolbar-field dashboard-title-input"
+    type="text"
+    placeholder="Dashboard title (optional)"
+    title="Title shown on the exported HTML page. Leave blank to omit."
+    bind:value={dashboardStore.title}
+    onblur={handleTitleBlur}
+    onkeydown={handleTitleKeydown}
+  />
+
   <!-- Layout -->
   <span class="text-[10px] uppercase tracking-wider text-text-secondary font-semibold">
     Layout
@@ -829,6 +851,11 @@
 
   .toolbar-field.operator {
     width: 84px;
+  }
+
+  .dashboard-title-input {
+    width: 240px;
+    font-weight: 600;
   }
 
   .toolbar-hint {

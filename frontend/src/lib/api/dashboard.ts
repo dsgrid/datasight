@@ -14,6 +14,7 @@ interface DashboardData {
   items: DashboardItem[];
   columns: number;
   filters?: DashboardFilter[];
+  title?: string;
 }
 
 interface RunCardInput {
@@ -54,6 +55,7 @@ export function applyDashboardData(data: DashboardData): void {
     ...f,
     scope: f.scope ?? { type: "all" },
   }));
+  dashboardStore.title = data.title ?? "";
   dashboardStore.fullscreenCardId = null;
   dashboardStore.selectedCardIdx = -1;
   // Set ID counter to max existing ID
@@ -66,6 +68,7 @@ export async function saveDashboard(): Promise<DashboardData> {
     items: dashboardStore.pinnedItems,
     columns: dashboardStore.columns,
     filters: dashboardStore.filters,
+    title: dashboardStore.title,
     session_id: sessionStore.sessionId,
   });
 }

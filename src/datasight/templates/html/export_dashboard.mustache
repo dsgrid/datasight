@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{title}}</title>
+<title>{{html_title}}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="{{plotly_cdn}}"></script>
@@ -192,7 +192,7 @@
 </style>
 </head>
 <body>
-<h1>{{title}}</h1>
+{{#has_title}}<h1>{{title}}</h1>{{/has_title}}
 {{#has_filters}}
 <div class="filter-bar">
   <span class="filter-bar-label">Filters:</span>

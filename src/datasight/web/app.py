@@ -24,7 +24,13 @@ import pandas as pd
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -354,6 +360,7 @@ class DashboardStore:
         self._items: list[dict[str, Any]] = []
         self._columns: int = 0
         self._filters: list[dict[str, Any]] = []
+        self._title: str = ""
         self._next_id = 1
         if self._path.exists():
             try:
@@ -361,6 +368,7 @@ class DashboardStore:
                 self._items = data.get("items", [])
                 self._columns = data.get("columns", 0)
                 self._filters = data.get("filters", [])
+                self._title = data.get("title", "") or ""
                 if self._items:
                     self._next_id = max(item.get("id", 0) for item in self._items) + 1
             except (json.JSONDecodeError, OSError):
@@ -370,7 +378,12 @@ class DashboardStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(
-                {"items": self._items, "columns": self._columns, "filters": self._filters},
+                {
+                    "items": self._items,
+                    "columns": self._columns,
+                    "filters": self._filters,
+                    "title": self._title,
+                },
                 indent=2,
             ),
             encoding="utf-8",
@@ -381,6 +394,7 @@ class DashboardStore:
             "items": list(self._items),
             "columns": self._columns,
             "filters": list(self._filters),
+            "title": self._title,
         }
 
     def save_all(
@@ -388,6 +402,7 @@ class DashboardStore:
         items: list[dict[str, Any]],
         columns: int | None = None,
         filters: list[dict[str, Any]] | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         for item in items:
             if "id" not in item:
@@ -398,6 +413,8 @@ class DashboardStore:
             self._columns = columns
         if filters is not None:
             self._filters = filters
+        if title is not None:
+            self._title = title
         if self._items:
             self._next_id = max(item.get("id", 0) for item in self._items) + 1
         self._save()
@@ -407,12 +424,13 @@ class DashboardStore:
         self._items = []
         self._columns = 0
         self._filters = []
+        self._title = ""
         self._next_id = 1
         self._save()
 
 
 def _empty_dashboard() -> dict[str, Any]:
-    return {"items": [], "columns": 0, "filters": []}
+    return {"items": [], "columns": 0, "filters": [], "title": ""}
 
 
 _DASHBOARD_FILTER_COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -3144,6 +3162,7 @@ async def get_dashboard(request: Request, state: AppState = Depends(get_state)):
                 "items": dashboard.get("items", []),
                 "columns": dashboard.get("columns", 0),
                 "filters": dashboard.get("filters", []),
+                "title": dashboard.get("title", "") or "",
             }
     if state.dashboard is None:
         return _empty_dashboard()
@@ -3154,12 +3173,13 @@ async def get_dashboard(request: Request, state: AppState = Depends(get_state)):
 async def save_dashboard(request: Request, state: AppState = Depends(get_state)):
     """Save dashboard items and layout settings."""
     if state.dashboard is None:
-        return {"items": [], "columns": 0, "filters": []}
+        return _empty_dashboard()
     body = await request.json()
     items = body.get("items", [])
     columns = body.get("columns")
     filters = body.get("filters")
-    result = state.dashboard.save_all(items, columns, filters)
+    title = body.get("title")
+    result = state.dashboard.save_all(items, columns, filters, title)
     session_id = body.get("session_id")
     if session_id and state.conversations is not None:
         try:
@@ -3810,18 +3830,41 @@ async def clear_session(request: Request, state: AppState = Depends(get_state)):
 
 @app.post("/api/export/{session_id}")
 async def export_session(session_id: str, request: Request, state: AppState = Depends(get_state)):
-    """Export a conversation as self-contained HTML."""
-    from datasight.export import export_session_html
+    """Export a conversation as self-contained HTML or as a runnable Python script."""
+    from datasight.export import export_session_html, export_session_python
+
+    try:
+        validate_session_id(session_id)
+    except InvalidSessionIdError:
+        return PlainTextResponse(content="Invalid session ID", status_code=400)
 
     if state.conversations is None:
         return HTMLResponse(content="<p>No conversation data available.</p>", status_code=200)
     body = await request.json()
     exclude = body.get("exclude_indices", [])
     exclude_set = set(exclude) if exclude else None
+    fmt = (body.get("format") or "html").lower()
 
     data = state.conversations.get(session_id)
     events = data.get("events", [])
     title = data.get("title", "datasight session")
+
+    if fmt == "py":
+        db_path, db_mode = _resolve_export_db_target(state)
+        script = export_session_python(
+            events,
+            title=title,
+            db_path=db_path,
+            db_mode=db_mode,
+            exclude_indices=exclude_set,
+        )
+        return PlainTextResponse(
+            content=script,
+            media_type="text/x-python",
+            headers={
+                "Content-Disposition": 'attachment; filename="datasight-session.py"',
+            },
+        )
 
     html = export_session_html(events, title=title, exclude_indices=exclude_set)
     return HTMLResponse(
@@ -3832,6 +3875,26 @@ async def export_session(session_id: str, request: Request, state: AppState = De
     )
 
 
+def _resolve_export_db_target(state: AppState) -> tuple[str, str]:
+    """Resolve (db_path, db_mode) for embedding into an exported Python script.
+
+    Returns absolute paths for file-backed databases. For non-file backends or
+    when no project is loaded, returns ("", db_mode) so the script renders a
+    TODO scaffold instead of a hardcoded connection.
+    """
+    from datasight.cli import _resolve_db_path, _resolve_settings
+
+    if not state.project_dir:
+        return "", state.sql_dialect or "duckdb"
+    try:
+        settings, _ = _resolve_settings(state.project_dir)
+    except Exception:
+        return "", state.sql_dialect or "duckdb"
+    db_mode = settings.database.mode or "duckdb"
+    db_path = _resolve_db_path(settings, state.project_dir)
+    return db_path, db_mode
+
+
 @app.post("/api/dashboard/export")
 async def export_dashboard(request: Request):
     """Export dashboard as self-contained HTML."""
@@ -3839,7 +3902,7 @@ async def export_dashboard(request: Request):
 
     body = await request.json()
     items = body.get("items", [])
-    title = body.get("title", "datasight dashboard")
+    title = body.get("title", "")
     columns = body.get("columns", 2)
     filters = body.get("filters", [])
 
