@@ -93,10 +93,10 @@ async def _run_ask_pipeline(*args, **kwargs):
     help="Write the distribution profile to a file instead of stdout.",
 )
 def distribution(project_dir, table, column, output_format, output_path):
-    """Profile value distributions - percentiles, outliers, and energy flags.
+    """Profile value distributions - percentiles, outliers, and measure flags.
 
     Use this to inspect numeric ranges, skew, zero/negative rates, outliers,
-    and energy-domain flags before building charts or validation rules.
+    and measure-semantic flags before building charts or validation rules.
     """
     from rich.console import Console
 

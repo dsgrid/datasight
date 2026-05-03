@@ -64,7 +64,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `measures`: Surface likely measures and default aggregations.
 - `quality`: Audit data quality - nulls, suspicious ranges, and date coverage.
 - `integrity`: Audit cross-table referential integrity - keys, orphans, and join risks.
-- `distribution`: Profile value distributions - percentiles, outliers, and energy flags.
+- `distribution`: Profile value distributions - percentiles, outliers, and measure flags.
 - `validate`: Run declarative validation rules against the database.
 - `audit-report`: Generate a comprehensive audit report combining all checks.
 - `dimensions`: Surface likely grouping dimensions and category breakdowns.
@@ -519,10 +519,10 @@ datasight integrity [OPTIONS]
 
 ### `datasight distribution`
 
-Profile value distributions - percentiles, outliers, and energy flags.
+Profile value distributions - percentiles, outliers, and measure flags.
 
 Use this to inspect numeric ranges, skew, zero/negative rates, outliers,
-and energy-domain flags before building charts or validation rules.
+and measure-semantic flags before building charts or validation rules.
 
 Examples:
 
