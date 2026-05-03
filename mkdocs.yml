@@ -65,51 +65,53 @@ plugins:
 
 nav:
   - Home: index.md
-  - End user:
-      - How-to guides:
-          - Install datasight: end-user/how-to/install.md
-          - Explore files without a project: end-user/how-to/explore-files.md
-          - Ask questions in the web UI: end-user/how-to/ask-in-web-ui.md
-          - Ask questions from the CLI: end-user/how-to/ask-from-cli.md
-          - Create visualizations: end-user/how-to/create-visualizations.md
-          - Build a dashboard: end-user/how-to/build-a-dashboard.md
-          - Save a dashboard as a template: end-user/how-to/save-dashboard-template.md
-          - Save and rerun results: end-user/how-to/save-and-rerun.md
-          - Audit data quality: end-user/how-to/audit-data-quality.md
-          - Configure semantic measures: end-user/how-to/configure-measures.md
-          - Declare time series: end-user/how-to/declare-time-series.md
-          - Review the SQL query log: end-user/how-to/review-query-log.md
-          - Run on an HPC compute node: end-user/how-to/run-on-hpc.md
-          - Connect to a remote Flight SQL backend: end-user/how-to/connect-flight-sql.md
-          - Connect to an Apache Spark backend: end-user/how-to/connect-spark.md
+  - Use:
       - Tutorials:
-          - Explore US electricity generation (EIA): end-user/tutorials/getting-started.md
-          - Explore EV charging demand (TEMPO): end-user/tutorials/tempo.md
-          - Time validation demo: end-user/tutorials/time-validation.md
-      - Reference:
-          - Web UI: end-user/reference/web-ui.md
-          - Keyboard shortcuts: end-user/reference/keyboard-shortcuts.md
-          - Query confidence toggles: end-user/reference/query-confidence-toggles.md
-      - Explanation:
-          - Why clarifying questions appear: end-user/explanation/query-confidence.md
-          - Trusting AI-generated results: end-user/explanation/trusting-ai-results.md
-          - What semantic measures are: end-user/explanation/semantic-measures.md
-  - Project developer:
-      - Set up a project: project-developer/set-up-project.md
-      - Database connections: project-developer/database-connections.md
-      - Query files directly: project-developer/querying-files.md
-      - Write a schema description: project-developer/schema-description.md
-      - Limit schema sent to the LLM: project-developer/schema-config.md
-      - Create example queries: project-developer/example-queries.md
-      - Verify queries across models: project-developer/verification.md
-  - Tool developer:
-      - Architecture: tool-developer/architecture.md
-      - Contributing: tool-developer/contributing.md
+          - Explore US electricity generation (EIA): use/tutorials/getting-started.md
+          - Explore EV charging demand (TEMPO): use/tutorials/tempo.md
+      - How-to guides:
+          - Install datasight: use/how-to/install.md
+          - Explore files without a project: use/how-to/explore-files.md
+          - Ask questions in the web UI: use/how-to/ask-in-web-ui.md
+          - Ask questions from the CLI: use/how-to/ask-from-cli.md
+          - Create visualizations: use/how-to/create-visualizations.md
+          - Build a dashboard: use/how-to/build-a-dashboard.md
+          - Save a dashboard as a template: use/how-to/save-dashboard-template.md
+          - Save and rerun results: use/how-to/save-and-rerun.md
+          - Audit data quality: use/how-to/audit-data-quality.md
+          - Review the SQL query log: use/how-to/review-query-log.md
+          - Run on an HPC compute node: use/how-to/run-on-hpc.md
+          - Connect to a remote Flight SQL backend: use/how-to/connect-flight-sql.md
+          - Connect to an Apache Spark backend: use/how-to/connect-spark.md
+      - Concepts:
+          - Choosing an LLM: use/concepts/choosing-an-llm.md
+          - Why clarifying questions appear: use/concepts/query-confidence.md
+          - Trusting AI-generated results: use/concepts/trusting-ai-results.md
+  - Project Setup:
+      - Tutorials:
+          - Set up your first project: project-setup/tutorials/set-up-project.md
+          - Time validation demo: project-setup/tutorials/time-validation.md
+      - How-to guides:
+          - Database connections: project-setup/how-to/database-connections.md
+          - Query files directly: project-setup/how-to/querying-files.md
+          - Write a schema description: project-setup/how-to/schema-description.md
+          - Limit schema sent to the LLM: project-setup/how-to/schema-config.md
+          - Create example queries: project-setup/how-to/example-queries.md
+          - Configure semantic measures: project-setup/how-to/configure-measures.md
+          - Declare time series: project-setup/how-to/declare-time-series.md
+          - Declare table joins: project-setup/how-to/declare-joins.md
+          - Define validation rules: project-setup/how-to/validation-rules.md
+          - Verify queries across models: project-setup/how-to/verification.md
+      - Concepts:
+          - What semantic measures are: project-setup/concepts/semantic-measures.md
   - Reference:
-      - Configuration: reference/configuration.md
       - CLI: reference/cli.md
-  - Concepts:
-      - Users and roles: concepts/users-and-roles.md
-      - Choosing an LLM: concepts/choosing-an-llm.md
-      - How the agent works: concepts/how-the-agent-works.md
-      - SQL result cache: concepts/sql-result-cache.md
+      - Configuration: reference/configuration.md
+      - Web UI: reference/web-ui.md
+      - Keyboard shortcuts: reference/keyboard-shortcuts.md
+      - Query confidence toggles: reference/query-confidence-toggles.md
+  - Design:
+      - Architecture: design/architecture.md
+      - How the agent works: design/how-the-agent-works.md
+      - SQL result cache: design/sql-result-cache.md
+      - Contributing: design/contributing.md

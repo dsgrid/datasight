@@ -84,12 +84,16 @@ Create blank datasight project template files.
 PROJECT_DIR defaults to the current directory.
 
 Use this when you want to fill in .env, schema_description.md,
+
 queries.yaml, and time_series.yaml by hand.
+
 If you already have a DuckDB/SQLite database or CSV/Parquet/Excel
 
 files and want datasight to inspect them and draft these files, use:
 
-    datasight generate <file>...
+```
+datasight generate <file>...
+```
 
 ```bash
 datasight init [OPTIONS] [PROJECT_DIR]
@@ -107,14 +111,19 @@ datasight init [OPTIONS] [PROJECT_DIR]
 Manage user-global datasight configuration.
 
 The user-global config file (~/.config/datasight/.env) holds API
+
 keys and tokens shared across every datasight project. Per-project
+
 .env files override its values, so each project can still pick its
+
 own LLM provider, model, and database.
 
 Examples:
 
-    datasight config init
-    datasight config show
+```
+datasight config init
+datasight config show
+```
 
 ```bash
 datasight config [OPTIONS] COMMAND [ARGS]...
@@ -156,9 +165,11 @@ Create ready-to-run demo projects with sample datasets.
 
 Examples:
 
-    datasight demo eia-generation eia-demo
-    datasight demo dsgrid-tempo tempo-demo
-    datasight demo time-validation time-demo
+```
+datasight demo eia-generation eia-demo
+datasight demo dsgrid-tempo tempo-demo
+datasight demo time-validation time-demo
+```
 
 ```bash
 datasight demo [OPTIONS] COMMAND [ARGS]...
@@ -182,7 +193,9 @@ PROJECT_DIR defaults to the current directory.
 
 Example:
 
-    datasight demo eia-generation eia-demo --min-year 2021
+```
+datasight demo eia-generation eia-demo --min-year 2021
+```
 
 ```bash
 datasight demo eia-generation [OPTIONS] [PROJECT_DIR]
@@ -210,7 +223,9 @@ PROJECT_DIR defaults to the current directory.
 
 Example:
 
-    datasight demo dsgrid-tempo tempo-demo
+```
+datasight demo dsgrid-tempo tempo-demo
+```
 
 ```bash
 datasight demo dsgrid-tempo [OPTIONS] [PROJECT_DIR]
@@ -237,7 +252,9 @@ PROJECT_DIR defaults to the current directory.
 
 Example:
 
-    datasight demo time-validation time-demo
+```
+datasight demo time-validation time-demo
+```
 
 ```bash
 datasight demo time-validation [OPTIONS] [PROJECT_DIR]
@@ -258,27 +275,32 @@ code/enum columns, and asks the LLM to produce documentation
 and example queries.
 
 Use datasight init for blank templates; use datasight generate to create
+
 project files from an existing database or data files.
 
 Examples:
 
-    # Use the database configured in .env
-    datasight generate
-    # Reference an existing DuckDB or SQLite database directly
-    datasight generate grid.duckdb
-    datasight generate generation.sqlite
-    # Build ./database.duckdb from CSV inputs
-    datasight generate generation.csv plants.csv
-    # Build ./database.duckdb from Parquet inputs
-    datasight generate generation.parquet plants.parquet
-    # Build ./database.duckdb from Excel inputs (one table per sheet)
-    datasight generate generation.xlsx
-    # Build a custom project DuckDB from CSV, Parquet, or Excel inputs
-    datasight generate generation.csv --db-path project.duckdb
-    datasight generate generation.parquet --db-path project.duckdb
+```
+# Use the database configured in .env
+datasight generate
+# Reference an existing DuckDB or SQLite database directly
+datasight generate grid.duckdb
+datasight generate generation.sqlite
+# Build ./database.duckdb from CSV inputs
+datasight generate generation.csv plants.csv
+# Build ./database.duckdb from Parquet inputs
+datasight generate generation.parquet plants.parquet
+# Build ./database.duckdb from Excel inputs (one table per sheet)
+datasight generate generation.xlsx
+# Build a custom project DuckDB from CSV, Parquet, or Excel inputs
+datasight generate generation.csv --db-path project.duckdb
+datasight generate generation.parquet --db-path project.duckdb
+```
 
 FILES are input data. --db-path is only the output DuckDB path used
+
 when datasight needs to build a project database from CSV/Parquet/Excel
+
 or mixed file inputs.
 
 ```bash
@@ -308,10 +330,12 @@ or pass --project-dir to specify one explicitly.
 
 Examples:
 
-    datasight run
-    datasight run --project-dir eia-demo
-    datasight run --port 9000 --model gpt-4o
-    datasight run --unix-socket /tmp/datasight.sock
+```
+datasight run
+datasight run --project-dir eia-demo
+datasight run --port 9000 --model gpt-4o
+datasight run --unix-socket /tmp/datasight.sock
+```
 
 ```bash
 datasight run [OPTIONS]
@@ -338,23 +362,25 @@ Use this to validate correctness across different models and providers.
 
 Examples:
 
-    datasight verify
-    datasight verify --queries verification.yaml
-    datasight verify --model gpt-4o
+```
+datasight verify
+datasight verify --queries verification.yaml
+datasight verify --model gpt-4o
+```
 
 Add expected results to queries.yaml entries:
 
-  - question: "Top 3 states by generation"
-    sql: |
-      SELECT state, SUM(mwh) AS total
-      FROM generation GROUP BY state
-      ORDER BY total DESC LIMIT 3
-
-    expected:
-
-      row_count: 3
-      columns: [state, total]
-      contains: ["CA", "TX"]
+```
+- question: "Top 3 states by generation"
+  sql: |
+    SELECT state, SUM(mwh) AS total
+    FROM generation GROUP BY state
+    ORDER BY total DESC LIMIT 3
+  expected:
+    row_count: 3
+    columns: [state, total]
+    contains: ["CA", "TX"]
+```
 
 ```bash
 datasight verify [OPTIONS]
@@ -378,13 +404,15 @@ Results are printed to the console.
 
 Examples:
 
-    datasight ask "What are the top 5 states by generation?"
-    datasight ask "Show generation by year" --chart-format html -o chart.html
-    datasight ask "Top 5 states" --format csv -o results.csv
-    datasight ask --file questions.txt --output-dir batch-output
-    datasight ask "Top 5 states" --print-sql
-    datasight ask "Top 5 states" --provenance
-    datasight ask "Top 5 states" --sql-script top-states.sql
+```
+datasight ask "What are the top 5 states by generation?"
+datasight ask "Show generation by year" --chart-format html -o chart.html
+datasight ask "Top 5 states" --format csv -o results.csv
+datasight ask --file questions.txt --output-dir batch-output
+datasight ask "Top 5 states" --print-sql
+datasight ask "Top 5 states" --provenance
+datasight ask "Top 5 states" --sql-script top-states.sql
+```
 
 ```bash
 datasight ask [OPTIONS] [QUESTION]
@@ -416,10 +444,12 @@ measures, dimensions, null rates, and date ranges.
 
 Examples:
 
-    datasight profile
-    datasight profile --table generation_fuel
-    datasight profile --column generation_fuel.net_generation_mwh
-    datasight profile --format markdown -o profile.md
+```
+datasight profile
+datasight profile --table generation_fuel
+datasight profile --column generation_fuel.net_generation_mwh
+datasight profile --format markdown -o profile.md
+```
 
 ```bash
 datasight profile [OPTIONS]
@@ -445,10 +475,12 @@ editable measures.yaml override file.
 
 Examples:
 
-    datasight measures
-    datasight measures --table generation_fuel
-    datasight measures --scaffold
-    datasight measures --format markdown -o measures.md
+```
+datasight measures
+datasight measures --table generation_fuel
+datasight measures --scaffold
+datasight measures --format markdown -o measures.md
+```
 
 ```bash
 datasight measures [OPTIONS]
@@ -474,9 +506,11 @@ time series structure.
 
 Examples:
 
-    datasight quality
-    datasight quality --table generation_fuel
-    datasight quality --format markdown -o quality.md
+```
+datasight quality
+datasight quality --table generation_fuel
+datasight quality --format markdown -o quality.md
+```
 
 ```bash
 datasight quality [OPTIONS]
@@ -500,9 +534,11 @@ keys, and joins that may multiply rows unexpectedly.
 
 Examples:
 
-    datasight integrity
-    datasight integrity --table plants
-    datasight integrity --format json -o integrity.json
+```
+datasight integrity
+datasight integrity --table plants
+datasight integrity --format json -o integrity.json
+```
 
 ```bash
 datasight integrity [OPTIONS]
@@ -526,10 +562,12 @@ and measure-semantic flags before building charts or validation rules.
 
 Examples:
 
-    datasight distribution
-    datasight distribution --table generation_fuel
-    datasight distribution --column generation_fuel.net_generation_mwh
-    datasight distribution --format markdown -o distributions.md
+```
+datasight distribution
+datasight distribution --table generation_fuel
+datasight distribution --column generation_fuel.net_generation_mwh
+datasight distribution --format markdown -o distributions.md
+```
 
 ```bash
 datasight distribution [OPTIONS]
@@ -554,10 +592,12 @@ edit it for your dataset, then run validate to produce pass/fail output.
 
 Examples:
 
-    datasight validate --scaffold
-    datasight validate
-    datasight validate --table generation_fuel
-    datasight validate --format markdown -o validation.md
+```
+datasight validate --scaffold
+datasight validate
+datasight validate --table generation_fuel
+datasight validate --format markdown -o validation.md
+```
 
 ```bash
 datasight validate [OPTIONS]
@@ -584,10 +624,12 @@ validation results into one HTML, Markdown, or JSON artifact.
 
 Examples:
 
-    datasight audit-report
-    datasight audit-report -o audit.html
-    datasight audit-report --format markdown -o audit.md
-    datasight audit-report --table generation_fuel -o generation-audit.html
+```
+datasight audit-report
+datasight audit-report -o audit.html
+datasight audit-report --format markdown -o audit.md
+datasight audit-report --table generation_fuel -o generation-audit.html
+```
 
 ```bash
 datasight audit-report [OPTIONS]
@@ -611,9 +653,11 @@ such as fuel codes, states, sectors, plants, or scenario labels.
 
 Examples:
 
-    datasight dimensions
-    datasight dimensions --table generation_fuel
-    datasight dimensions --format json -o dimensions.json
+```
+datasight dimensions
+datasight dimensions --table generation_fuel
+datasight dimensions --format json -o dimensions.json
+```
 
 ```bash
 datasight dimensions [OPTIONS]
@@ -637,10 +681,12 @@ or DuckDB files directly for a quick file-only trend scan.
 
 Examples:
 
-    datasight trends
-    datasight trends --table generation_fuel
-    datasight trends generation.parquet plants.parquet
-    datasight trends --format markdown -o trends.md
+```
+datasight trends
+datasight trends --table generation_fuel
+datasight trends generation.parquet plants.parquet
+datasight trends --format markdown -o trends.md
+```
 
 ```bash
 datasight trends [OPTIONS] [FILES]...
@@ -669,10 +715,12 @@ in-memory DuckDB session is used.
 
 Examples:
 
-    datasight inspect generation.parquet
-    datasight inspect generation.csv plants.csv
-    datasight inspect data_dir/
-    datasight inspect generation.parquet --format markdown -o inspect.md
+```
+datasight inspect generation.parquet
+datasight inspect generation.csv plants.csv
+datasight inspect data_dir/
+datasight inspect generation.parquet --format markdown -o inspect.md
+```
 
 ```bash
 datasight inspect [OPTIONS] FILES...
@@ -696,9 +744,11 @@ recipe prompt through the normal ask pipeline.
 
 Examples:
 
-    datasight recipes list
-    datasight recipes list --table generation_fuel
-    datasight recipes run 1
+```
+datasight recipes list
+datasight recipes list --table generation_fuel
+datasight recipes run 1
+```
 
 ```bash
 datasight recipes [OPTIONS] COMMAND [ARGS]...
@@ -715,9 +765,11 @@ List reusable deterministic prompt recipes for a project.
 
 Examples:
 
-    datasight recipes list
-    datasight recipes list --table generation_fuel
-    datasight recipes list --format markdown -o recipes.md
+```
+datasight recipes list
+datasight recipes list --table generation_fuel
+datasight recipes list --format markdown -o recipes.md
+```
 
 ```bash
 datasight recipes list [OPTIONS]
@@ -740,9 +792,11 @@ RECIPE_ID is the numeric ID shown by datasight recipes list.
 
 Examples:
 
-    datasight recipes run 1
-    datasight recipes run 2 --format csv -o recipe.csv
-    datasight recipes run 3 --chart-format html -o recipe.html
+```
+datasight recipes run 1
+datasight recipes run 2 --format csv -o recipe.csv
+datasight recipes run 3 --chart-format html -o recipe.html
+```
 
 ```bash
 datasight recipes run [OPTIONS] RECIPE_ID
@@ -770,9 +824,11 @@ path is wrong, or the web UI cannot write state under .datasight/.
 
 Examples:
 
-    datasight doctor
-    datasight doctor --format markdown -o doctor.md
-    datasight doctor --project-dir eia-demo
+```
+datasight doctor
+datasight doctor --format markdown -o doctor.md
+datasight doctor --project-dir eia-demo
+```
 
 ```bash
 datasight doctor [OPTIONS]
@@ -794,10 +850,12 @@ SESSION_ID is the conversation ID (use --list-sessions to see available IDs).
 
 Examples:
 
-    datasight export --list-sessions
-    datasight export abc123def -o my-analysis.html
-    datasight export abc123def --format py -o my-analysis.py
-    datasight export abc123def --exclude 2,3
+```
+datasight export --list-sessions
+datasight export abc123def -o my-analysis.html
+datasight export abc123def --format py -o my-analysis.py
+datasight export abc123def --exclude 2,3
+```
 
 ```bash
 datasight export [OPTIONS] [SESSION_ID]
@@ -824,11 +882,13 @@ SQL client.
 
 Examples:
 
-    datasight log
-    datasight log --tail 50 --full
-    datasight log --errors
-    datasight log --cost
-    datasight log --sql 1
+```
+datasight log
+datasight log --tail 50 --full
+datasight log --errors
+datasight log --cost
+datasight log --sql 1
+```
 
 ```bash
 datasight log [OPTIONS]
@@ -854,10 +914,12 @@ fresh data, exported, or deleted from the CLI.
 
 Examples:
 
-    datasight report list
-    datasight report run 1
-    datasight report run 1 --format csv -o report.csv
-    datasight report delete 1
+```
+datasight report list
+datasight report run 1
+datasight report run 1 --format csv -o report.csv
+datasight report delete 1
+```
 
 ```bash
 datasight report [OPTIONS] COMMAND [ARGS]...
@@ -875,7 +937,9 @@ List all saved reports.
 
 Example:
 
-    datasight report list
+```
+datasight report list
+```
 
 ```bash
 datasight report list [OPTIONS]
@@ -895,9 +959,11 @@ REPORT_ID is the numeric ID shown by 'datasight report list'.
 
 Examples:
 
-    datasight report run 1
-    datasight report run 1 --format csv -o report.csv
-    datasight report run 2 --chart-format html -o chart.html
+```
+datasight report run 1
+datasight report run 1 --format csv -o report.csv
+datasight report run 2 --chart-format html -o chart.html
+```
 
 ```bash
 datasight report run [OPTIONS] REPORT_ID
@@ -921,7 +987,9 @@ REPORT_ID is the numeric ID shown by 'datasight report list'.
 
 Example:
 
-    datasight report delete 1
+```
+datasight report delete 1
+```
 
 ```bash
 datasight report delete [OPTIONS] REPORT_ID
@@ -943,9 +1011,11 @@ charts can be applied to another dataset with matching tables.
 
 Examples:
 
-    datasight templates save generation-dashboard
-    datasight templates list
-    datasight templates apply generation-dashboard --output out.html
+```
+datasight templates save generation-dashboard
+datasight templates list
+datasight templates apply generation-dashboard --output out.html
+```
 
 ```bash
 datasight templates [OPTIONS] COMMAND [ARGS]...
@@ -968,10 +1038,12 @@ and saving cards in the web UI.
 
 Examples:
 
-    datasight templates save generation-dashboard
-    datasight templates save generation-dashboard --description "Monthly generation cards"
-    datasight templates save generation-dashboard --table generation_fuel --overwrite
-    datasight templates save by-scenario --var SCENARIO=reference
+```
+datasight templates save generation-dashboard
+datasight templates save generation-dashboard --description "Monthly generation cards"
+datasight templates save generation-dashboard --table generation_fuel --overwrite
+datasight templates save by-scenario --var SCENARIO=reference
+```
 
 ```bash
 datasight templates save [OPTIONS] NAME
@@ -995,7 +1067,9 @@ List dashboard templates saved in this project.
 
 Example:
 
-    datasight templates list
+```
+datasight templates list
+```
 
 ```bash
 datasight templates list [OPTIONS]
@@ -1013,7 +1087,9 @@ Print a saved template as JSON.
 
 Example:
 
-    datasight templates show generation-dashboard
+```
+datasight templates show generation-dashboard
+```
 
 ```bash
 datasight templates show [OPTIONS] NAME
@@ -1039,14 +1115,16 @@ written to --export-dir.
 
 Examples:
 
-    # Render once, mapping one required table to a parquet file
-    datasight templates apply generation-by-fuel \
-        --table generation_fuel=data/generation.parquet \
-        --output generation.html
-    # Render once per matching parquet, writing one HTML per file
-    datasight templates apply generation-by-fuel \
-        --table 'generation_fuel=data/*.parquet' \
-        --export-dir out/
+```
+# Render once, mapping one required table to a parquet file
+datasight templates apply generation-by-fuel \
+    --table generation_fuel=data/generation.parquet \
+    --output generation.html
+# Render once per matching parquet, writing one HTML per file
+datasight templates apply generation-by-fuel \
+    --table 'generation_fuel=data/*.parquet' \
+    --export-dir out/
+```
 
 ```bash
 datasight templates apply [OPTIONS] NAME
@@ -1070,7 +1148,9 @@ Delete a saved template.
 
 Example:
 
-    datasight templates delete generation-dashboard
+```
+datasight templates delete generation-dashboard
+```
 
 ```bash
 datasight templates delete [OPTIONS] NAME

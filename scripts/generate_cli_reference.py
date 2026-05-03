@@ -62,19 +62,35 @@ def _clean_epilog(text: str) -> str:
     cleaned = _clean_text(text)
     lines = [line.rstrip() for line in cleaned.splitlines() if line.strip()]
     out: list[str] = []
-    previous_indented = False
-    for line in lines:
-        stripped = line.lstrip()
-        indented = line.startswith(("  ", "\t"))
-        if out and stripped.endswith(":") and out[-1] != "":
+    code: list[str] = []
+
+    def flush() -> None:
+        if not code:
+            return
+        common = min(len(line) - len(line.lstrip()) for line in code)
+        if out and out[-1] != "":
             out.append("")
-        if out and not indented and previous_indented and out[-1] != "":
+        out.append("```")
+        out.extend(line[common:] for line in code)
+        out.append("```")
+        out.append("")
+        code.clear()
+
+    for line in lines:
+        if line.startswith((" ", "\t")):
+            code.append(line)
+            continue
+        flush()
+        if out and out[-1] != "":
             out.append("")
         out.append(line)
-        if stripped.endswith(":"):
+        if line.endswith(":"):
             out.append("")
-        previous_indented = indented
-    return "\n".join(out).strip()
+    flush()
+
+    while out and out[-1] == "":
+        out.pop()
+    return "\n".join(out)
 
 
 def _first_paragraph(text: str) -> str:

@@ -27,44 +27,42 @@ datasight profile
 # Or try a built-in demo dataset
 datasight demo eia-generation ./my-project    # US power plants
 cd my-project
-# Edit .env with your API key (see Getting Started)
+# Edit .env with your API key (see Set up your first project)
 datasight run
 ```
 
-## Documentation by role
-
-datasight has three types of users. Pick the section that matches how you use
-the tool — or start with [Users and roles](concepts/users-and-roles.md) for an
-overview.
+## Where to go next
 
 <div class="grid cards" markdown>
 
--   :material-account:{ .lg .middle } **[End user](end-user/how-to/install.md)**
+-   :material-account:{ .lg .middle } **[Use datasight](use/how-to/install.md)**
 
     ---
 
-    Get started, explore data through the web UI, ask questions, view charts,
-    and review SQL.
+    Install, choose an LLM, ask questions in the web UI or CLI, build
+    dashboards, audit data quality, and run on HPC or Spark.
 
-    [:octicons-arrow-right-24: Explore US electricity generation](end-user/tutorials/getting-started.md)
-    [:octicons-arrow-right-24: Explore files without a project](end-user/how-to/explore-files.md)
+    [:octicons-arrow-right-24: Explore US electricity generation](use/tutorials/getting-started.md)
+    [:octicons-arrow-right-24: Choosing an LLM](use/concepts/choosing-an-llm.md)
 
--   :material-database-cog:{ .lg .middle } **[Project developer](project-developer/set-up-project.md)**
-
-    ---
-
-    Set up a datasight project for your team. Connect a database, write schema
-    descriptions, curate example queries, and verify results across models.
-
-    [:octicons-arrow-right-24: Set up a project](project-developer/set-up-project.md)
-
--   :material-code-braces:{ .lg .middle } **[Tool developer](tool-developer/architecture.md)**
+-   :material-database-cog:{ .lg .middle } **[Project Setup](project-setup/tutorials/set-up-project.md)**
 
     ---
 
-    Contribute to datasight itself. Understand the architecture, LLM agent
-    loop, and module structure.
+    Connect a database, write schema descriptions, define semantic
+    measures, declare validation rules, and verify queries across
+    models.
 
-    [:octicons-arrow-right-24: Architecture](tool-developer/architecture.md)
+    [:octicons-arrow-right-24: Set up your first project](project-setup/tutorials/set-up-project.md)
+    [:octicons-arrow-right-24: Verify queries across models](project-setup/how-to/verification.md)
+
+-   :material-code-braces:{ .lg .middle } **[Design](design/architecture.md)**
+
+    ---
+
+    Architecture, internals, and contributor notes for the datasight
+    codebase itself.
+
+    [:octicons-arrow-right-24: Architecture](design/architecture.md)
 
 </div>

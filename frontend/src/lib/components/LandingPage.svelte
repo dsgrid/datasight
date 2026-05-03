@@ -77,7 +77,7 @@
     <!-- Footer -->
     <div class="text-center" style="font-size: 0.8rem;">
       <a
-        href="https://dsgrid.github.io/datasight/end-user/demo-dataset/"
+        href="https://dsgrid.github.io/datasight/use/tutorials/getting-started/"
         target="_blank"
         rel="noopener"
         class="text-text-secondary no-underline hover:text-teal hover:underline"
