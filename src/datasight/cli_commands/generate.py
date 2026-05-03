@@ -119,10 +119,11 @@ async def _run_ask_pipeline(*args, **kwargs):
     default="auto",
     show_default=True,
     help=(
-        "When FILES are CSV/Parquet/Excel inputs, choose whether datasight "
+        "When FILES are CSV/Parquet inputs, choose whether datasight "
         "creates source-backed views or materialized DuckDB tables. "
         "'auto' preserves the existing cheap behavior and keeps CSV/Parquet "
-        "source-backed; use 'table' to opt into materialization."
+        "source-backed; use 'table' to opt into materialization. Excel "
+        "workbooks are always materialized as tables."
     ),
 )
 @click.option(
@@ -163,6 +164,7 @@ def generate(
     _configure_logging(level)
     settings, resolved_model = _resolve_settings(project_dir, model)
     _validate_settings_for_llm(settings)
+    normalized_import_mode = import_mode.lower()
 
     # Resolve the would-be DB path up front so we can include it in the
     # preflight check — otherwise a stale database.duckdb would abort the
@@ -174,6 +176,12 @@ def generate(
     db_target: Path | None = None
     sqlite_source_path: Path | None = None
     duckdb_source_path: Path | None = None
+    if not use_files and normalized_import_mode != "auto":
+        click.echo(
+            "Error: --import-mode only applies when importing CSV/Parquet/Excel files.",
+            err=True,
+        )
+        sys.exit(1)
     if use_files:
         from datasight.explore import detect_file_type
 
@@ -181,6 +189,22 @@ def generate(
             (Path(file_path).resolve(), detect_file_type(str(Path(file_path).resolve())))
             for file_path in files
         ]
+        if normalized_import_mode == "view" and any(
+            file_type == "xlsx" for _, file_type in resolved_file_types
+        ):
+            click.echo(
+                "Error: Excel inputs are always materialized as DuckDB tables; "
+                "--import-mode=view is not supported for .xlsx files.",
+                err=True,
+            )
+            sys.exit(1)
+        if settings.database.mode == "spark" and normalized_import_mode == "table":
+            click.echo(
+                "Error: --import-mode=table is not supported when DB_MODE=spark; "
+                "Spark file sessions always register temp views.",
+                err=True,
+            )
+            sys.exit(1)
         sqlite_files = [
             file_path for file_path, file_type in resolved_file_types if file_type == "sqlite"
         ]
@@ -194,7 +218,7 @@ def generate(
                     err=True,
                 )
                 sys.exit(1)
-            if import_mode.lower() != "auto":
+            if normalized_import_mode != "auto":
                 click.echo(
                     "Error: --import-mode only applies when importing CSV/Parquet/Excel "
                     "or mixed file inputs into DuckDB.",
@@ -210,7 +234,7 @@ def generate(
                 sys.exit(1)
             sqlite_source_path = sqlite_files[0]
         elif len(duckdb_files) == 1 and len(files) == 1:
-            if import_mode.lower() != "auto":
+            if normalized_import_mode != "auto":
                 click.echo(
                     "Error: --import-mode only applies when importing CSV/Parquet/Excel "
                     "or mixed file inputs into DuckDB.",
@@ -317,7 +341,7 @@ def generate(
             from datasight.explore import create_files_session_for_settings
 
             sql_runner, tables_info = create_files_session_for_settings(
-                list(files), settings.database, import_mode=import_mode.lower()
+                list(files), settings.database, import_mode=normalized_import_mode
             )
         else:
             sql_runner = create_sql_runner_from_settings(settings.database, project_dir)

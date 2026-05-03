@@ -356,6 +356,75 @@ def test_generate_rejects_import_mode_with_existing_duckdb(tmp_path, stub_llm):
     assert not stub_llm.calls
 
 
+def test_generate_rejects_import_mode_without_files(tmp_path, stub_llm):
+    db_path = tmp_path / "generation.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code VARCHAR)")
+    conn.close()
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=test-key\nDB_MODE=duckdb\nDB_PATH=./generation.duckdb\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", "--project-dir", str(tmp_path), "--import-mode", "table"],
+    )
+    assert result.exit_code != 0
+    assert "--import-mode only applies when importing CSV/Parquet/Excel files" in result.output
+    assert not stub_llm.calls
+
+
+def test_generate_rejects_import_mode_view_for_excel(tmp_path, stub_llm):
+    xlsx_path = tmp_path / "generation.xlsx"
+    pd.DataFrame({"energy_source_code": ["WND"], "net_generation_mwh": [100]}).to_excel(
+        xlsx_path, index=False
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(xlsx_path),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "view",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Excel inputs are always materialized" in result.output
+    assert not stub_llm.calls
+
+
+def test_generate_rejects_import_mode_table_for_spark_files(tmp_path, parquet_file, stub_llm):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=test-key\nDB_MODE=spark\nSPARK_REMOTE=sc://my-cluster:15002\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(parquet_file),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "table",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--import-mode=table is not supported when DB_MODE=spark" in result.output
+    assert not stub_llm.calls
+
+
 def test_generate_rejects_db_path_with_existing_sqlite(tmp_path, stub_llm):
     db_path = tmp_path / "generation.sqlite"
     conn = sqlite3.connect(str(db_path))
