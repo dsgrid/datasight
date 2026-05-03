@@ -185,21 +185,52 @@ def test_create_ephemeral_session_invalid_import_mode_raises(tmp_path):
         create_ephemeral_session([str(csv)], import_mode=cast(Any, "bogus"))
 
 
-def test_create_ephemeral_session_rejects_excel_view_mode(tmp_path):
+def test_create_ephemeral_session_allows_mixed_excel_and_view_mode(tmp_path):
     xlsx = tmp_path / "plants.xlsx"
     _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"plant_id": [1]})})
+    csv = tmp_path / "generation.csv"
+    csv.write_text("net_generation_mwh\n100\n", encoding="utf-8")
 
-    with pytest.raises(ConfigurationError, match="Excel inputs are always materialized"):
-        create_ephemeral_session([str(xlsx)], import_mode="view")
+    runner, tables = create_ephemeral_session([str(xlsx), str(csv)], import_mode="view")
+    with runner:
+        by_name = {table["name"]: table for table in tables}
+        assert by_name["plants"]["type"] == "xlsx"
+        assert by_name["plants"]["import_mode"] == "table"
+        assert by_name["generation"]["import_mode"] == "view"
+        relation_types = dict(
+            runner._conn.execute(  # ty: ignore[unresolved-attribute]
+                "SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_schema='main'"
+            ).fetchall()
+        )
+        assert relation_types["plants"] == "BASE TABLE"
+        assert relation_types["generation"] == "VIEW"
 
 
-def test_add_files_to_connection_rejects_excel_view_mode(tmp_path):
+def test_add_files_to_connection_allows_mixed_excel_and_view_mode(tmp_path):
     conn = duckdb.connect(":memory:")
     xlsx = tmp_path / "plants.xlsx"
     _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"plant_id": [1]})})
+    csv = tmp_path / "generation.csv"
+    csv.write_text("net_generation_mwh\n100\n", encoding="utf-8")
 
-    with pytest.raises(ConfigurationError, match="Excel inputs are always materialized"):
-        add_files_to_connection(conn, [str(xlsx)], existing_table_names=set(), import_mode="view")
+    tables = add_files_to_connection(
+        conn,
+        [str(xlsx), str(csv)],
+        existing_table_names=set(),
+        import_mode="view",
+    )
+    by_name = {table["name"]: table for table in tables}
+    assert by_name["plants"]["type"] == "xlsx"
+    assert by_name["plants"]["import_mode"] == "table"
+    assert by_name["generation"]["import_mode"] == "view"
+    relation_types = dict(
+        conn.execute(
+            "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()
+    )
+    assert relation_types["plants"] == "BASE TABLE"
+    assert relation_types["generation"] == "VIEW"
     conn.close()
 
 
@@ -422,5 +453,25 @@ def test_save_project_rebuilds_xlsx_sheets(tmp_path):
     try:
         assert conn.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 2  # ty: ignore[not-subscriptable]
         assert conn.execute("SELECT id FROM clean").fetchone() == (10,)
+    finally:
+        conn.close()
+
+
+def test_save_project_preserves_materialized_csv_tables(tmp_path):
+    csv = tmp_path / "generation.csv"
+    csv.write_text("net_generation_mwh\n100\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(csv)], import_mode="table")
+    project_dir = tmp_path / "proj"
+    save_ephemeral_as_project(runner, tables, str(project_dir))
+    runner.close()
+
+    conn = duckdb.connect(str(project_dir / "data.duckdb"), read_only=True)
+    try:
+        relation = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("BASE TABLE",)
     finally:
         conn.close()

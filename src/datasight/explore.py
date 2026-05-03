@@ -420,11 +420,14 @@ def create_ephemeral_session(
     resolved_paths = [
         (str(Path(p).resolve()), detect_file_type(str(Path(p).resolve()))) for p in file_paths
     ]
-    if import_mode == "view" and any(file_type == "xlsx" for _, file_type in resolved_paths):
-        raise ConfigurationError(
-            "Excel inputs are always materialized as DuckDB tables; "
-            "--import-mode=view is not supported for .xlsx files."
-        )
+    if import_mode == "view":
+        excel_paths = [path for path, file_type in resolved_paths if file_type == "xlsx"]
+        for path in excel_paths:
+            logger.warning(
+                "Excel input {} will be materialized as a DuckDB table; "
+                "import_mode=view only applies to non-Excel inputs.",
+                path,
+            )
     duckdb_files = [p for p, t in resolved_paths if t == "duckdb"]
     other_files = [(p, t) for p, t in resolved_paths if t is not None and t != "duckdb"]
     invalid_files = [p for p, t in resolved_paths if t is None]
@@ -712,11 +715,14 @@ def add_files_to_connection(
     for path in file_paths:
         resolved_path = str(Path(path).resolve())
         resolved_paths.append((resolved_path, detect_file_type(resolved_path)))
-    if import_mode == "view" and any(file_type == "xlsx" for _, file_type in resolved_paths):
-        raise ConfigurationError(
-            "Excel inputs are always materialized as DuckDB tables; "
-            "--import-mode=view is not supported for .xlsx files."
-        )
+    if import_mode == "view":
+        excel_paths = [path for path, file_type in resolved_paths if file_type == "xlsx"]
+        for path in excel_paths:
+            logger.warning(
+                "Excel input {} will be materialized as a DuckDB table; "
+                "import_mode=view only applies to non-Excel inputs.",
+                path,
+            )
 
     for path, file_type in resolved_paths:
         if file_type is None:

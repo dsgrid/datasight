@@ -333,7 +333,7 @@ def test_generate_import_mode_view_keeps_csv_as_view(tmp_path, stub_llm):
         assert relation == ("VIEW",)
 
 
-def test_generate_import_mode_table_inspects_with_views_but_persists_tables(
+def test_generate_import_mode_table_materializes_before_introspection(
     tmp_path, stub_llm, monkeypatch
 ):
     csv_path = tmp_path / "generation.csv"
@@ -342,21 +342,30 @@ def test_generate_import_mode_table_inspects_with_views_but_persists_tables(
     )
 
     from datasight import explore as explore_module
+    import datasight.schema as schema_module
 
     original_session = explore_module.create_files_session_for_settings
     original_build = explore_module.build_persistent_duckdb
     captured: dict[str, object] = {}
+    session_import_modes: list[str] = []
+    introspect_runner_types: list[str] = []
 
     def _capturing_session(file_paths, settings, import_mode="auto"):
-        captured["session_import_mode"] = import_mode
+        session_import_modes.append(import_mode)
         return original_session(file_paths, settings, import_mode=import_mode)
 
     def _capturing_build(db_path, tables_info, *, overwrite=False):
         captured["persistent_import_modes"] = [t.get("import_mode") for t in tables_info]
         return original_build(db_path, tables_info, overwrite=overwrite)
 
+    async def _capturing_introspect_schema(run_sql, runner=None):
+        introspect_runner_types.append(type(runner).__name__)
+        return await original_introspect_schema(run_sql, runner=runner)
+
+    original_introspect_schema = schema_module.introspect_schema
     monkeypatch.setattr(explore_module, "create_files_session_for_settings", _capturing_session)
     monkeypatch.setattr(explore_module, "build_persistent_duckdb", _capturing_build)
+    monkeypatch.setattr(schema_module, "introspect_schema", _capturing_introspect_schema)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -371,8 +380,9 @@ def test_generate_import_mode_table_inspects_with_views_but_persists_tables(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert captured["session_import_mode"] == "auto"
+    assert session_import_modes == ["auto"]
     assert captured["persistent_import_modes"] == ["table"]
+    assert introspect_runner_types == ["DuckDBRunner"] * 3
 
     db_path = tmp_path / "database.duckdb"
     with duckdb.connect(str(db_path), read_only=True) as conn:
@@ -428,11 +438,13 @@ def test_generate_rejects_import_mode_without_files(tmp_path, stub_llm):
     assert not stub_llm.calls
 
 
-def test_generate_rejects_import_mode_view_for_excel(tmp_path, stub_llm):
+def test_generate_warns_and_allows_excel_in_view_mode(tmp_path, stub_llm):
     xlsx_path = tmp_path / "generation.xlsx"
     pd.DataFrame({"energy_source_code": ["WND"], "net_generation_mwh": [100]}).to_excel(
         xlsx_path, index=False
     )
+    csv_path = tmp_path / "plants.csv"
+    csv_path.write_text("plant_id,name\n1,Alpha\n", encoding="utf-8")
 
     runner = CliRunner()
     result = runner.invoke(
@@ -440,15 +452,27 @@ def test_generate_rejects_import_mode_view_for_excel(tmp_path, stub_llm):
         [
             "generate",
             str(xlsx_path),
+            str(csv_path),
             "--project-dir",
             str(tmp_path),
             "--import-mode",
             "view",
         ],
     )
-    assert result.exit_code != 0
-    assert "Excel inputs are always materialized" in result.output
-    assert not stub_llm.calls
+    assert result.exit_code == 0, result.output
+    assert "Warning: Excel inputs are always materialized as DuckDB tables" in result.output
+    assert stub_llm.calls
+
+    db_path = tmp_path / "database.duckdb"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation_types = dict(
+            conn.execute(
+                "SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_schema='main'"
+            ).fetchall()
+        )
+        assert relation_types["generation"] == "BASE TABLE"
+        assert relation_types["plants"] == "VIEW"
 
 
 def test_generate_rejects_import_mode_table_for_spark_files(tmp_path, parquet_file, stub_llm):
@@ -472,6 +496,64 @@ def test_generate_rejects_import_mode_table_for_spark_files(tmp_path, parquet_fi
     )
     assert result.exit_code != 0
     assert "--import-mode=table is not supported when DB_MODE=spark" in result.output
+    assert not stub_llm.calls
+
+
+def test_generate_rejects_import_mode_table_for_non_duckdb_file_projects(
+    tmp_path, parquet_file, stub_llm
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=test-key\nDB_MODE=postgres\nDB_HOST=localhost\nDB_NAME=grid\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(parquet_file),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "table",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--import-mode=table requires DB_MODE=duckdb" in result.output
+    assert not stub_llm.calls
+
+
+def test_generate_reports_generic_import_mode_error_for_direct_db_inputs_in_spark_project(
+    tmp_path, stub_llm
+):
+    db_path = tmp_path / "generation.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code VARCHAR)")
+    conn.close()
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "ANTHROPIC_API_KEY=test-key\nDB_MODE=spark\nSPARK_REMOTE=sc://my-cluster:15002\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(db_path),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "table",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--import-mode only applies when importing CSV/Parquet/Excel" in result.output
+    assert "DB_MODE=spark" not in result.output
     assert not stub_llm.calls
 
 
