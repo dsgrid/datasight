@@ -127,8 +127,7 @@ Requires the `spark` extra: `pip install 'datasight[spark]'`.
 | `SCHEMA_INCLUDE_MAX_BYTES` | `20000` | Per-URL size cap for `[include:…](url)` directives inside the schema description. Set to `0` to skip include resolution entirely — useful when fetched pages push the prompt past a small-context model's token limit. |
 | `SCHEMA_INCLUDE_ALLOW_PRIVATE_HOSTS` | `false` | Opt-in switch that disables the SSRF guard on `[include:…](url)` directives, allowing fetches from `localhost`, private IP ranges, and `.internal`/`.local` hostnames. Leave off unless a project intentionally references an internal documentation server. |
 | `PORT` | `8084` | Web UI port |
-| `QUERY_LOG_ENABLED` | `false` | Enable SQL query logging ([guide](../use/how-to/review-query-log.md)) |
-| `QUERY_LOG_PATH` | `./query_log.jsonl` | Path to query log file |
+| `QUERY_LOG_PATH` | `<project>/.datasight/query_log.jsonl` | Override the SQL query log path. Logging is always on for project sessions ([guide](../use/how-to/review-query-log.md)) |
 | `CLARIFY_SQL` | `true` | Ask clarifying questions for ambiguous queries ([guide](query-confidence-toggles.md)) |
 | `CONFIRM_SQL` | `false` | Require user approval before executing SQL ([guide](query-confidence-toggles.md)) |
 | `EXPLAIN_SQL` | `false` | Show plain-English SQL explanations ([guide](query-confidence-toggles.md)) |
@@ -145,8 +144,7 @@ A datasight project directory contains:
 | `.env` | Yes | API key and connection settings |
 | `schema_description.md` | No | Domain context for the AI ([guide](../project-setup/how-to/schema-description.md)). Always a local file, even when using Flight SQL. |
 | `queries.yaml` | No | Example question/SQL pairs ([guide](../project-setup/how-to/example-queries.md)). Always a local file, even when using Flight SQL. |
-| `query_log.jsonl` | No | SQL query log, created when logging is enabled ([guide](../use/how-to/review-query-log.md)) |
-| `.datasight/` | No | Auto-created directory for app state (see below) |
+| `.datasight/` | No | Auto-created directory for app state, including `query_log.jsonl` ([guide](../use/how-to/review-query-log.md)) (see below) |
 
 ### `.datasight/` directory
 

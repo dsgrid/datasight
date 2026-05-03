@@ -86,7 +86,6 @@ Toggle the sidebar with the hamburger button in the header or
 | **Chat / Dashboard / SQL tabs** | Switch view (dashboard badge shows pinned count; SQL opens the query editor) |
 | **New Chat** | Clear chat, SQL history, and dashboard |
 | **History button** | Open the SQL query history panel |
-| **Log button** | Toggle SQL query logging (highlights teal when on) |
 | **Export** | Enter conversation export mode |
 | **Gear icon** | Open Settings panel |
 | **Toolbar toggles** | Clarify / SQL approval / SQL explanations (see [Query confidence toggles](query-confidence-toggles.md)) |

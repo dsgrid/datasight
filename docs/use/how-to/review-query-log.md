@@ -1,26 +1,15 @@
 # Log and review SQL queries
 
-datasight can log every SQL query the AI generates to a structured file,
-capturing timing, results, and errors. This is useful for auditing, debugging,
-and learning SQL.
+datasight logs every SQL query the AI generates to a structured file,
+capturing timing, results, and errors. This is useful for auditing,
+debugging, and learning SQL.
 
-## Enable query logging
+Logging is on by default whenever a project is loaded. The log lives at
+`<project>/.datasight/query_log.jsonl` and grows append-only across
+sessions. Ephemeral file-explore sessions (started without a project) do
+not write a log.
 
-**From the CLI:**
-
-```bash
-datasight run --query-log
-```
-
-**From the web UI:** click the log button in the header toolbar (between
-the SQL panel toggle and New chat). The button highlights in teal when
-logging is active. Click again to disable.
-
-**Via environment variable:** set `QUERY_LOG_ENABLED=true` in `.env` or
-your shell.
-
-Queries are written to `query_log.jsonl` in the project directory. Each line
-is a JSON object:
+Each entry is a JSON object on its own line:
 
 ```json
 {
@@ -95,13 +84,8 @@ datasight log --project-dir ./my-project
 
 ## Change the log file path
 
-By default the log writes to `query_log.jsonl` in the project directory.
-Override with the `QUERY_LOG_PATH` environment variable:
+Override the default path with the `QUERY_LOG_PATH` environment variable:
 
 ```bash
-QUERY_LOG_PATH=/var/log/datasight/queries.jsonl datasight run --query-log
+QUERY_LOG_PATH=/var/log/datasight/queries.jsonl datasight run
 ```
-
-## Toggle logging at runtime
-
-The web UI button toggles logging without restarting the server.
