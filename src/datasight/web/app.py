@@ -3843,13 +3843,16 @@ async def export_session(session_id: str, request: Request, state: AppState = De
     except InvalidSessionIdError:
         return PlainTextResponse(content="Invalid session ID", status_code=400)
 
-    if state.conversations is None:
-        return HTMLResponse(content="<p>No conversation data available.</p>", status_code=200)
     body = await request.json()
     exclude = body.get("exclude_indices", [])
     exclude_set = set(exclude) if exclude else None
     fmt = (body.get("format") or "html").lower()
     include = body.get("include")
+
+    if state.conversations is None:
+        if fmt == "html":
+            return HTMLResponse(content="<p>No conversation data available.</p>", status_code=200)
+        return PlainTextResponse(content="No conversation data available.", status_code=404)
 
     data = state.conversations.get(session_id)
     events = data.get("events", [])

@@ -655,6 +655,33 @@ def test_export_bundle_writes_manifest_and_selected_artifacts():
         assert "coal,100" in csv_text
 
 
+def test_export_bundle_csv_sanitizes_formula_like_cells():
+    events = [
+        {"event": "user_message", "data": {"text": "Show risky values"}},
+        {
+            "event": "tool_result",
+            "data": {
+                "type": "table",
+                "html": (
+                    "<table><thead><tr><th>plant</th></tr></thead>"
+                    "<tbody><tr><td>=cmd|' /C calc'!A0</td></tr></tbody></table>"
+                ),
+            },
+        },
+    ]
+
+    bundle = export_session_bundle(
+        events,
+        title="Risky CSV",
+        session_id="abc123",
+        include=["csv"],
+    )
+
+    with zipfile.ZipFile(io.BytesIO(bundle)) as zf:
+        csv_text = zf.read("results/turn-01-01.csv").decode("utf-8")
+        assert "'=cmd|' /C calc'!A0" in csv_text
+
+
 def test_cli_export_format_bundle_writes_zip_archive(tmp_path, monkeypatch):
     from click.testing import CliRunner
 
@@ -699,6 +726,35 @@ def test_cli_export_format_bundle_writes_zip_archive(tmp_path, monkeypatch):
         assert "python/reproduce.py" in names
         assert "metadata/session.json" in names
         assert "sql/turn-01-01.sql" in names
+
+
+def test_cli_export_bundle_rejects_empty_include(tmp_path):
+    from click.testing import CliRunner
+
+    from datasight.cli import cli
+
+    project_dir = tmp_path / "proj"
+    (project_dir / ".datasight" / "conversations").mkdir(parents=True)
+    (project_dir / ".datasight" / "conversations" / "abc123.json").write_text(
+        json.dumps({"title": "Live", "messages": [], "events": _make_events()})
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "export",
+            "abc123",
+            "--format",
+            "bundle",
+            "--include",
+            " , ",
+            "--project-dir",
+            str(project_dir),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--include must name at least one artifact" in result.output
 
 
 def test_cli_export_format_py_writes_runnable_script(tmp_path, monkeypatch):

@@ -909,6 +909,20 @@ def test_export_session_no_conversations(isolated_web_state: None) -> None:
     assert "No conversation data" in resp.text
 
 
+def test_export_session_bundle_no_conversations_returns_404(isolated_web_state: None) -> None:
+    with TestClient(web_app.app) as client:
+        resp = client.post("/api/export/anything", json={"format": "bundle"})
+    assert resp.status_code == 404
+    assert "No conversation data available." in resp.text
+
+
+def test_export_session_python_no_conversations_returns_404(isolated_web_state: None) -> None:
+    with TestClient(web_app.app) as client:
+        resp = client.post("/api/export/anything", json={"format": "py"})
+    assert resp.status_code == 404
+    assert "No conversation data available." in resp.text
+
+
 def test_export_session_with_project(isolated_web_state: None, project_dir: str) -> None:
     with TestClient(web_app.app) as client:
         client.post("/api/projects/load", json={"path": project_dir})

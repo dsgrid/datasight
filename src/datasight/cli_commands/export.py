@@ -196,6 +196,12 @@ def export(
     include_values = None
     if include_artifacts:
         include_values = [item.strip() for item in include_artifacts.split(",") if item.strip()]
+        if not include_values:
+            click.echo(
+                "Error: --include must name at least one artifact or be omitted.",
+                err=True,
+            )
+            sys.exit(1)
     if include_values and fmt != "bundle":
         click.echo("Error: --include is only supported with --format bundle.", err=True)
         sys.exit(1)

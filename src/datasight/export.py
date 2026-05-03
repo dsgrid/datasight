@@ -599,6 +599,13 @@ class _HTMLTableParser(HTMLParser):
             self.in_row = False
 
 
+def _sanitize_csv_cell(value: str) -> str:
+    """Defuse spreadsheet formula interpretation in exported CSV cells."""
+    if value and value[0] in ("=", "+", "-", "@"):
+        return f"'{value}"
+    return value
+
+
 def _table_html_to_csv(table_html: str) -> str:
     """Convert exported HTML table markup into CSV text."""
     parser = _HTMLTableParser()
@@ -607,7 +614,7 @@ def _table_html_to_csv(table_html: str) -> str:
         return ""
     out = StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerows(parser.rows)
+    writer.writerows([[_sanitize_csv_cell(cell) for cell in row] for row in parser.rows])
     return out.getvalue()
 
 
