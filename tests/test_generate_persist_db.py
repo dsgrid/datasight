@@ -59,7 +59,7 @@ def test_build_persistent_duckdb_creates_views(tmp_path, parquet_file):
 def test_build_persistent_duckdb_materializes_csv_tables(tmp_path):
     csv_path = tmp_path / "generation.csv"
     csv_path.write_text("x\n1\n2\n", encoding="utf-8")
-    _, tables_info = create_ephemeral_session([str(csv_path)])
+    _, tables_info = create_ephemeral_session([str(csv_path)], import_mode="table")
 
     db_path = tmp_path / "out.duckdb"
     build_persistent_duckdb(db_path, tables_info)

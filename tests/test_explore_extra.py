@@ -107,7 +107,7 @@ def test_single_duckdb_file_unreadable_raises(tmp_path):
 
 
 def test_add_files_to_connection_basic(tmp_path):
-    """add_files_to_connection uses auto import mode for new CSV tables."""
+    """add_files_to_connection keeps CSV source-backed in auto mode."""
     conn = duckdb.connect(":memory:")
 
     csv1 = tmp_path / "a.csv"
@@ -116,12 +116,12 @@ def test_add_files_to_connection_basic(tmp_path):
     tables = add_files_to_connection(conn, [str(csv1)], existing_table_names=set())
     assert len(tables) == 1
     assert tables[0]["name"] == "a"
-    assert tables[0]["import_mode"] == "table"
+    assert tables[0]["import_mode"] == "view"
 
     relation = conn.execute(
         "SELECT table_type FROM information_schema.tables WHERE table_schema='main' AND table_name='a'"
     ).fetchone()
-    assert relation == ("BASE TABLE",)
+    assert relation == ("VIEW",)
 
     df = conn.execute("SELECT * FROM a").fetchdf()
     assert len(df) == 1
@@ -156,6 +156,21 @@ def test_create_ephemeral_session_parquet_auto_mode_uses_view(tmp_path):
             "WHERE table_schema='main' AND table_name='generation'"
         ).fetchone()
         assert relation == ("VIEW",)
+
+
+def test_create_ephemeral_session_csv_table_mode_materializes(tmp_path):
+    """CSV inputs can be materialized when requested explicitly."""
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n2\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(csv)], import_mode="table")
+    with runner:
+        assert tables[0]["import_mode"] == "table"
+        relation = runner._conn.execute(  # ty: ignore[unresolved-attribute]
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("BASE TABLE",)
 
 
 def test_add_files_to_connection_with_duckdb(tmp_path):

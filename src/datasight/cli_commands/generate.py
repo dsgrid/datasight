@@ -121,7 +121,8 @@ async def _run_ask_pipeline(*args, **kwargs):
     help=(
         "When FILES are CSV/Parquet/Excel inputs, choose whether datasight "
         "creates source-backed views or materialized DuckDB tables. "
-        "'auto' prefers tables for CSV and views for Parquet."
+        "'auto' preserves the existing cheap behavior and keeps CSV/Parquet "
+        "source-backed; use 'table' to opt into materialization."
     ),
 )
 @click.option(

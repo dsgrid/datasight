@@ -33,8 +33,8 @@ ImportMode = Literal["auto", "view", "table"]
 
 
 _AUTO_IMPORT_MODES: dict[str, Literal["view", "table"]] = {
-    "csv": "table",
-    "csv_dir": "table",
+    "csv": "view",
+    "csv_dir": "view",
     "parquet": "view",
     "hive_parquet": "view",
     "xlsx": "table",
