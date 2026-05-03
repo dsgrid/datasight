@@ -173,6 +173,9 @@ datasight export --list-sessions
 # Export a conversation to HTML
 datasight export a1b2c3d4 -o analysis.html
 
+# Export a portable bundle archive
+datasight export a1b2c3d4 --format bundle -o analysis.zip
+
 # Exclude specific turns by index (0-based)
 datasight export e5f6g7h8 --exclude 0,3 -o wind-report.html
 ```

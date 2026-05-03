@@ -3830,8 +3830,13 @@ async def clear_session(request: Request, state: AppState = Depends(get_state)):
 
 @app.post("/api/export/{session_id}")
 async def export_session(session_id: str, request: Request, state: AppState = Depends(get_state)):
-    """Export a conversation as self-contained HTML or as a runnable Python script."""
-    from datasight.export import export_session_html, export_session_python
+    """Export a conversation as HTML, Python, or a bundle zip."""
+    from datasight.export import (
+        export_session_bundle,
+        export_session_html,
+        export_session_python,
+        normalize_bundle_includes,
+    )
 
     try:
         validate_session_id(session_id)
@@ -3844,6 +3849,7 @@ async def export_session(session_id: str, request: Request, state: AppState = De
     exclude = body.get("exclude_indices", [])
     exclude_set = set(exclude) if exclude else None
     fmt = (body.get("format") or "html").lower()
+    include = body.get("include")
 
     data = state.conversations.get(session_id)
     events = data.get("events", [])
@@ -3863,6 +3869,29 @@ async def export_session(session_id: str, request: Request, state: AppState = De
             media_type="text/x-python",
             headers={
                 "Content-Disposition": 'attachment; filename="datasight-session.py"',
+            },
+        )
+
+    if fmt == "bundle":
+        db_path, db_mode = _resolve_export_db_target(state)
+        try:
+            include_values = normalize_bundle_includes(include)
+            bundle = export_session_bundle(
+                events,
+                title=title,
+                session_id=session_id,
+                db_path=db_path,
+                db_mode=db_mode,
+                exclude_indices=exclude_set,
+                include=include_values,
+            )
+        except ValueError as exc:
+            return PlainTextResponse(content=str(exc), status_code=400)
+        return StreamingResponse(
+            iter([bundle]),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": 'attachment; filename="datasight-bundle.zip"',
             },
         )
 

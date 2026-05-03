@@ -123,7 +123,14 @@ You can also export from the CLI:
 
 ```bash
 datasight export <session-id> --format py -o my-analysis.py
+datasight export <session-id> --format bundle -o my-analysis.zip
+datasight export <session-id> --format bundle --include html,sql,python,csv,charts,metadata
 ```
+
+Bundle exports package the session into a portable zip archive with a
+versioned `manifest.json`. Depending on `--include`, the archive can contain
+the HTML report, runnable Python script, SQL scripts, CSV result extracts,
+Plotly chart specs, and structured metadata for provenance and reruns.
 
 DuckDB and SQLite sessions get a fully-runnable connection block.
 Sessions backed by PostgreSQL or Flight SQL produce a script with a

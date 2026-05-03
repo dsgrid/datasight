@@ -7,10 +7,17 @@ Plotly charts into a single shareable HTML file.
 
 from __future__ import annotations
 
+import csv
+from datetime import datetime, timezone
+from html import unescape
+from html.parser import HTMLParser
+from io import BytesIO, StringIO
 import json
 import re
+import zipfile
 from typing import Any
 
+from datasight import __version__
 from datasight.chart import build_chart_html
 from datasight.events import EventType
 from datasight.templating import escape_html_attr, json_for_script, render_template
@@ -21,6 +28,8 @@ HLJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight
 HLJS_SQL_CDN = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"
 HLJS_CSS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
 DOMPURIFY_CDN = "https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"
+BUNDLE_MANIFEST_VERSION = 1
+BUNDLE_INCLUDE_CHOICES = ("html", "sql", "python", "csv", "charts", "metadata")
 
 
 def _format_provenance_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -228,6 +237,30 @@ def _wrap_as_comments(text: str, prefix: str = "# ") -> list[str]:
     return [f"{prefix}{line}" if line else "#" for line in text.splitlines()]
 
 
+def normalize_bundle_includes(include: list[str] | set[str] | None) -> list[str]:
+    """Normalize requested bundle artifact names."""
+    if include is None:
+        return list(BUNDLE_INCLUDE_CHOICES)
+
+    normalized: list[str] = []
+    aliases = {
+        "chart": "charts",
+        "chart_json": "charts",
+        "chart-json": "charts",
+        "plotly": "charts",
+        "plotly_spec": "charts",
+        "plotly-spec": "charts",
+    }
+    for item in include:
+        key = aliases.get(str(item).strip().lower(), str(item).strip().lower())
+        if key not in BUNDLE_INCLUDE_CHOICES:
+            valid = ", ".join(BUNDLE_INCLUDE_CHOICES)
+            raise ValueError(f"Unknown bundle artifact {item!r}. Valid choices: {valid}.")
+        if key not in normalized:
+            normalized.append(key)
+    return normalized
+
+
 def _group_events_into_turns(
     events: list[dict[str, Any]],
     exclude_indices: set[int],
@@ -329,6 +362,96 @@ def _group_events_into_turns(
             pending_start = None
             pending_result = None
 
+    if current is not None:
+        turns.append(current)
+    return turns
+
+
+def _group_events_for_bundle(
+    events: list[dict[str, Any]],
+    exclude_indices: set[int],
+) -> list[dict[str, Any]]:
+    """Collect turn data for bundle export.
+
+    Unlike the Python export helper, this tolerates partial event sequences:
+    if a session contains ``TOOL_RESULT`` without a later ``TOOL_DONE``, the
+    result still lands in the bundle.
+    """
+    turns: list[dict[str, Any]] = []
+    user_count = -1
+    current: dict[str, Any] | None = None
+    pending_call: dict[str, Any] | None = None
+
+    def flush_pending() -> None:
+        nonlocal pending_call
+        if current is not None and pending_call is not None:
+            current["tool_calls"].append(pending_call)
+        pending_call = None
+
+    def new_tool_call(tool_name: str = "tool") -> dict[str, Any]:
+        return {
+            "tool_name": tool_name,
+            "sql": None,
+            "formatted_sql": None,
+            "table_html": None,
+            "plotly_spec": None,
+            "chart_title": None,
+            "error": None,
+        }
+
+    for evt in events:
+        etype = evt.get("event")
+        data = evt.get("data") or {}
+
+        if etype == EventType.USER_MESSAGE:
+            flush_pending()
+            if current is not None:
+                turns.append(current)
+            user_count += 1
+            if user_count in exclude_indices:
+                current = None
+            else:
+                current = {
+                    "index": user_count,
+                    "question": data.get("text", ""),
+                    "assistant_messages": [],
+                    "tool_calls": [],
+                    "provenance": None,
+                }
+            continue
+
+        if current is None:
+            continue
+
+        if etype == EventType.ASSISTANT_MESSAGE:
+            text = data.get("text", "")
+            if text:
+                current["assistant_messages"].append(text)
+        elif etype == EventType.TOOL_START:
+            flush_pending()
+            pending_call = new_tool_call(data.get("tool") or "tool")
+            pending_call["sql"] = ((data.get("input") or {}).get("sql")) or None
+        elif etype == EventType.TOOL_RESULT:
+            if pending_call is None:
+                pending_call = new_tool_call()
+            result_type = data.get("type")
+            if result_type == "chart":
+                pending_call["plotly_spec"] = data.get("plotly_spec") or data.get("plotlySpec")
+                pending_call["chart_title"] = data.get("title")
+            else:
+                pending_call["table_html"] = data.get("html") or None
+        elif etype == EventType.TOOL_DONE:
+            if pending_call is None:
+                pending_call = new_tool_call(data.get("tool") or "tool")
+            pending_call["tool_name"] = data.get("tool") or pending_call["tool_name"]
+            pending_call["formatted_sql"] = data.get("formatted_sql") or data.get("sql")
+            pending_call["sql"] = pending_call["formatted_sql"] or pending_call["sql"]
+            pending_call["error"] = data.get("error")
+            flush_pending()
+        elif etype == EventType.PROVENANCE:
+            current["provenance"] = data
+
+    flush_pending()
     if current is not None:
         turns.append(current)
     return turns
@@ -438,6 +561,218 @@ def export_session_python(
             "turns": [c for c in contexts if c is not None],
         },
     )
+
+
+class _HTMLTableParser(HTMLParser):
+    """Minimal HTML table parser for exported result tables."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_row = False
+        self.in_cell = False
+        self.current_row: list[str] = []
+        self.current_cell: list[str] = []
+        self.rows: list[list[str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002
+        if tag == "tr":
+            self.in_row = True
+            self.current_row = []
+        elif tag in {"td", "th"} and self.in_row:
+            self.in_cell = True
+            self.current_cell = []
+
+    def handle_data(self, data: str) -> None:
+        if self.in_cell:
+            self.current_cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self.in_cell:
+            text = unescape("".join(self.current_cell).strip())
+            self.current_row.append(text)
+            self.current_cell = []
+            self.in_cell = False
+        elif tag == "tr" and self.in_row:
+            if self.current_row:
+                self.rows.append(self.current_row)
+            self.current_row = []
+            self.in_row = False
+
+
+def _table_html_to_csv(table_html: str) -> str:
+    """Convert exported HTML table markup into CSV text."""
+    parser = _HTMLTableParser()
+    parser.feed(table_html)
+    if not parser.rows:
+        return ""
+    out = StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerows(parser.rows)
+    return out.getvalue()
+
+
+def _bundle_filename(prefix: str, turn_number: int, ordinal: int, suffix: str) -> str:
+    return f"{prefix}/turn-{turn_number:02d}-{ordinal:02d}.{suffix}"
+
+
+def _build_bundle_metadata(
+    *,
+    events: list[dict[str, Any]],
+    turns: list[dict[str, Any]],
+    title: str,
+    session_id: str,
+    db_mode: str,
+    db_path: str,
+    exclude_indices: set[int],
+    include: list[str],
+    files: list[dict[str, Any]],
+    exported_at: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    warnings = [
+        warning
+        for turn in turns
+        for warning in ((turn.get("provenance") or {}).get("warnings") or [])
+    ]
+    manifest = {
+        "schema_version": BUNDLE_MANIFEST_VERSION,
+        "export_type": "datasight_bundle",
+        "datasight_version": __version__,
+        "session_id": session_id,
+        "title": title,
+        "exported_at": exported_at,
+        "db_mode": db_mode,
+        "db_path": db_path,
+        "included_artifacts": include,
+        "excluded_turn_indices": sorted(exclude_indices),
+        "turn_count": len(turns),
+        "warning_count": len(warnings),
+        "files": files,
+    }
+    metadata = {
+        "session_id": session_id,
+        "title": title,
+        "exported_at": exported_at,
+        "db_mode": db_mode,
+        "db_path": db_path,
+        "excluded_turn_indices": sorted(exclude_indices),
+        "events": events,
+        "turns": turns,
+    }
+    return manifest, metadata
+
+
+def export_session_bundle(
+    events: list[dict[str, Any]],
+    *,
+    title: str = "datasight session",
+    session_id: str = "",
+    db_path: str = "",
+    db_mode: str = "duckdb",
+    exclude_indices: set[int] | None = None,
+    include: list[str] | set[str] | None = None,
+) -> bytes:
+    """Build a portable zip bundle for a saved session."""
+    exclude = exclude_indices or set()
+    includes = normalize_bundle_includes(include)
+    turns = _group_events_for_bundle(events, exclude)
+    exported_at = datetime.now(timezone.utc).isoformat()
+
+    files: list[dict[str, Any]] = []
+    payloads: list[tuple[str, bytes]] = []
+
+    def add_file(path: str, content: str | bytes, artifact_type: str) -> None:
+        raw = content.encode("utf-8") if isinstance(content, str) else content
+        payloads.append((path, raw))
+        files.append({"path": path, "type": artifact_type, "bytes": len(raw)})
+
+    if "html" in includes:
+        add_file(
+            "report/session.html",
+            export_session_html(events, title=title, exclude_indices=exclude),
+            "html",
+        )
+
+    if "python" in includes:
+        add_file(
+            "python/reproduce.py",
+            export_session_python(
+                events,
+                title=title,
+                db_path=db_path,
+                db_mode=db_mode,
+                exclude_indices=exclude,
+            ),
+            "python",
+        )
+
+    for turn in turns:
+        turn_number = turn["index"] + 1
+        tool_ordinal = 0
+        chart_ordinal = 0
+        result_ordinal = 0
+        for call in turn.get("tool_calls", []):
+            sql_text = call.get("sql")
+            if "sql" in includes and sql_text:
+                tool_ordinal += 1
+                add_file(
+                    _bundle_filename("sql", turn_number, tool_ordinal, "sql"),
+                    sql_text.rstrip() + "\n",
+                    "sql",
+                )
+            if "charts" in includes and call.get("plotly_spec") is not None:
+                chart_ordinal += 1
+                add_file(
+                    _bundle_filename("charts", turn_number, chart_ordinal, "json"),
+                    json.dumps(call["plotly_spec"], ensure_ascii=False, indent=2) + "\n",
+                    "charts",
+                )
+            if "csv" in includes and call.get("table_html"):
+                result_ordinal += 1
+                add_file(
+                    _bundle_filename("results", turn_number, result_ordinal, "csv"),
+                    _table_html_to_csv(call["table_html"]),
+                    "csv",
+                )
+
+    if "metadata" in includes:
+        _, metadata = _build_bundle_metadata(
+            events=events,
+            turns=turns,
+            title=title,
+            session_id=session_id,
+            db_mode=db_mode,
+            db_path=db_path,
+            exclude_indices=exclude,
+            include=includes,
+            files=files,
+            exported_at=exported_at,
+        )
+        add_file(
+            "metadata/session.json",
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            "metadata",
+        )
+    manifest, _ = _build_bundle_metadata(
+        events=events,
+        turns=turns,
+        title=title,
+        session_id=session_id,
+        db_mode=db_mode,
+        db_path=db_path,
+        exclude_indices=exclude,
+        include=includes,
+        files=files,
+        exported_at=exported_at,
+    )
+    add_file(
+        "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", "manifest"
+    )
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, content in payloads:
+            zf.writestr(path, content)
+    return buffer.getvalue()
 
 
 def _extract_plotly_spec(srcdoc: str) -> dict[str, Any] | None:
