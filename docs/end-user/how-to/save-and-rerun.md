@@ -88,3 +88,44 @@ datasight export <session-id> -o my-analysis.html
 # Exclude specific turns by index (0-based)
 datasight export <session-id> --exclude 2,3
 ```
+
+## Export a session as a Python script
+
+When you want a runnable, hand-editable record of an analysis — to
+audit the SQL, share with colleagues who don't run datasight, or wire
+into a pipeline — export the conversation as a Python script. From
+export mode, click **Export Python script** instead of **Export HTML**.
+
+The downloaded `datasight-session.py` contains:
+
+- A short docstring with the session title and what each section means.
+- The project's database path baked in as `DEFAULT_DB_PATH`, with a
+  `--db` flag to override at runtime.
+- One labelled section per turn — the user question as a `# ─── Turn N ───`
+  header, the SQL as an editable `SQL_N = """..."""` constant, the chart
+  spec as `CHART_N_SPEC = json.loads(...)` fed into a Plotly `go.Figure`,
+  and the assistant's narrative preserved as `# Assistant: ...` comments.
+
+Run the script standalone:
+
+```bash
+python datasight-session.py
+python datasight-session.py --db /path/to/other.duckdb --output-dir charts/
+python datasight-session.py --help
+```
+
+Edit any `SQL_N` constant to tweak filters, group-bys, or aggregations,
+then re-run — no AI in the loop, no datasight installation required
+(only `duckdb`/`sqlite3`, `pandas`, and `plotly`). Charts are written
+to the current directory by default; use `--output-dir` to redirect.
+
+You can also export from the CLI:
+
+```bash
+datasight export <session-id> --format py -o my-analysis.py
+```
+
+DuckDB and SQLite sessions get a fully-runnable connection block.
+Sessions backed by PostgreSQL or Flight SQL produce a script with a
+clearly-marked `run_sql` scaffold for you to wire up your own driver —
+the script still parses and shows you exactly where the change goes.
