@@ -17,6 +17,7 @@ function sseStream(events: string[]): Response {
 }
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   chatStore.messages = [];
   chatStore.isStreaming = false;
   chatStore.currentAssistantText = "";
