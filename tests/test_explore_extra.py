@@ -1,5 +1,8 @@
 """Extra tests for datasight.explore covering duplicate handling and error paths."""
 
+from types import SimpleNamespace
+from typing import Any, cast
+
 import duckdb
 import pandas as pd
 import pytest
@@ -8,6 +11,7 @@ from datasight.exceptions import ConfigurationError
 from datasight.explore import (
     add_files_to_connection,
     create_ephemeral_session,
+    create_files_session_for_settings,
     detect_file_type,
     save_ephemeral_as_project,
     scan_directory_for_data_files,
@@ -107,7 +111,7 @@ def test_single_duckdb_file_unreadable_raises(tmp_path):
 
 
 def test_add_files_to_connection_basic(tmp_path):
-    """add_files_to_connection adds new CSV views to an existing connection."""
+    """add_files_to_connection keeps CSV source-backed in auto mode."""
     conn = duckdb.connect(":memory:")
 
     csv1 = tmp_path / "a.csv"
@@ -116,10 +120,132 @@ def test_add_files_to_connection_basic(tmp_path):
     tables = add_files_to_connection(conn, [str(csv1)], existing_table_names=set())
     assert len(tables) == 1
     assert tables[0]["name"] == "a"
+    assert tables[0]["import_mode"] == "view"
+
+    relation = conn.execute(
+        "SELECT table_type FROM information_schema.tables WHERE table_schema='main' AND table_name='a'"
+    ).fetchone()
+    assert relation == ("VIEW",)
 
     df = conn.execute("SELECT * FROM a").fetchdf()
     assert len(df) == 1
     conn.close()
+
+
+def test_create_ephemeral_session_csv_view_mode(tmp_path):
+    """CSV inputs can stay source-backed views when requested explicitly."""
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n2\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(csv)], import_mode="view")
+    with runner:
+        assert tables[0]["import_mode"] == "view"
+        relation = runner._conn.execute(  # ty: ignore[unresolved-attribute]
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("VIEW",)
+
+
+def test_create_ephemeral_session_parquet_auto_mode_uses_view(tmp_path):
+    """Parquet auto mode remains view-backed."""
+    parquet = tmp_path / "generation.parquet"
+    pd.DataFrame({"x": [1, 2]}).to_parquet(parquet)
+
+    runner, tables = create_ephemeral_session([str(parquet)])
+    with runner:
+        assert tables[0]["import_mode"] == "view"
+        relation = runner._conn.execute(  # ty: ignore[unresolved-attribute]
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("VIEW",)
+
+
+def test_create_ephemeral_session_csv_table_mode_materializes(tmp_path):
+    """CSV inputs can be materialized when requested explicitly."""
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n2\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(csv)], import_mode="table")
+    with runner:
+        assert tables[0]["import_mode"] == "table"
+        relation = runner._conn.execute(  # ty: ignore[unresolved-attribute]
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("BASE TABLE",)
+
+
+def test_create_ephemeral_session_invalid_import_mode_raises(tmp_path):
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="Unsupported import mode"):
+        create_ephemeral_session([str(csv)], import_mode=cast(Any, "bogus"))
+
+
+def test_create_ephemeral_session_allows_mixed_excel_and_view_mode(tmp_path):
+    xlsx = tmp_path / "plants.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"plant_id": [1]})})
+    csv = tmp_path / "generation.csv"
+    csv.write_text("net_generation_mwh\n100\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(xlsx), str(csv)], import_mode="view")
+    with runner:
+        by_name = {table["name"]: table for table in tables}
+        assert by_name["plants"]["type"] == "xlsx"
+        assert by_name["plants"]["import_mode"] == "table"
+        assert by_name["generation"]["import_mode"] == "view"
+        relation_types = dict(
+            runner._conn.execute(  # ty: ignore[unresolved-attribute]
+                "SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_schema='main'"
+            ).fetchall()
+        )
+        assert relation_types["plants"] == "BASE TABLE"
+        assert relation_types["generation"] == "VIEW"
+
+
+def test_add_files_to_connection_allows_mixed_excel_and_view_mode(tmp_path):
+    conn = duckdb.connect(":memory:")
+    xlsx = tmp_path / "plants.xlsx"
+    _write_xlsx(xlsx, {"Sheet1": pd.DataFrame({"plant_id": [1]})})
+    csv = tmp_path / "generation.csv"
+    csv.write_text("net_generation_mwh\n100\n", encoding="utf-8")
+
+    tables = add_files_to_connection(
+        conn,
+        [str(xlsx), str(csv)],
+        existing_table_names=set(),
+        import_mode="view",
+    )
+    by_name = {table["name"]: table for table in tables}
+    assert by_name["plants"]["type"] == "xlsx"
+    assert by_name["plants"]["import_mode"] == "table"
+    assert by_name["generation"]["import_mode"] == "view"
+    relation_types = dict(
+        conn.execute(
+            "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()
+    )
+    assert relation_types["plants"] == "BASE TABLE"
+    assert relation_types["generation"] == "VIEW"
+    conn.close()
+
+
+def test_create_files_session_for_settings_rejects_spark_table_mode(tmp_path):
+    parquet = tmp_path / "generation.parquet"
+    pd.DataFrame({"x": [1]}).to_parquet(parquet)
+    settings = SimpleNamespace(
+        mode="spark",
+        spark_remote="sc://cluster:15002",
+        spark_token=None,
+        spark_max_result_bytes=1_000_000,
+    )
+
+    with pytest.raises(ConfigurationError, match="--import-mode=table is not supported"):
+        create_files_session_for_settings([str(parquet)], cast(Any, settings), import_mode="table")
 
 
 def test_add_files_to_connection_with_duckdb(tmp_path):
@@ -327,5 +453,25 @@ def test_save_project_rebuilds_xlsx_sheets(tmp_path):
     try:
         assert conn.execute("SELECT COUNT(*) FROM raw").fetchone()[0] == 2  # ty: ignore[not-subscriptable]
         assert conn.execute("SELECT id FROM clean").fetchone() == (10,)
+    finally:
+        conn.close()
+
+
+def test_save_project_preserves_materialized_csv_tables(tmp_path):
+    csv = tmp_path / "generation.csv"
+    csv.write_text("net_generation_mwh\n100\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(csv)], import_mode="table")
+    project_dir = tmp_path / "proj"
+    save_ephemeral_as_project(runner, tables, str(project_dir))
+    runner.close()
+
+    conn = duckdb.connect(str(project_dir / "data.duckdb"), read_only=True)
+    try:
+        relation = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("BASE TABLE",)
     finally:
         conn.close()

@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import duckdb
 from loguru import logger
@@ -27,6 +27,20 @@ from datasight.runner import (
 
 if TYPE_CHECKING:
     from datasight.settings import DatabaseSettings
+
+
+ImportMode = Literal["auto", "view", "table"]
+
+
+_AUTO_IMPORT_MODES: dict[str, Literal["view", "table"]] = {
+    "csv": "view",
+    "csv_dir": "view",
+    "parquet": "view",
+    "hive_parquet": "view",
+    "xlsx": "table",
+}
+
+_VALID_IMPORT_MODES = {"auto", "view", "table"}
 
 
 def detect_file_type(path: str) -> str | None:
@@ -168,6 +182,51 @@ def sanitize_table_name(name: str) -> str:
     return sanitized.lower()
 
 
+def resolve_import_mode(file_type: str, import_mode: ImportMode) -> Literal["view", "table"]:
+    """Resolve an explicit or automatic import mode for a supported file type."""
+    if import_mode == "view" or import_mode == "table":
+        return import_mode
+    if import_mode != "auto":
+        raise ValueError(f"Unsupported import mode: {import_mode}")
+    try:
+        return _AUTO_IMPORT_MODES[file_type]
+    except KeyError as e:
+        raise ValueError(f"Unsupported import mode for file type: {file_type}") from e
+
+
+def _select_from_file_sql(file_path: str, file_type: str) -> str:
+    """Generate a SELECT statement that reads from a supported file source."""
+    escaped_path = file_path.replace("'", "''")
+
+    if file_type == "csv":
+        return f"SELECT * FROM read_csv_auto('{escaped_path}')"
+    if file_type == "parquet":
+        return f"SELECT * FROM read_parquet('{escaped_path}')"
+    if file_type == "hive_parquet":
+        glob_path = f"{escaped_path}/**/*.parquet"
+        return f"SELECT * FROM read_parquet('{glob_path}', hive_partitioning=true)"
+    if file_type == "csv_dir":
+        glob_path = f"{escaped_path}/*.csv"
+        return f"SELECT * FROM read_csv_auto('{glob_path}')"
+    raise ValueError(f"Unknown file type: {file_type}")
+
+
+def create_relation_sql(
+    table_name: str,
+    file_path: str,
+    file_type: str,
+    *,
+    import_mode: ImportMode = "view",
+) -> str:
+    """Generate SQL to create a view or table for a data file."""
+    quoted_name = f'"{table_name}"'
+    select_sql = _select_from_file_sql(file_path, file_type)
+    resolved_mode = resolve_import_mode(file_type, import_mode)
+    if resolved_mode == "table":
+        return f"CREATE TABLE {quoted_name} AS {select_sql}"
+    return f"CREATE VIEW {quoted_name} AS {select_sql}"
+
+
 def create_view_sql(table_name: str, file_path: str, file_type: str) -> str:
     """Generate SQL to create a view for a data file.
 
@@ -184,24 +243,7 @@ def create_view_sql(table_name: str, file_path: str, file_type: str) -> str:
     -------
     SQL CREATE VIEW statement.
     """
-    # Escape single quotes in path
-    escaped_path = file_path.replace("'", "''")
-
-    # Double-quote the view name to handle reserved words (e.g., "select")
-    quoted_name = f'"{table_name}"'
-
-    if file_type == "csv":
-        return f"CREATE VIEW {quoted_name} AS SELECT * FROM read_csv_auto('{escaped_path}')"
-    elif file_type == "parquet":
-        return f"CREATE VIEW {quoted_name} AS SELECT * FROM read_parquet('{escaped_path}')"
-    elif file_type == "hive_parquet":
-        glob_path = f"{escaped_path}/**/*.parquet"
-        return f"CREATE VIEW {quoted_name} AS SELECT * FROM read_parquet('{glob_path}', hive_partitioning=true)"
-    elif file_type == "csv_dir":
-        glob_path = f"{escaped_path}/*.csv"
-        return f"CREATE VIEW {quoted_name} AS SELECT * FROM read_csv_auto('{glob_path}')"
-    else:
-        raise ValueError(f"Unknown file type: {file_type}")
+    return create_relation_sql(table_name, file_path, file_type, import_mode="view")
 
 
 def _materialize_excel_sheet(
@@ -271,6 +313,7 @@ def _load_excel_workbook(
                 "path": file_path,
                 "type": "xlsx",
                 "sheet_name": sheet_name,
+                "import_mode": "table",
             }
         )
         logger.info(f"Created table '{table_name}' from Excel sheet '{sheet_name}' in {file_path}")
@@ -347,8 +390,11 @@ def _attach_duckdb_file(
     return tables_info
 
 
-def create_ephemeral_session(file_paths: list[str]) -> tuple[EphemeralDuckDBRunner, list[dict]]:
-    """Create an ephemeral DuckDB session with views for the given files.
+def create_ephemeral_session(
+    file_paths: list[str],
+    import_mode: ImportMode = "auto",
+) -> tuple[EphemeralDuckDBRunner, list[dict]]:
+    """Create an ephemeral DuckDB session with views or tables for the given files.
 
     Parameters
     ----------
@@ -367,11 +413,21 @@ def create_ephemeral_session(file_paths: list[str]) -> tuple[EphemeralDuckDBRunn
     """
     if not file_paths:
         raise ConfigurationError("No file paths provided")
+    if import_mode not in _VALID_IMPORT_MODES:
+        raise ConfigurationError(f"Unsupported import mode: {import_mode}")
 
     # Categorize files by type
     resolved_paths = [
         (str(Path(p).resolve()), detect_file_type(str(Path(p).resolve()))) for p in file_paths
     ]
+    if import_mode == "view":
+        excel_paths = [path for path, file_type in resolved_paths if file_type == "xlsx"]
+        for path in excel_paths:
+            logger.warning(
+                "Excel input {} will be materialized as a DuckDB table; "
+                "import_mode=view only applies to non-Excel inputs.",
+                path,
+            )
     duckdb_files = [p for p, t in resolved_paths if t == "duckdb"]
     other_files = [(p, t) for p, t in resolved_paths if t is not None and t != "duckdb"]
     invalid_files = [p for p, t in resolved_paths if t is None]
@@ -406,7 +462,7 @@ def create_ephemeral_session(file_paths: list[str]) -> tuple[EphemeralDuckDBRunn
         except duckdb.Error as e:
             raise ConfigurationError(f"Failed to open DuckDB file {db_path}: {e}") from e
 
-    # General case: create in-memory DB with views
+    # General case: create in-memory DB with imported relations
     conn = duckdb.connect(":memory:")
     tables_info: list[dict] = []
     errors: list[str] = list(f"Unrecognized or missing file: {p}" for p in invalid_files)
@@ -444,14 +500,22 @@ def create_ephemeral_session(file_paths: list[str]) -> tuple[EphemeralDuckDBRunn
             table_name = f"{table_name}_{counter}"
 
         try:
-            sql = create_view_sql(table_name, path, file_type)
+            resolved_mode = resolve_import_mode(file_type, import_mode)
+            sql = create_relation_sql(table_name, path, file_type, import_mode=resolved_mode)
             conn.execute(sql)
             existing_names.add(table_name)
-            tables_info.append({"name": table_name, "path": path, "type": file_type})
-            logger.info(f"Created view '{table_name}' from {file_type}: {path}")
+            tables_info.append(
+                {
+                    "name": table_name,
+                    "path": path,
+                    "type": file_type,
+                    "import_mode": resolved_mode,
+                }
+            )
+            logger.info(f"Created {resolved_mode} '{table_name}' from {file_type}: {path}")
         except Exception as e:
-            errors.append(f"Failed to create view for {path}: {e}")
-            logger.warning(f"Failed to create view for {path}: {e}")
+            errors.append(f"Failed to create relation for {path}: {e}")
+            logger.warning(f"Failed to create relation for {path}: {e}")
 
     if not tables_info:
         conn.close()
@@ -571,6 +635,7 @@ def _register_spark_view(spark: Any, view_name: str, path: str, file_type: str) 
 def create_files_session_for_settings(
     file_paths: list[str],
     settings: DatabaseSettings | None = None,
+    import_mode: ImportMode = "auto",
 ) -> tuple[Any, list[dict]]:
     """Pick a file-session backend based on the project's configured DB_MODE.
 
@@ -582,13 +647,20 @@ def create_files_session_for_settings(
     - ``postgres`` / ``flightsql``: fall back to DuckDB with a warning —
       those backends can't read arbitrary local files.
     """
+    if import_mode not in _VALID_IMPORT_MODES:
+        raise ConfigurationError(f"Unsupported import mode: {import_mode}")
     if settings is None:
         logger.info("File session: in-memory DuckDB (no settings / no .env)")
-        return create_ephemeral_session(file_paths)
+        return create_ephemeral_session(file_paths, import_mode=import_mode)
     if settings.mode in ("duckdb", "sqlite"):
         logger.info(f"File session: in-memory DuckDB (DB_MODE={settings.mode})")
-        return create_ephemeral_session(file_paths)
+        return create_ephemeral_session(file_paths, import_mode=import_mode)
     if settings.mode == "spark":
+        if import_mode == "table":
+            raise ConfigurationError(
+                "--import-mode=table is not supported when DB_MODE=spark; "
+                "Spark file sessions always register temp views."
+            )
         logger.info(
             f"File session: Spark Connect at {settings.spark_remote} "
             f"(DB_MODE=spark, byte cap {settings.spark_max_result_bytes:,})"
@@ -604,13 +676,14 @@ def create_files_session_for_settings(
         "file inspection will use a local DuckDB session, independent of "
         "the configured database."
     )
-    return create_ephemeral_session(file_paths)
+    return create_ephemeral_session(file_paths, import_mode=import_mode)
 
 
 def add_files_to_connection(
     conn: duckdb.DuckDBPyConnection,
     file_paths: list[str],
     existing_table_names: set[str],
+    import_mode: ImportMode = "auto",
 ) -> list[dict]:
     """Add new file views to an existing DuckDB connection.
 
@@ -635,11 +708,23 @@ def add_files_to_connection(
     tables_info: list[dict] = []
     errors: list[str] = []
     names = set(existing_table_names)
+    if import_mode not in _VALID_IMPORT_MODES:
+        raise ConfigurationError(f"Unsupported import mode: {import_mode}")
 
+    resolved_paths: list[tuple[str, str | None]] = []
     for path in file_paths:
-        path = str(Path(path).resolve())
-        file_type = detect_file_type(path)
+        resolved_path = str(Path(path).resolve())
+        resolved_paths.append((resolved_path, detect_file_type(resolved_path)))
+    if import_mode == "view":
+        excel_paths = [path for path, file_type in resolved_paths if file_type == "xlsx"]
+        for path in excel_paths:
+            logger.warning(
+                "Excel input {} will be materialized as a DuckDB table; "
+                "import_mode=view only applies to non-Excel inputs.",
+                path,
+            )
 
+    for path, file_type in resolved_paths:
         if file_type is None:
             errors.append(f"Unrecognized or missing file: {path}")
             continue
@@ -671,13 +756,21 @@ def add_files_to_connection(
             table_name = f"{table_name}_{counter}"
 
         try:
-            sql = create_view_sql(table_name, path, file_type)
+            resolved_mode = resolve_import_mode(file_type, import_mode)
+            sql = create_relation_sql(table_name, path, file_type, import_mode=resolved_mode)
             conn.execute(sql)
             names.add(table_name)
-            tables_info.append({"name": table_name, "path": path, "type": file_type})
-            logger.info(f"Added view '{table_name}' from {file_type}: {path}")
+            tables_info.append(
+                {
+                    "name": table_name,
+                    "path": path,
+                    "type": file_type,
+                    "import_mode": resolved_mode,
+                }
+            )
+            logger.info(f"Added {resolved_mode} '{table_name}' from {file_type}: {path}")
         except Exception as e:
-            errors.append(f"Failed to create view for {path}: {e}")
+            errors.append(f"Failed to create relation for {path}: {e}")
 
     if not tables_info:
         msg = "No valid data files found."
@@ -694,7 +787,7 @@ def build_persistent_duckdb(
     *,
     overwrite: bool = False,
 ) -> Path:
-    """Create a DuckDB file with views pointing at the given data sources.
+    """Create a DuckDB file with imported relations pointing at the given data sources.
 
     Parameters
     ----------
@@ -746,8 +839,16 @@ def build_persistent_duckdb(
                 _materialize_excel_sheet(conn, table["name"], table["path"], table["sheet_name"])
                 object_type = "table"
             else:
-                conn.execute(create_view_sql(table["name"], table["path"], table["type"]))
-                object_type = "view"
+                relation_mode = table.get("import_mode", "view")
+                conn.execute(
+                    create_relation_sql(
+                        table["name"],
+                        table["path"],
+                        table["type"],
+                        import_mode=relation_mode,
+                    )
+                )
+                object_type = str(relation_mode)
             logger.info(f"Created {object_type} '{table['name']}' in {db_path}")
     finally:
         conn.close()
@@ -764,7 +865,7 @@ def save_ephemeral_as_project(
     """Save an ephemeral session as a proper datasight project.
 
     Creates a project directory with:
-    - A DuckDB database file containing views to the original data files
+    - A DuckDB database file containing imported views/tables from the original data files
       (or references an existing DuckDB file if that was the source)
     - A .env file configured for DuckDB
     - A basic schema_description.md
@@ -807,7 +908,7 @@ def save_ephemeral_as_project(
         # Just reference the existing database
         db_path_str = next(iter(unique_paths))
     else:
-        # Create the DuckDB database file with views (remove old one if overwriting)
+        # Create the DuckDB database file with imported relations (remove old one if overwriting)
         db_path = dest / "data.duckdb"
         if db_path.exists():
             db_path.unlink()
@@ -846,9 +947,15 @@ def save_ephemeral_as_project(
                 )
                 object_type = "table"
             else:
-                sql = create_view_sql(table["name"], table["path"], table["type"])
+                relation_mode = table.get("import_mode", "view")
+                sql = create_relation_sql(
+                    table["name"],
+                    table["path"],
+                    table["type"],
+                    import_mode=relation_mode,
+                )
                 db_conn.execute(sql)
-                object_type = "view"
+                object_type = str(relation_mode)
             logger.info(f"Created persistent {object_type} '{table['name']}' in {db_path}")
 
         db_conn.close()
