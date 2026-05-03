@@ -114,6 +114,17 @@ async def _run_ask_pipeline(*args, **kwargs):
     ),
 )
 @click.option(
+    "--import-mode",
+    type=click.Choice(["auto", "view", "table"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help=(
+        "When FILES are CSV/Parquet/Excel inputs, choose whether datasight "
+        "creates source-backed views or materialized DuckDB tables. "
+        "'auto' prefers tables for CSV and views for Parquet."
+    ),
+)
+@click.option(
     "--compact-schema",
     is_flag=True,
     help=(
@@ -123,7 +134,17 @@ async def _run_ask_pipeline(*args, **kwargs):
     ),
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def generate(files, project_dir, model, overwrite, table, db_path, compact_schema, verbose):
+def generate(
+    files,
+    project_dir,
+    model,
+    overwrite,
+    table,
+    db_path,
+    import_mode,
+    compact_schema,
+    verbose,
+):
     """Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 
     Connects to the database, inspects tables and columns, samples
@@ -172,6 +193,13 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
                     err=True,
                 )
                 sys.exit(1)
+            if import_mode.lower() != "auto":
+                click.echo(
+                    "Error: --import-mode only applies when importing CSV/Parquet/Excel "
+                    "or mixed file inputs into DuckDB.",
+                    err=True,
+                )
+                sys.exit(1)
             if db_path:
                 click.echo(
                     "Error: --db-path is only used when creating a project DuckDB from "
@@ -181,6 +209,13 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
                 sys.exit(1)
             sqlite_source_path = sqlite_files[0]
         elif len(duckdb_files) == 1 and len(files) == 1:
+            if import_mode.lower() != "auto":
+                click.echo(
+                    "Error: --import-mode only applies when importing CSV/Parquet/Excel "
+                    "or mixed file inputs into DuckDB.",
+                    err=True,
+                )
+                sys.exit(1)
             if db_path:
                 click.echo(
                     "Error: --db-path is only used when creating a project DuckDB from "
@@ -281,7 +316,7 @@ def generate(files, project_dir, model, overwrite, table, db_path, compact_schem
             from datasight.explore import create_files_session_for_settings
 
             sql_runner, tables_info = create_files_session_for_settings(
-                list(files), settings.database
+                list(files), settings.database, import_mode=import_mode.lower()
             )
         else:
             sql_runner = create_sql_runner_from_settings(settings.database, project_dir)

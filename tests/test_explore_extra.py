@@ -107,7 +107,7 @@ def test_single_duckdb_file_unreadable_raises(tmp_path):
 
 
 def test_add_files_to_connection_basic(tmp_path):
-    """add_files_to_connection adds new CSV views to an existing connection."""
+    """add_files_to_connection uses auto import mode for new CSV tables."""
     conn = duckdb.connect(":memory:")
 
     csv1 = tmp_path / "a.csv"
@@ -116,10 +116,46 @@ def test_add_files_to_connection_basic(tmp_path):
     tables = add_files_to_connection(conn, [str(csv1)], existing_table_names=set())
     assert len(tables) == 1
     assert tables[0]["name"] == "a"
+    assert tables[0]["import_mode"] == "table"
+
+    relation = conn.execute(
+        "SELECT table_type FROM information_schema.tables WHERE table_schema='main' AND table_name='a'"
+    ).fetchone()
+    assert relation == ("BASE TABLE",)
 
     df = conn.execute("SELECT * FROM a").fetchdf()
     assert len(df) == 1
     conn.close()
+
+
+def test_create_ephemeral_session_csv_view_mode(tmp_path):
+    """CSV inputs can stay source-backed views when requested explicitly."""
+    csv = tmp_path / "generation.csv"
+    csv.write_text("x\n1\n2\n", encoding="utf-8")
+
+    runner, tables = create_ephemeral_session([str(csv)], import_mode="view")
+    with runner:
+        assert tables[0]["import_mode"] == "view"
+        relation = runner._conn.execute(  # ty: ignore[unresolved-attribute]
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("VIEW",)
+
+
+def test_create_ephemeral_session_parquet_auto_mode_uses_view(tmp_path):
+    """Parquet auto mode remains view-backed."""
+    parquet = tmp_path / "generation.parquet"
+    pd.DataFrame({"x": [1, 2]}).to_parquet(parquet)
+
+    runner, tables = create_ephemeral_session([str(parquet)])
+    with runner:
+        assert tables[0]["import_mode"] == "view"
+        relation = runner._conn.execute(  # ty: ignore[unresolved-attribute]
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("VIEW",)
 
 
 def test_add_files_to_connection_with_duckdb(tmp_path):

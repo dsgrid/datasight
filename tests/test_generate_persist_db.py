@@ -56,6 +56,22 @@ def test_build_persistent_duckdb_creates_views(tmp_path, parquet_file):
         assert int(df["n"].iloc[0]) == 3
 
 
+def test_build_persistent_duckdb_materializes_csv_tables(tmp_path):
+    csv_path = tmp_path / "generation.csv"
+    csv_path.write_text("x\n1\n2\n", encoding="utf-8")
+    _, tables_info = create_ephemeral_session([str(csv_path)])
+
+    db_path = tmp_path / "out.duckdb"
+    build_persistent_duckdb(db_path, tables_info)
+
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("BASE TABLE",)
+
+
 def test_build_persistent_duckdb_refuses_overwrite(tmp_path, parquet_file):
     _, tables_info = create_ephemeral_session([str(parquet_file)])
     db_path = tmp_path / "out.duckdb"
@@ -211,8 +227,8 @@ def test_generate_preserves_existing_spark_backend(tmp_path, parquet_file, stub_
     # separately in test_spark_runner.py.
     from datasight.explore import create_ephemeral_session
 
-    def _fake_session(file_paths, settings):
-        return create_ephemeral_session(file_paths)
+    def _fake_session(file_paths, settings, import_mode="auto"):
+        return create_ephemeral_session(file_paths, import_mode=import_mode)
 
     # cli imports create_files_session_for_settings locally inside the
     # _run coroutine, so we patch where it lives in explore.
@@ -286,6 +302,58 @@ def test_generate_duckdb_file_updates_env_without_creating_default_db(tmp_path, 
     assert "DB_MODE=duckdb" in env_text
     assert "DB_PATH=./generation.duckdb" in env_text
     assert "duckdb" in stub_llm.calls[0]["messages"][0]["content"].lower()
+
+
+def test_generate_import_mode_view_keeps_csv_as_view(tmp_path, stub_llm):
+    csv_path = tmp_path / "generation.csv"
+    csv_path.write_text(
+        "energy_source_code,net_generation_mwh\nWND,100\nSUN,80\n", encoding="utf-8"
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(csv_path),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "view",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    db_path = tmp_path / "database.duckdb"
+    with duckdb.connect(str(db_path), read_only=True) as conn:
+        relation = conn.execute(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_schema='main' AND table_name='generation'"
+        ).fetchone()
+        assert relation == ("VIEW",)
+
+
+def test_generate_rejects_import_mode_with_existing_duckdb(tmp_path, stub_llm):
+    db_path = tmp_path / "generation.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code VARCHAR)")
+    conn.close()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(db_path),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "table",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--import-mode only applies" in result.output
+    assert not stub_llm.calls
 
 
 def test_generate_rejects_db_path_with_existing_sqlite(tmp_path, stub_llm):
