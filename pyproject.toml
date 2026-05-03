@@ -38,7 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 export = [
-    "kaleido>=0.2,<1",
+    "kaleido>=0.2,<2",
 ]
 spark = [
     "pyspark[connect]>=4.0,<5",
