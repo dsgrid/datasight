@@ -11,10 +11,10 @@
 
   let { open, excludeIndices, onCancel, onExported }: Props = $props();
 
-  let exporting = $state(false);
+  let exporting = $state<"" | "html" | "py">("");
 
-  async function handleExport() {
-    exporting = true;
+  async function handleExport(format: "html" | "py") {
+    exporting = format;
     try {
       const res = await fetch(
         `/api/export/${encodeURIComponent(sessionStore.sessionId)}`,
@@ -23,6 +23,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             exclude_indices: Array.from(excludeIndices),
+            format,
           }),
         },
       );
@@ -36,7 +37,8 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "datasight-export.html";
+      a.download =
+        format === "py" ? "datasight-session.py" : "datasight-export.html";
       a.click();
       URL.revokeObjectURL(url);
 
@@ -45,7 +47,7 @@
     } catch {
       toastStore.show("Export failed", "error");
     } finally {
-      exporting = false;
+      exporting = "";
     }
   }
 </script>
@@ -73,13 +75,23 @@
         Cancel
       </button>
       <button
+        class="px-3 py-1 text-xs rounded border border-border
+          text-text-primary hover:bg-surface transition-colors
+          cursor-pointer disabled:opacity-50"
+        title="Runnable Python script with editable SQL constants"
+        disabled={exporting !== ""}
+        onclick={() => handleExport("py")}
+      >
+        {exporting === "py" ? "Exporting..." : "Export Python script"}
+      </button>
+      <button
         class="px-3 py-1 text-xs rounded bg-teal text-white
           hover:opacity-90 transition-opacity cursor-pointer
           disabled:opacity-50"
-        disabled={exporting}
-        onclick={handleExport}
+        disabled={exporting !== ""}
+        onclick={() => handleExport("html")}
       >
-        {exporting ? "Exporting..." : "Export HTML"}
+        {exporting === "html" ? "Exporting..." : "Export HTML"}
       </button>
     </div>
   </div>

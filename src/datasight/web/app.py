@@ -24,7 +24,13 @@ import pandas as pd
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -3810,18 +3816,36 @@ async def clear_session(request: Request, state: AppState = Depends(get_state)):
 
 @app.post("/api/export/{session_id}")
 async def export_session(session_id: str, request: Request, state: AppState = Depends(get_state)):
-    """Export a conversation as self-contained HTML."""
-    from datasight.export import export_session_html
+    """Export a conversation as self-contained HTML or as a runnable Python script."""
+    from datasight.export import export_session_html, export_session_python
 
     if state.conversations is None:
         return HTMLResponse(content="<p>No conversation data available.</p>", status_code=200)
     body = await request.json()
     exclude = body.get("exclude_indices", [])
     exclude_set = set(exclude) if exclude else None
+    fmt = (body.get("format") or "html").lower()
 
     data = state.conversations.get(session_id)
     events = data.get("events", [])
     title = data.get("title", "datasight session")
+
+    if fmt == "py":
+        db_path, db_mode = _resolve_export_db_target(state)
+        script = export_session_python(
+            events,
+            title=title,
+            db_path=db_path,
+            db_mode=db_mode,
+            exclude_indices=exclude_set,
+        )
+        return PlainTextResponse(
+            content=script,
+            media_type="text/x-python",
+            headers={
+                "Content-Disposition": 'attachment; filename="datasight-session.py"',
+            },
+        )
 
     html = export_session_html(events, title=title, exclude_indices=exclude_set)
     return HTMLResponse(
@@ -3830,6 +3854,26 @@ async def export_session(session_id: str, request: Request, state: AppState = De
             "Content-Disposition": 'attachment; filename="datasight-export.html"',
         },
     )
+
+
+def _resolve_export_db_target(state: AppState) -> tuple[str, str]:
+    """Resolve (db_path, db_mode) for embedding into an exported Python script.
+
+    Returns absolute paths for file-backed databases. For non-file backends or
+    when no project is loaded, returns ("", db_mode) so the script renders a
+    TODO scaffold instead of a hardcoded connection.
+    """
+    from datasight.cli import _resolve_db_path, _resolve_settings
+
+    if not state.project_dir:
+        return "", state.sql_dialect or "duckdb"
+    try:
+        settings, _ = _resolve_settings(state.project_dir)
+    except Exception:
+        return "", state.sql_dialect or "duckdb"
+    db_mode = settings.database.mode or "duckdb"
+    db_path = _resolve_db_path(settings, state.project_dir)
+    return db_path, db_mode
 
 
 @app.post("/api/dashboard/export")

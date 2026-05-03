@@ -213,6 +213,221 @@ def export_session_html(
     )
 
 
+def _shorten_for_header(text: str, max_len: int = 80) -> str:
+    """Collapse whitespace and clip to one short line for a section header."""
+    collapsed = " ".join((text or "").split())
+    if len(collapsed) <= max_len:
+        return collapsed
+    return collapsed[: max_len - 1] + "…"
+
+
+def _wrap_as_comments(text: str, prefix: str = "# ") -> list[str]:
+    """Wrap multi-line text as Python comment lines (no line wrapping)."""
+    if not text:
+        return []
+    return [f"{prefix}{line}" if line else "#" for line in text.splitlines()]
+
+
+def _group_events_into_turns(
+    events: list[dict[str, Any]],
+    exclude_indices: set[int],
+) -> list[dict[str, Any]]:
+    """Group an evt_log into turns keyed by user message ordinal.
+
+    Each returned turn is::
+
+        {
+            "index": int,                 # 0-based turn index
+            "question": str,
+            "intro_text": str | None,     # assistant text before tools
+            "final_text": str | None,     # assistant text after tools
+            "tool_calls": list[ToolCall], # SQL / chart calls in order
+        }
+
+    A ToolCall is::
+
+        {
+            "tool_name": str,
+            "sql": str | None,
+            "plotly_spec": dict | None,
+            "chart_title": str | None,
+            "error": str | None,
+        }
+    """
+    turns: list[dict[str, Any]] = []
+    user_count = -1
+    current: dict[str, Any] | None = None
+    pending_start: dict[str, Any] | None = None
+    pending_result: dict[str, Any] | None = None
+
+    for evt in events:
+        etype = evt.get("event")
+        data = evt.get("data") or {}
+
+        if etype == EventType.USER_MESSAGE:
+            if current is not None:
+                turns.append(current)
+            user_count += 1
+            if user_count in exclude_indices:
+                current = None
+            else:
+                current = {
+                    "index": user_count,
+                    "question": data.get("text", ""),
+                    "intro_text": None,
+                    "final_text": None,
+                    "tool_calls": [],
+                }
+            pending_start = None
+            pending_result = None
+            continue
+
+        if current is None:
+            continue
+
+        if etype == EventType.ASSISTANT_MESSAGE:
+            text = data.get("text", "")
+            if not current["tool_calls"] and current["intro_text"] is None:
+                current["intro_text"] = text
+            else:
+                current["final_text"] = text
+        elif etype == EventType.TOOL_START:
+            pending_start = data
+            pending_result = None
+        elif etype == EventType.TOOL_RESULT:
+            pending_result = data
+        elif etype == EventType.TOOL_DONE:
+            tool_name = (pending_start or {}).get("tool") or data.get("tool") or "tool"
+            sql = (
+                data.get("formatted_sql")
+                or data.get("sql")
+                or ((pending_start or {}).get("input") or {}).get("sql")
+            )
+            spec = None
+            chart_title = None
+            if pending_result:
+                spec = pending_result.get("plotly_spec") or pending_result.get("plotlySpec")
+                chart_title = pending_result.get("title")
+            current["tool_calls"].append(
+                {
+                    "tool_name": tool_name,
+                    "sql": sql,
+                    "plotly_spec": spec,
+                    "chart_title": chart_title,
+                    "error": data.get("error"),
+                }
+            )
+            pending_start = None
+            pending_result = None
+
+    if current is not None:
+        turns.append(current)
+    return turns
+
+
+def _python_tool_call_context(
+    turn_number: int, index_in_turn: int | None, call: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the Mustache context for one SQL / chart tool call."""
+    suffix = f"_{index_in_turn}" if index_in_turn is not None else ""
+    name = f"{turn_number}{suffix}"
+    spec = call.get("plotly_spec")
+    chart_title = call.get("chart_title") or f"turn {turn_number}{suffix}"
+    return {
+        "name": name,
+        "turn_number": turn_number,
+        "suffix": suffix,
+        "has_error": bool(call.get("error")),
+        "error_short": _shorten_for_header(call.get("error") or ""),
+        "has_sql": bool(call.get("sql")),
+        # Mustache emits the literal SQL between triple-quote fences, so strip
+        # any trailing whitespace to keep the closing fence flush.
+        "sql_text": (call.get("sql") or "").rstrip(),
+        "has_chart": bool(spec),
+        # Embed the spec as a JSON string the user can re-edit. Escape any
+        # accidental triple-quotes so the surrounding `r"""..."""` stays valid.
+        "chart_spec_json": (
+            json.dumps(spec, ensure_ascii=False, indent=2).replace('"""', '\\"\\"\\"')
+            if spec
+            else ""
+        ),
+        "chart_title_short": _shorten_for_header(chart_title),
+    }
+
+
+def _python_turn_context(turn: dict[str, Any]) -> dict[str, Any] | None:
+    """Build the Mustache context for one turn, or None if nothing to render."""
+    runnable = [c for c in turn.get("tool_calls", []) if c.get("sql") or c.get("plotly_spec")]
+    intro = _wrap_as_comments(turn.get("intro_text") or "")
+    final = _wrap_as_comments(turn.get("final_text") or "", prefix="# Assistant: ")
+    if not runnable and not intro and not final:
+        return None
+    multi = len(runnable) > 1
+    return {
+        "turn_number": turn["index"] + 1,
+        "header_question": _shorten_for_header(turn.get("question") or ""),
+        "intro_comments": intro,
+        "tool_calls": [
+            _python_tool_call_context(turn["index"] + 1, i if multi else None, call)
+            for i, call in enumerate(runnable, start=1)
+        ],
+        "final_comments": final,
+    }
+
+
+def export_session_python(
+    events: list[dict[str, Any]],
+    *,
+    title: str = "datasight session",
+    db_path: str = "",
+    db_mode: str = "duckdb",
+    exclude_indices: set[int] | None = None,
+) -> str:
+    """Render conversation events as a runnable, hand-editable Python script.
+
+    Each turn becomes a labelled section with the user question as a comment,
+    SQL as a top-of-section ``SQL_N`` constant (the obvious thing to tweak),
+    and any Plotly chart embedded as a JSON string fed into ``go.Figure``.
+    The output script accepts ``--db`` and ``--output-dir`` so the user can
+    move it between machines or redirect chart output without editing.
+
+    Parameters
+    ----------
+    events:
+        Event log from a session (same shape as stored in ``conversations/``).
+    title:
+        Used in the script's docstring for traceability.
+    db_path:
+        Default value baked into the script as ``DEFAULT_DB_PATH``. The user
+        can override at runtime with ``--db``.
+    db_mode:
+        ``"duckdb"`` (default), ``"sqlite"``, or another value (renders a
+        scaffold whose ``run_sql`` raises NotImplementedError).
+    exclude_indices:
+        Optional set of 0-based turn indices to skip — same semantics as
+        ``export_session_html``.
+
+    Returns
+    -------
+    The complete script text.
+    """
+    exclude = exclude_indices or set()
+    turns = _group_events_into_turns(events, exclude)
+    contexts = [_python_turn_context(t) for t in turns]
+    return render_template(
+        "export_session_python",
+        {
+            "title": (title or "datasight session").replace('"""', "'''"),
+            "default_db_path_repr": repr(db_path),
+            "db_mode": db_mode,
+            "is_duckdb": db_mode == "duckdb",
+            "is_sqlite": db_mode == "sqlite",
+            "is_unknown_mode": db_mode not in ("duckdb", "sqlite"),
+            "turns": [c for c in contexts if c is not None],
+        },
+    )
+
+
 def _extract_plotly_spec(srcdoc: str) -> dict[str, Any] | None:
     """Extract the Plotly spec JSON from a chart iframe's srcdoc."""
     match = re.search(r"var spec = ({.*?});", srcdoc, re.DOTALL)

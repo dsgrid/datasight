@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""
+Exported from datasight: {{{title}}}
+
+Each turn below is a self-contained block. Edit the SQL_N constants to
+tweak filters or aggregations and re-run the script. Defaults for the
+database path and chart output directory are at the top of this file;
+override them at runtime with --db / --output-dir.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import pandas as pd
+import plotly.graph_objects as go
+{{#is_duckdb}}
+import duckdb
+{{/is_duckdb}}
+{{#is_sqlite}}
+import sqlite3
+{{/is_sqlite}}
+{{#is_unknown_mode}}
+# Add your driver import here (psycopg, pyflightsql, ...)
+{{/is_unknown_mode}}
+
+# Defaults — edit these to change behavior, or override via CLI args.
+DEFAULT_DB_PATH = {{{default_db_path_repr}}}
+DEFAULT_OUTPUT_DIR = "."
+
+_parser = argparse.ArgumentParser(description="Re-run an exported datasight session.")
+{{#is_duckdb}}
+_parser.add_argument("--db", default=DEFAULT_DB_PATH, help="Database file path (default: %(default)s)")
+{{/is_duckdb}}
+{{#is_sqlite}}
+_parser.add_argument("--db", default=DEFAULT_DB_PATH, help="Database file path (default: %(default)s)")
+{{/is_sqlite}}
+{{#is_unknown_mode}}
+_parser.add_argument("--db", default=DEFAULT_DB_PATH, help="Connection string (mode: {{{db_mode}}}) (default: %(default)s)")
+{{/is_unknown_mode}}
+_parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Where to write chart HTML (default: current directory)")
+_args = _parser.parse_args()
+
+DB_PATH = _args.db
+OUTPUT_DIR = Path(_args.output_dir).resolve()
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+{{#is_duckdb}}
+conn = duckdb.connect(DB_PATH, read_only=True)
+
+
+def run_sql(sql: str) -> pd.DataFrame:
+    return conn.execute(sql).df()
+{{/is_duckdb}}
+{{#is_sqlite}}
+conn = sqlite3.connect(DB_PATH)
+
+
+def run_sql(sql: str) -> pd.DataFrame:
+    return pd.read_sql_query(sql, conn)
+{{/is_sqlite}}
+{{#is_unknown_mode}}
+# Database mode: {{{db_mode}}}
+# This session ran against a non-file backend. Replace the run_sql body
+# below with a real call against your driver. DB_PATH is whatever
+# connection string you pass via --db.
+conn = None
+
+
+def run_sql(sql: str) -> pd.DataFrame:
+    raise NotImplementedError(
+        "Wire up your database connection at the top of this script"
+    )
+{{/is_unknown_mode}}
+{{#turns}}
+
+# ─── Turn {{turn_number}}: {{{header_question}}} ───
+{{#intro_comments}}
+{{{.}}}
+{{/intro_comments}}
+{{#tool_calls}}
+{{#has_error}}
+# (this query errored when first run: {{{error_short}}})
+{{/has_error}}
+{{#has_sql}}
+
+SQL_{{name}} = """
+{{{sql_text}}}
+"""
+
+df_{{name}} = run_sql(SQL_{{name}})
+print(f"[turn {{turn_number}}{{suffix}}] {len(df_{{name}})} rows")
+{{/has_sql}}
+{{#has_chart}}
+
+CHART_{{name}}_SPEC = json.loads(r"""
+{{{chart_spec_json}}}
+""")
+fig_{{name}} = go.Figure(CHART_{{name}}_SPEC)
+fig_{{name}}.write_html(OUTPUT_DIR / "turn_{{turn_number}}{{suffix}}_chart.html")
+print(f"[turn {{turn_number}}{{suffix}}] chart -> {OUTPUT_DIR}/turn_{{turn_number}}{{suffix}}_chart.html  ({{{chart_title_short}}})")
+{{/has_chart}}
+{{/tool_calls}}
+{{#final_comments}}
+
+{{{.}}}
+{{/final_comments}}
+{{/turns}}

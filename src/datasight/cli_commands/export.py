@@ -60,6 +60,7 @@ async def _run_ask_pipeline(*args, **kwargs):
 
             datasight export --list-sessions
             datasight export abc123def -o my-analysis.html
+            datasight export abc123def --format py -o my-analysis.py
             datasight export abc123def --exclude 2,3
         """
     )
@@ -71,7 +72,14 @@ async def _run_ask_pipeline(*args, **kwargs):
     "output_path",
     type=click.Path(),
     default=None,
-    help="Output file path (default: <session_id>.html).",
+    help="Output file path (default: <session_id>.<format>).",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["html", "py"], case_sensitive=False),
+    default="html",
+    help="html (self-contained viewer, default) or py (runnable Python script).",
 )
 @click.option(
     "--project-dir",
@@ -85,8 +93,8 @@ async def _run_ask_pipeline(*args, **kwargs):
     help="Comma-separated turn indices to exclude (0-based, each turn is a Q&A pair).",
 )
 @click.option("--list-sessions", is_flag=True, help="List available sessions and exit.")
-def export(session_id, output_path, project_dir, exclude, list_sessions):
-    """Export a conversation session as a self-contained HTML page.
+def export(session_id, output_path, output_format, project_dir, exclude, list_sessions):
+    """Export a conversation session as a self-contained HTML page or Python script.
 
     SESSION_ID is the conversation ID (use --list-sessions to see available IDs).
     """
@@ -163,13 +171,31 @@ def export(session_id, output_path, project_dir, exclude, list_sessions):
             click.echo("Error: --exclude must be comma-separated integers.", err=True)
             sys.exit(1)
 
+    fmt = output_format.lower()
+    if fmt == "py":
+        from datasight.export import export_session_python
+
+        settings, _ = _resolve_settings(project_dir)
+        db_path = _resolve_db_path(settings, project_dir)
+        script = export_session_python(
+            events,
+            title=title,
+            db_path=db_path,
+            db_mode=settings.database.mode or "duckdb",
+            exclude_indices=exclude_indices,
+        )
+        if not output_path:
+            output_path = f"{session_id[:20]}.py"
+        Path(output_path).write_text(script, encoding="utf-8")
+        click.echo(f"Session exported to {output_path}")
+        return
+
     from datasight.export import export_session_html
 
     html = export_session_html(events, title=title, exclude_indices=exclude_indices)
 
     if not output_path:
-        safe_id = session_id[:20]
-        output_path = f"{safe_id}.html"
+        output_path = f"{session_id[:20]}.html"
 
     Path(output_path).write_text(html, encoding="utf-8")
     click.echo(f"Session exported to {output_path}")
