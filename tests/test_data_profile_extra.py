@@ -281,6 +281,19 @@ async def test_get_dimension_stats_query_error(energy_conn):
 
 
 @pytest.mark.asyncio
+async def test_get_dimension_stats_empty_table_returns_none_counts(energy_conn):
+    """An empty table makes SUM(...) return SQL NULL → pandas NaN; counts must
+    fall back to None instead of raising ValueError when cast to int."""
+    energy_conn.execute("CREATE TABLE empty_dim (label VARCHAR)")
+    out = await _get_dimension_stats(_rs(energy_conn), "empty_dim", "label", 0)
+    assert out is not None
+    assert out["distinct_count"] == 0
+    assert out["null_count"] is None
+    assert out["null_rate"] is None
+    assert out["sample_values"] == []
+
+
+@pytest.mark.asyncio
 async def test_get_numeric_stats_query_error(energy_conn):
     out = await _get_numeric_stats(_rs(energy_conn), "nonexistent", "x")
     assert out is None

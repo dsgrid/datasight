@@ -11,6 +11,21 @@ from datasight.runner import RunSql
 from datasight.schema import _quote_identifier
 
 
+def _to_int_or_none(value: Any) -> int | None:
+    """Convert a SQL count value to ``int``. Returns ``None`` for ``None`` and NaN.
+
+    pandas surfaces SQL NULL as ``float('nan')`` for numeric columns (e.g. when
+    ``SUM`` runs over an empty table), so a plain ``None`` check misses it and
+    ``int(NaN)`` raises ``ValueError``.
+    """
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_date_dtype(dtype: str) -> bool:
     lower = dtype.lower()
     return any(token in lower for token in ("date", "time", "timestamp"))
@@ -473,14 +488,13 @@ async def _get_dimension_stats(
     if stats_df.empty:
         return None
 
-    distinct_count = stats_df.iloc[0].get("distinct_count")
-    null_count = stats_df.iloc[0].get("null_count")
+    # SUM over an empty table returns SQL NULL, which pandas surfaces as NaN
+    # (a float), not None. Use _to_int_or_none to handle both shapes.
+    distinct_count = _to_int_or_none(stats_df.iloc[0].get("distinct_count"))
+    null_count = _to_int_or_none(stats_df.iloc[0].get("null_count"))
     null_rate = None
-    if row_count:
-        try:
-            null_rate = round((float(null_count or 0) / row_count) * 100, 1)
-        except (TypeError, ValueError, ZeroDivisionError):
-            null_rate = None
+    if row_count and null_count is not None:
+        null_rate = round(null_count / row_count * 100, 1)
 
     samples = []
     if not sample_df.empty and "value" in sample_df.columns:
@@ -489,8 +503,8 @@ async def _get_dimension_stats(
     return {
         "table": table,
         "column": column,
-        "distinct_count": None if distinct_count is None else int(distinct_count),
-        "null_count": None if null_count is None else int(null_count),
+        "distinct_count": distinct_count,
+        "null_count": null_count,
         "null_rate": null_rate,
         "sample_values": samples,
     }
