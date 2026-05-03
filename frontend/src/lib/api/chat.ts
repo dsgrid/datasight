@@ -286,10 +286,20 @@ function handleSSEEvent(eventType: SSEEventType, data: SSEData): void {
   }
 }
 
+export interface SendMessageOptions {
+  /** When provided, the server drops turn N and everything after it before
+   *  running this prompt. Used by the edit-and-replay flow so the first call
+   *  truncates atomically with the new prompt. */
+  truncateBeforeTurn?: number;
+}
+
 /**
  * Send a chat message and process the SSE stream.
  */
-export async function sendMessage(text: string): Promise<void> {
+export async function sendMessage(
+  text: string,
+  options: SendMessageOptions = {},
+): Promise<void> {
   if (dashboardStore.currentView !== "chat") {
     dashboardStore.currentView = "chat";
   }
@@ -303,14 +313,19 @@ export async function sendMessage(text: string): Promise<void> {
   // Show typing indicator
   chatStore.pushMessage({ type: "typing" });
 
+  const body: Record<string, unknown> = {
+    message: text,
+    session_id: sessionStore.sessionId,
+  };
+  if (options.truncateBeforeTurn !== undefined) {
+    body.truncate_before_turn = options.truncateBeforeTurn;
+  }
+
   try {
     const resp = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: text,
-        session_id: sessionStore.sessionId,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -396,6 +411,38 @@ export async function respondSqlConfirm(
   } catch (e) {
     console.error("Failed to confirm SQL:", e);
   }
+}
+
+/**
+ * Replay the conversation from an edited turn forward. Drops the edited turn
+ * and every turn after it (server-side and locally), then re-sends the new
+ * prompt followed by the originals at later turns. Stops if any replayed turn
+ * errors or is aborted by the user.
+ */
+export async function replayFromEdit(
+  truncateBeforeTurn: number,
+  editedPrompt: string,
+  subsequentPrompts: string[],
+): Promise<void> {
+  await sendMessage(editedPrompt, { truncateBeforeTurn });
+  if (replayShouldStop()) return;
+  for (const prompt of subsequentPrompts) {
+    await sendMessage(prompt);
+    if (replayShouldStop()) return;
+  }
+}
+
+function replayShouldStop(): boolean {
+  const msgs = chatStore.messages;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.type === "error") return true;
+    if (m.type === "assistant_message") {
+      return m.content === "Generation stopped.";
+    }
+    if (m.type === "user_message") return false;
+  }
+  return false;
 }
 
 /**

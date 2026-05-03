@@ -983,3 +983,66 @@ def test_measure_editor_validate_non_list(isolated_web_state: None, project_dir:
     body = resp.json()
     assert body["ok"] is False
     assert any("list" in e.lower() for e in body["errors"])
+
+
+def _make_session_state(num_turns: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build a (messages, evt_log) pair with ``num_turns`` user turns.
+
+    Each turn looks like a real conversation: a user prompt, a tool call, a
+    tool result, and an assistant reply. Turn N's prompt text is ``"qN"``.
+    """
+    messages: list[dict[str, Any]] = []
+    evt_log: list[dict[str, Any]] = []
+    for n in range(num_turns):
+        messages.append({"role": "user", "content": f"q{n}"})
+        messages.append({"role": "assistant", "content": [{"type": "tool_use"}]})
+        messages.append({"role": "user", "content": [{"type": "tool_result"}]})
+        messages.append({"role": "assistant", "content": f"a{n}"})
+
+        evt_log.append({"event": web_app.EventType.USER_MESSAGE, "data": {"text": f"q{n}"}})
+        evt_log.append({"event": web_app.EventType.TOOL_START, "data": {}})
+        evt_log.append({"event": web_app.EventType.TOOL_RESULT, "data": {}})
+        evt_log.append({"event": web_app.EventType.ASSISTANT_MESSAGE, "data": {"text": f"a{n}"}})
+    return messages, evt_log
+
+
+def test_truncate_session_at_turn_drops_turn_and_after() -> None:
+    messages, evt_log = _make_session_state(3)
+    web_app._truncate_session_at_turn(messages, evt_log, 1)
+
+    # Only turn 0 should remain in messages (4 entries) and evt_log (4 entries).
+    assert [
+        m.get("content") for m in messages if m["role"] == "user" and isinstance(m["content"], str)
+    ] == ["q0"]
+    user_events = [e for e in evt_log if e["event"] == web_app.EventType.USER_MESSAGE]
+    assert [e["data"]["text"] for e in user_events] == ["q0"]
+
+
+def test_truncate_session_at_turn_zero_clears_all() -> None:
+    messages, evt_log = _make_session_state(2)
+    web_app._truncate_session_at_turn(messages, evt_log, 0)
+    assert messages == []
+    assert evt_log == []
+
+
+def test_truncate_session_at_turn_out_of_range_is_noop() -> None:
+    messages, evt_log = _make_session_state(2)
+    msgs_before = list(messages)
+    evt_before = list(evt_log)
+    web_app._truncate_session_at_turn(messages, evt_log, 99)
+    assert messages == msgs_before
+    assert evt_log == evt_before
+
+
+def test_chat_rejects_invalid_truncate_before_turn(isolated_web_state: None) -> None:
+    with TestClient(web_app.app) as client:
+        resp = client.post(
+            "/api/chat",
+            json={
+                "message": "hi",
+                "session_id": "sess",
+                "truncate_before_turn": -1,
+            },
+        )
+    assert resp.status_code == 200
+    assert "Invalid truncate_before_turn" in resp.text

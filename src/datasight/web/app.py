@@ -1285,23 +1285,66 @@ def _compact_chart_tool_result_for_stream(
 # ---------------------------------------------------------------------------
 
 
+def _truncate_session_at_turn(
+    messages: list[dict[str, Any]],
+    evt_log: list[dict[str, Any]],
+    turn_index: int,
+) -> None:
+    """Drop turn ``turn_index`` and everything after it from a session.
+
+    A turn is anchored by a user prompt: the Nth ``USER_MESSAGE`` event in
+    ``evt_log`` and the Nth ``role=user`` string entry in ``messages``. After
+    truncation, the next ``messages.append({"role": "user", ...})`` and matching
+    user-message event resume the conversation cleanly at turn ``turn_index``.
+    Out-of-range indices leave the lists untouched.
+    """
+    if turn_index < 0:
+        return
+
+    user_count = 0
+    evt_cut = len(evt_log)
+    for i, evt in enumerate(evt_log):
+        if evt.get("event") == EventType.USER_MESSAGE:
+            if user_count == turn_index:
+                evt_cut = i
+                break
+            user_count += 1
+    del evt_log[evt_cut:]
+
+    user_count = 0
+    msg_cut = len(messages)
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            if user_count == turn_index:
+                msg_cut = i
+                break
+            user_count += 1
+    del messages[msg_cut:]
+
+
 async def generate_chat_response(
     message: str,
     session_id: str,
     state: AppState,
     request: Request | None = None,
+    truncate_before_turn: int | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a chat message."""
     if state.llm_client is None:
         raise ConfigurationError("LLM not configured. Open Settings to add your API key.")
 
     messages = state.get_session_messages(session_id)
+    conv = state.conversations.get(session_id) if state.conversations else None
+    evt_log_pre = conv["events"] if conv else []
+    if truncate_before_turn is not None:
+        _truncate_session_at_turn(messages, evt_log_pre, truncate_before_turn)
+        if conv and truncate_before_turn == 0:
+            conv["title"] = "Untitled"
     messages.append({"role": "user", "content": message})
     turn_id = str(uuid.uuid4())
     tool_provenance: list[dict[str, Any]] = []
 
-    conv = state.conversations.get(session_id) if state.conversations else None
-    evt_log = conv["events"] if conv else []
+    evt_log = evt_log_pre
     evt_log.append(
         {"event": EventType.USER_MESSAGE, "data": {"text": message, "turn_id": turn_id}}
     )
@@ -3702,6 +3745,19 @@ async def chat(request: Request, state: AppState = Depends(get_state)):
     body = await request.json()
     message = body.get("message", "").strip()
     session_id = body.get("session_id", "default")
+    truncate_raw = body.get("truncate_before_turn")
+    truncate_before_turn: int | None = None
+    if truncate_raw is not None:
+        if not isinstance(truncate_raw, int) or isinstance(truncate_raw, bool) or truncate_raw < 0:
+            return StreamingResponse(
+                iter(
+                    [
+                        f'event: {EventType.ERROR}\ndata: {{"error":"Invalid truncate_before_turn"}}\n\n'
+                    ]
+                ),
+                media_type="text/event-stream",
+            )
+        truncate_before_turn = truncate_raw
 
     try:
         validate_session_id(session_id)
@@ -3723,7 +3779,11 @@ async def chat(request: Request, state: AppState = Depends(get_state)):
         async with session_lock:
             try:
                 async for event in generate_chat_response(
-                    message, session_id, state, request=request
+                    message,
+                    session_id,
+                    state,
+                    request=request,
+                    truncate_before_turn=truncate_before_turn,
                 ):
                     yield event
             except Exception as exc:
