@@ -1217,17 +1217,15 @@ async def build_table_profile(table_info: dict[str, Any], run_sql: RunSql) -> di
             ),
             "value",
         )
+        null_count_int = _to_int_or_none(null_count)
         null_rate = None
-        if row_count:
-            try:
-                null_rate = round((float(null_count or 0) / row_count) * 100, 1)
-            except (TypeError, ValueError, ZeroDivisionError):
-                null_rate = None
-        if null_count:
+        if row_count and null_count_int is not None:
+            null_rate = round(null_count_int / row_count * 100, 1)
+        if null_count_int:
             null_columns.append(
                 {
                     "column": column_name,
-                    "null_count": int(null_count),
+                    "null_count": null_count_int,
                     "null_rate": null_rate,
                 }
             )
@@ -1296,13 +1294,11 @@ async def build_column_profile(
         "value",
     )
 
-    profile["null_count"] = None if null_count is None else int(null_count)
-    profile["distinct_count"] = None if distinct_count is None else int(distinct_count)
-    if row_count:
-        try:
-            profile["null_rate"] = round((float(null_count or 0) / row_count) * 100, 1)
-        except (TypeError, ValueError, ZeroDivisionError):
-            profile["null_rate"] = None
+    null_count_int = _to_int_or_none(null_count)
+    profile["null_count"] = null_count_int
+    profile["distinct_count"] = _to_int_or_none(distinct_count)
+    if row_count and null_count_int is not None:
+        profile["null_rate"] = round(null_count_int / row_count * 100, 1)
     else:
         profile["null_rate"] = None
 

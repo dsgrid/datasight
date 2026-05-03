@@ -424,11 +424,19 @@ export async function replayFromEdit(
   editedPrompt: string,
   subsequentPrompts: string[],
 ): Promise<void> {
-  await sendMessage(editedPrompt, { truncateBeforeTurn });
-  if (replayShouldStop()) return;
-  for (const prompt of subsequentPrompts) {
-    await sendMessage(prompt);
+  // Hold isReplaying for the whole sequence so user input, summarize, and
+  // further edits can't interleave between turns while sendMessage briefly
+  // toggles isStreaming false.
+  chatStore.isReplaying = true;
+  try {
+    await sendMessage(editedPrompt, { truncateBeforeTurn });
     if (replayShouldStop()) return;
+    for (const prompt of subsequentPrompts) {
+      await sendMessage(prompt);
+      if (replayShouldStop()) return;
+    }
+  } finally {
+    chatStore.isReplaying = false;
   }
 }
 

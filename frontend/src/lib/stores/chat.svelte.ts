@@ -87,6 +87,7 @@ export type ChatEvent =
 function createChatStore() {
   let messages = $state<ChatEvent[]>([]);
   let isStreaming = $state(false);
+  let isReplaying = $state(false);
   let currentAssistantText = $state("");
   let abortController = $state<AbortController | null>(null);
   let lastSql = $state("");
@@ -106,6 +107,15 @@ function createChatStore() {
     },
     set isStreaming(v: boolean) {
       isStreaming = v;
+    },
+    get isReplaying() {
+      return isReplaying;
+    },
+    set isReplaying(v: boolean) {
+      isReplaying = v;
+    },
+    get isBusy() {
+      return isStreaming || isReplaying;
     },
     get currentAssistantText() {
       return currentAssistantText;

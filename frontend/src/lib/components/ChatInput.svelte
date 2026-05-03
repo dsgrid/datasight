@@ -39,7 +39,7 @@
 
   function handleSubmit() {
     const text = inputValue.trim();
-    if (!text || chatStore.isStreaming) return;
+    if (!text || chatStore.isBusy) return;
     inputValue = "";
     if (textareaEl) {
       textareaEl.style.height = "auto";
@@ -53,7 +53,7 @@
 
   /** Allow external code to send a message (e.g., suggestion/example clicks). */
   export function sendText(text: string) {
-    if (chatStore.isStreaming) return;
+    if (chatStore.isBusy) return;
     sendMessage(text);
   }
 </script>

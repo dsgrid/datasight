@@ -10,7 +10,7 @@ import { chatStore } from "$lib/stores/chat.svelte";
 const HEADER = "**Dataset Summary**\n\n";
 
 export async function summarizeDataset(): Promise<void> {
-  if (chatStore.isStreaming) return;
+  if (chatStore.isBusy) return;
 
   chatStore.isStreaming = true;
   chatStore.currentAssistantText = HEADER;

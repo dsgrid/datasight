@@ -78,7 +78,7 @@
   }
 
   async function editAndReplay(index: number, newText: string) {
-    if (chatStore.isStreaming) return;
+    if (chatStore.isBusy) return;
     const turnIdx = turnIndices[index];
     if (turnIdx == null || turnIdx < 0) return;
 

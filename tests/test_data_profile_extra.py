@@ -432,6 +432,39 @@ async def test_build_column_profile_text(energy_conn):
 
 
 @pytest.mark.asyncio
+async def test_build_table_profile_empty_table(energy_conn):
+    """Empty table → SUM returns NaN; profile must not raise on int(NaN)."""
+    energy_conn.execute("CREATE TABLE empty_tbl (label VARCHAR, value INTEGER)")
+    schema = {
+        "name": "empty_tbl",
+        "row_count": 0,
+        "columns": [
+            {"name": "label", "dtype": "VARCHAR"},
+            {"name": "value", "dtype": "INTEGER"},
+        ],
+    }
+    out = await build_table_profile(schema, _rs(energy_conn))
+    assert out["table"] == "empty_tbl"
+    assert out["null_columns"] == []
+
+
+@pytest.mark.asyncio
+async def test_build_column_profile_empty_table(energy_conn):
+    """Empty table → SUM returns NaN; column profile must not raise."""
+    energy_conn.execute("CREATE TABLE empty_col (label VARCHAR)")
+    schema = {
+        "name": "empty_col",
+        "row_count": 0,
+        "columns": [{"name": "label", "dtype": "VARCHAR"}],
+    }
+    col = {"name": "label", "dtype": "VARCHAR"}
+    out = await build_column_profile(schema, col, _rs(energy_conn))
+    assert out["null_count"] is None
+    assert out["distinct_count"] == 0
+    assert out["null_rate"] is None
+
+
+@pytest.mark.asyncio
 async def test_build_column_profile_other_type(energy_conn):
     """Fall-through branch: neither numeric/date/text -> sample_values path."""
     energy_conn.execute("CREATE TABLE bools (b BOOLEAN)")
