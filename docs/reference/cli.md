@@ -317,6 +317,7 @@ datasight generate [OPTIONS] [FILES]...
 | `--overwrite` | Overwrite existing files. |
 | `--table`, `-t` | Table or view to include (can be specified multiple times). If omitted, all tables are included. |
 | `--db-path` | Output DuckDB path to create from CSV/Parquet/Excel or mixed file inputs (default: database.duckdb). Do not use this with a single existing DuckDB or SQLite database; those are referenced directly. |
+| `--import-mode` | When FILES are CSV/Parquet/Excel inputs, choose whether datasight creates source-backed views or materialized DuckDB tables. 'auto' prefers tables for CSV and views for Parquet. Default: `auto`. |
 | `--compact-schema` | Write schema.yaml with table names only. Default adds an empty 'excluded_columns: []' placeholder per table so you can fill in glob patterns for columns to hide. |
 | `-v`, `--verbose` | Enable debug logging. |
 
