@@ -360,6 +360,7 @@ class DashboardStore:
         self._items: list[dict[str, Any]] = []
         self._columns: int = 0
         self._filters: list[dict[str, Any]] = []
+        self._title: str = ""
         self._next_id = 1
         if self._path.exists():
             try:
@@ -367,6 +368,7 @@ class DashboardStore:
                 self._items = data.get("items", [])
                 self._columns = data.get("columns", 0)
                 self._filters = data.get("filters", [])
+                self._title = data.get("title", "") or ""
                 if self._items:
                     self._next_id = max(item.get("id", 0) for item in self._items) + 1
             except (json.JSONDecodeError, OSError):
@@ -376,7 +378,12 @@ class DashboardStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(
             json.dumps(
-                {"items": self._items, "columns": self._columns, "filters": self._filters},
+                {
+                    "items": self._items,
+                    "columns": self._columns,
+                    "filters": self._filters,
+                    "title": self._title,
+                },
                 indent=2,
             ),
             encoding="utf-8",
@@ -387,6 +394,7 @@ class DashboardStore:
             "items": list(self._items),
             "columns": self._columns,
             "filters": list(self._filters),
+            "title": self._title,
         }
 
     def save_all(
@@ -394,6 +402,7 @@ class DashboardStore:
         items: list[dict[str, Any]],
         columns: int | None = None,
         filters: list[dict[str, Any]] | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         for item in items:
             if "id" not in item:
@@ -404,6 +413,8 @@ class DashboardStore:
             self._columns = columns
         if filters is not None:
             self._filters = filters
+        if title is not None:
+            self._title = title
         if self._items:
             self._next_id = max(item.get("id", 0) for item in self._items) + 1
         self._save()
@@ -413,12 +424,13 @@ class DashboardStore:
         self._items = []
         self._columns = 0
         self._filters = []
+        self._title = ""
         self._next_id = 1
         self._save()
 
 
 def _empty_dashboard() -> dict[str, Any]:
-    return {"items": [], "columns": 0, "filters": []}
+    return {"items": [], "columns": 0, "filters": [], "title": ""}
 
 
 _DASHBOARD_FILTER_COLUMN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -3150,6 +3162,7 @@ async def get_dashboard(request: Request, state: AppState = Depends(get_state)):
                 "items": dashboard.get("items", []),
                 "columns": dashboard.get("columns", 0),
                 "filters": dashboard.get("filters", []),
+                "title": dashboard.get("title", "") or "",
             }
     if state.dashboard is None:
         return _empty_dashboard()
@@ -3160,12 +3173,13 @@ async def get_dashboard(request: Request, state: AppState = Depends(get_state)):
 async def save_dashboard(request: Request, state: AppState = Depends(get_state)):
     """Save dashboard items and layout settings."""
     if state.dashboard is None:
-        return {"items": [], "columns": 0, "filters": []}
+        return _empty_dashboard()
     body = await request.json()
     items = body.get("items", [])
     columns = body.get("columns")
     filters = body.get("filters")
-    result = state.dashboard.save_all(items, columns, filters)
+    title = body.get("title")
+    result = state.dashboard.save_all(items, columns, filters, title)
     session_id = body.get("session_id")
     if session_id and state.conversations is not None:
         try:
@@ -3883,7 +3897,7 @@ async def export_dashboard(request: Request):
 
     body = await request.json()
     items = body.get("items", [])
-    title = body.get("title", "datasight dashboard")
+    title = body.get("title", "")
     columns = body.get("columns", 2)
     filters = body.get("filters", [])
 

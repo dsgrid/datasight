@@ -320,6 +320,46 @@ def test_export_dashboard_includes_source_metadata():
     assert "select state from totals" in html
 
 
+def test_export_dashboard_omits_h1_when_title_is_empty():
+    """Empty title must not render any heading and must not insert
+    'datasight dashboard' or any other marketing fallback."""
+    html = export_dashboard_html(
+        [
+            {
+                "id": 1,
+                "type": "table",
+                "title": "Numbers",
+                "html": "<table><tr><td>1</td></tr></table>",
+            }
+        ],
+        title="",
+        columns=1,
+    )
+
+    assert "<h1>" not in html
+    assert "datasight dashboard" not in html
+    # Browser tab still needs *something*; "Dashboard" is the neutral fallback.
+    assert "<title>Dashboard</title>" in html
+
+
+def test_export_dashboard_renders_user_title_when_provided():
+    html = export_dashboard_html(
+        [
+            {
+                "id": 1,
+                "type": "table",
+                "title": "Numbers",
+                "html": "<table><tr><td>1</td></tr></table>",
+            }
+        ],
+        title="Q3 Generation Review",
+        columns=1,
+    )
+
+    assert "<h1>Q3 Generation Review</h1>" in html
+    assert "<title>Q3 Generation Review</title>" in html
+
+
 # ---------------------------------------------------------------------------
 # export_session_python
 # ---------------------------------------------------------------------------

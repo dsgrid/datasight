@@ -584,7 +584,7 @@ def _build_filter_chips(filters: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 def export_dashboard_html(
     items: list[dict[str, Any]],
-    title: str = "datasight dashboard",
+    title: str = "",
     columns: int = 2,
     filters: list[dict[str, Any]] | None = None,
 ) -> str:
@@ -598,7 +598,8 @@ def export_dashboard_html(
         - html: For charts, the iframe srcdoc; for tables, the HTML content
         - title: Optional card title
     title:
-        Page title.
+        Page heading shown above the cards. Empty (default) skips the heading
+        — the export carries no title unless the user supplies one.
     columns:
         Number of grid columns (1, 2, or 3).
 
@@ -612,7 +613,14 @@ def export_dashboard_html(
     return render_template(
         "export_dashboard",
         {
-            "title": title,  # Let Mustache escape via {{title}}
+            "title": title,  # Let Mustache escape via {{title}}.
+            # has_title gates the <h1> via {{#has_title}}...{{/has_title}}. Using
+            # the title string itself as the section condition would push it as a
+            # new context — {{title}} inside would then resolve to str.title.
+            "has_title": bool(title),
+            # Browser tab title can't be empty without looking broken — fall back to
+            # a neutral label that doesn't editorialize about datasight.
+            "html_title": title or "Dashboard",
             "plotly_cdn": PLOTLY_CDN,
             "marked_cdn": MARKED_CDN,
             "dompurify_cdn": DOMPURIFY_CDN,
