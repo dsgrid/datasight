@@ -281,6 +281,19 @@ async def test_get_dimension_stats_query_error(energy_conn):
 
 
 @pytest.mark.asyncio
+async def test_get_dimension_stats_empty_table_returns_none_counts(energy_conn):
+    """An empty table makes SUM(...) return SQL NULL → pandas NaN; counts must
+    fall back to None instead of raising ValueError when cast to int."""
+    energy_conn.execute("CREATE TABLE empty_dim (label VARCHAR)")
+    out = await _get_dimension_stats(_rs(energy_conn), "empty_dim", "label", 0)
+    assert out is not None
+    assert out["distinct_count"] == 0
+    assert out["null_count"] is None
+    assert out["null_rate"] is None
+    assert out["sample_values"] == []
+
+
+@pytest.mark.asyncio
 async def test_get_numeric_stats_query_error(energy_conn):
     out = await _get_numeric_stats(_rs(energy_conn), "nonexistent", "x")
     assert out is None
@@ -416,6 +429,39 @@ async def test_build_column_profile_text(energy_conn):
     col = {"name": "fuel_type", "dtype": "VARCHAR"}
     out = await build_column_profile(schema, col, _rs(energy_conn))
     assert "dimension_stats" in out
+
+
+@pytest.mark.asyncio
+async def test_build_table_profile_empty_table(energy_conn):
+    """Empty table → SUM returns NaN; profile must not raise on int(NaN)."""
+    energy_conn.execute("CREATE TABLE empty_tbl (label VARCHAR, value INTEGER)")
+    schema = {
+        "name": "empty_tbl",
+        "row_count": 0,
+        "columns": [
+            {"name": "label", "dtype": "VARCHAR"},
+            {"name": "value", "dtype": "INTEGER"},
+        ],
+    }
+    out = await build_table_profile(schema, _rs(energy_conn))
+    assert out["table"] == "empty_tbl"
+    assert out["null_columns"] == []
+
+
+@pytest.mark.asyncio
+async def test_build_column_profile_empty_table(energy_conn):
+    """Empty table → SUM returns NaN; column profile must not raise."""
+    energy_conn.execute("CREATE TABLE empty_col (label VARCHAR)")
+    schema = {
+        "name": "empty_col",
+        "row_count": 0,
+        "columns": [{"name": "label", "dtype": "VARCHAR"}],
+    }
+    col = {"name": "label", "dtype": "VARCHAR"}
+    out = await build_column_profile(schema, col, _rs(energy_conn))
+    assert out["null_count"] is None
+    assert out["distinct_count"] == 0
+    assert out["null_rate"] is None
 
 
 @pytest.mark.asyncio

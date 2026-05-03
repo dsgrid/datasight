@@ -4,7 +4,7 @@
   import { schemaStore } from "$lib/stores/schema.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import type { ChatEvent } from "$lib/stores/chat.svelte";
-  import { sendMessage, loadPlotlySpec } from "$lib/api/chat";
+  import { sendMessage, loadPlotlySpec, replayFromEdit } from "$lib/api/chat";
   import { summarizeDataset } from "$lib/api/summarize";
   import { addBookmark } from "$lib/api/saved";
   import { addReport } from "$lib/api/saved";
@@ -75,6 +75,22 @@
       ...messages.slice(0, index),
       ...messages.slice(end),
     ];
+  }
+
+  async function editAndReplay(index: number, newText: string) {
+    if (chatStore.isBusy) return;
+    const turnIdx = turnIndices[index];
+    if (turnIdx == null || turnIdx < 0) return;
+
+    // Capture every later user prompt before truncating locally.
+    const subsequent: string[] = [];
+    for (let i = index + 1; i < chatStore.messages.length; i++) {
+      const msg = chatStore.messages[i];
+      if (msg.type === "user_message") subsequent.push(msg.content);
+    }
+
+    chatStore.messages = chatStore.messages.slice(0, index);
+    await replayFromEdit(turnIdx, newText, subsequent);
   }
 
   async function pinResult(
@@ -246,6 +262,7 @@
         content={event.content}
         onCopy={() => navigator.clipboard.writeText(event.content)}
         onDeleteBlock={() => deleteUserBlock(idx)}
+        onEdit={(newText) => editAndReplay(idx, newText)}
       />
     {:else if event.type === "assistant_message"}
       <MessageBubble

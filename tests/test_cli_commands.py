@@ -388,10 +388,15 @@ def test_validate_runs_rules(tv_project_isolated):
     assert result.exit_code == 0
 
 
-def test_audit_report_on_tv_project(tv_project):
+def test_audit_report_on_tv_project(tv_project, tmp_path):
+    out_path = tmp_path / "report.html"
     runner = CliRunner()
-    result = runner.invoke(cli, ["audit-report", "--project-dir", tv_project])
+    result = runner.invoke(
+        cli,
+        ["audit-report", "--project-dir", tv_project, "--output", str(out_path)],
+    )
     assert result.exit_code == 0
+    assert out_path.exists()
 
 
 def test_audit_report_html_output(tv_project, tmp_path):

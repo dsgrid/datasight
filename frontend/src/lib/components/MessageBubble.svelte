@@ -11,6 +11,9 @@
     onDelete?: () => void;
     onCopy?: () => void;
     onDeleteBlock?: () => void;
+    /** When provided on a user bubble, renders an Edit button that opens an
+     *  inline editor. Submitting calls this with the new prompt text. */
+    onEdit?: (newText: string) => void;
   }
 
   let {
@@ -20,10 +23,50 @@
     onDelete,
     onCopy,
     onDeleteBlock,
+    onEdit,
   }: Props = $props();
 
   let bubbleEl = $state<HTMLElement | null>(null);
   let copied = $state(false);
+  let editing = $state(false);
+  let editText = $state("");
+  let editTextareaEl = $state<HTMLTextAreaElement | null>(null);
+
+  function startEdit() {
+    if (!onEdit) return;
+    editText = content;
+    editing = true;
+    tick().then(() => {
+      editTextareaEl?.focus();
+      const len = editTextareaEl?.value.length ?? 0;
+      editTextareaEl?.setSelectionRange(len, len);
+    });
+  }
+
+  function cancelEdit() {
+    editing = false;
+    editText = "";
+  }
+
+  function submitEdit() {
+    const trimmed = editText.trim();
+    if (!trimmed || trimmed === content) {
+      cancelEdit();
+      return;
+    }
+    editing = false;
+    onEdit?.(trimmed);
+  }
+
+  function onEditKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEdit();
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submitEdit();
+    }
+  }
 
   let displayText = $derived(
     streaming ? chatStore.currentAssistantText : content,
@@ -84,40 +127,87 @@
 <div class="message-row flex min-w-0 w-full animate-fade-in {role === 'user' ? 'justify-end' : ''} group"
   style="margin-bottom: 18px;">
   {#if role === "user"}
-    <div class="message-bubble relative max-w-[85%] rounded-xl bg-user-bg text-user-text whitespace-pre-wrap break-words"
-      style="padding: 12px {(onCopy || onDeleteBlock) ? '72px' : '16px'} 12px 16px; border-bottom-right-radius: 4px; font-size: 0.925rem; line-height: 1.6;">
-      <!-- User actions -->
-      <div
-        class="absolute flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
-        style="top: 8px; right: 8px;"
-      >
-        {#if onCopy}
+    {#if editing}
+      <div class="max-w-[85%] w-full flex flex-col rounded-xl bg-user-bg text-user-text"
+        style="padding: 10px 12px; border-bottom-right-radius: 4px; gap: 8px;">
+        <textarea
+          bind:this={editTextareaEl}
+          bind:value={editText}
+          onkeydown={onEditKeydown}
+          rows="3"
+          aria-label="Edit prompt"
+          class="w-full resize-y rounded-md bg-surface text-text-primary border border-border focus:outline-none focus:border-teal"
+          style="padding: 8px 10px; font-family: inherit; font-size: 0.925rem; line-height: 1.5; min-height: 64px;"
+        ></textarea>
+        <div class="flex items-center justify-end gap-2" style="font-size: 0.8rem;">
+          <span class="opacity-70" style="margin-right: auto;">
+            Replays from this prompt forward. ⌘/Ctrl+Enter to submit, Esc to cancel.
+          </span>
           <button
-            class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
-            style="background: rgba(255,255,255,0.12);"
-            title="Copy prompt"
-            onclick={handleCopy}
+            class="rounded-md cursor-pointer"
+            style="padding: 4px 10px; background: rgba(255,255,255,0.15); color: var(--user-text);"
+            onclick={cancelEdit}
+            type="button"
           >
-            {#if copied}
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7" /></svg>
-            {:else}
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5" /><path d="M5 11H3.5A1.5 1.5 0 0 1 2 9.5v-7A1.5 1.5 0 0 1 3.5 1h7A1.5 1.5 0 0 1 12 2.5V5" /></svg>
-            {/if}
+            Cancel
           </button>
-        {/if}
-        {#if onDeleteBlock}
           <button
-            class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
-            style="background: rgba(255,255,255,0.12);"
-            title="Delete question and responses"
-            onclick={onDeleteBlock}
+            class="rounded-md cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            style="padding: 4px 10px; background: var(--teal); color: white;"
+            onclick={submitEdit}
+            disabled={!editText.trim() || editText.trim() === content}
+            type="button"
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4" /></svg>
+            Replay
           </button>
-        {/if}
+        </div>
       </div>
-      {content}
-    </div>
+    {:else}
+      <div class="message-bubble relative max-w-[85%] rounded-xl bg-user-bg text-user-text whitespace-pre-wrap break-words"
+        style="padding: 12px {(onCopy || onDeleteBlock || onEdit) ? '104px' : '16px'} 12px 16px; border-bottom-right-radius: 4px; font-size: 0.925rem; line-height: 1.6;">
+        <!-- User actions -->
+        <div
+          class="absolute flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          style="top: 8px; right: 8px;"
+        >
+          {#if onEdit}
+            <button
+              class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
+              style="background: rgba(255,255,255,0.12);"
+              title="Edit prompt and replay"
+              onclick={startEdit}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5z" /><path d="M10 4l2 2" /></svg>
+            </button>
+          {/if}
+          {#if onCopy}
+            <button
+              class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
+              style="background: rgba(255,255,255,0.12);"
+              title="Copy prompt"
+              onclick={handleCopy}
+            >
+              {#if copied}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7" /></svg>
+              {:else}
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1.5" /><path d="M5 11H3.5A1.5 1.5 0 0 1 2 9.5v-7A1.5 1.5 0 0 1 3.5 1h7A1.5 1.5 0 0 1 12 2.5V5" /></svg>
+              {/if}
+            </button>
+          {/if}
+          {#if onDeleteBlock}
+            <button
+              class="p-1 rounded hover:bg-surface-alt text-user-text cursor-pointer"
+              style="background: rgba(255,255,255,0.12);"
+              title="Delete question and responses"
+              onclick={onDeleteBlock}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 0 1 1.34-1.34h2.66a1.33 1.33 0 0 1 1.34 1.34V4M12.67 4v9.33a1.33 1.33 0 0 1-1.34 1.34H4.67a1.33 1.33 0 0 1-1.34-1.34V4" /></svg>
+            </button>
+          {/if}
+        </div>
+        {content}
+      </div>
+    {/if}
   {:else}
     <!-- Assistant bubble -->
     <div class="max-w-[85%] min-w-0 relative">
