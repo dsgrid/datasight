@@ -72,7 +72,10 @@ async def _run_ask_pipeline(*args, **kwargs):
     "output_path",
     type=click.Path(),
     default=None,
-    help="Output file path (default: <session_id>.<format>).",
+    help=(
+        "Output file path. Defaults to <session_id>.<format> with the "
+        "session ID truncated to 20 characters."
+    ),
 )
 @click.option(
     "--format",

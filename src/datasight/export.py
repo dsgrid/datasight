@@ -239,10 +239,15 @@ def _group_events_into_turns(
         {
             "index": int,                 # 0-based turn index
             "question": str,
-            "intro_text": str | None,     # assistant text before tools
-            "final_text": str | None,     # assistant text after tools
+            "intro_texts": list[str],     # assistant text blocks before tools
+            "final_texts": list[str],     # assistant text blocks after tools
             "tool_calls": list[ToolCall], # SQL / chart calls in order
         }
+
+    The agent can emit multiple ``ASSISTANT_MESSAGE`` events per phase (one per
+    text block streamed before tools, plus the final answer), so we accumulate
+    them as lists and let the renderer join them — overwriting would silently
+    drop narrative text.
 
     A ToolCall is::
 
@@ -274,8 +279,8 @@ def _group_events_into_turns(
                 current = {
                     "index": user_count,
                     "question": data.get("text", ""),
-                    "intro_text": None,
-                    "final_text": None,
+                    "intro_texts": [],
+                    "final_texts": [],
                     "tool_calls": [],
                 }
             pending_start = None
@@ -287,10 +292,14 @@ def _group_events_into_turns(
 
         if etype == EventType.ASSISTANT_MESSAGE:
             text = data.get("text", "")
-            if not current["tool_calls"] and current["intro_text"] is None:
-                current["intro_text"] = text
+            if not text:
+                continue
+            # Bucket by phase: text emitted before any tool call is intro
+            # narrative; text emitted after is the final answer.
+            if not current["tool_calls"]:
+                current["intro_texts"].append(text)
             else:
-                current["final_text"] = text
+                current["final_texts"].append(text)
         elif etype == EventType.TOOL_START:
             pending_start = data
             pending_result = None
@@ -358,8 +367,11 @@ def _python_tool_call_context(
 def _python_turn_context(turn: dict[str, Any]) -> dict[str, Any] | None:
     """Build the Mustache context for one turn, or None if nothing to render."""
     runnable = [c for c in turn.get("tool_calls", []) if c.get("sql") or c.get("plotly_spec")]
-    intro = _wrap_as_comments(turn.get("intro_text") or "")
-    final = _wrap_as_comments(turn.get("final_text") or "", prefix="# Assistant: ")
+    # Each phase can carry multiple ASSISTANT_MESSAGE events; preserve them all
+    # by concatenating with a blank line so paragraph boundaries survive in the
+    # rendered comment block.
+    intro = _wrap_as_comments("\n\n".join(turn.get("intro_texts") or []))
+    final = _wrap_as_comments("\n\n".join(turn.get("final_texts") or []), prefix="# Assistant: ")
     if not runnable and not intro and not final:
         return None
     multi = len(runnable) > 1

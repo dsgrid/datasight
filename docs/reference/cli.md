@@ -808,7 +808,7 @@ datasight export [OPTIONS] [SESSION_ID]
 | Name | Details |
 | --- | --- |
 | `SESSION_ID` |   |
-| `--output`, `-o` | Output file path (default: <session_id>.<format>). |
+| `--output`, `-o` | Output file path. Defaults to <session_id>.<format> with the session ID truncated to 20 characters. |
 | `--format` | html (self-contained viewer, default) or py (runnable Python script). Default: `html`. |
 | `--project-dir` | Project directory containing .datasight/conversations/. Default: `.`. |
 | `--exclude` | Comma-separated turn indices to exclude (0-based, each turn is a Q&A pair). |

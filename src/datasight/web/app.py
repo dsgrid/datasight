@@ -3833,6 +3833,11 @@ async def export_session(session_id: str, request: Request, state: AppState = De
     """Export a conversation as self-contained HTML or as a runnable Python script."""
     from datasight.export import export_session_html, export_session_python
 
+    try:
+        validate_session_id(session_id)
+    except InvalidSessionIdError:
+        return PlainTextResponse(content="Invalid session ID", status_code=400)
+
     if state.conversations is None:
         return HTMLResponse(content="<p>No conversation data available.</p>", status_code=200)
     body = await request.json()

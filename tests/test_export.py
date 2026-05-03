@@ -459,6 +459,31 @@ def test_export_python_sqlite_uses_pandas_read_sql_query():
     assert "pd.read_sql_query(sql, conn)" in script
 
 
+def test_export_python_preserves_multiple_assistant_text_blocks():
+    """The agent emits one ASSISTANT_MESSAGE per text block — both before tool
+    calls (intro narrative) and after (final answer). Earlier code overwrote
+    intro_text/final_text on each event, silently dropping all but the first
+    intro and the last final. Both phases now accumulate."""
+    events = [
+        {"event": "user_message", "data": {"text": "q"}},
+        {"event": "assistant_message", "data": {"text": "First intro paragraph."}},
+        {"event": "assistant_message", "data": {"text": "Second intro paragraph."}},
+        {
+            "event": "tool_start",
+            "data": {"tool": "run_sql", "input": {"sql": "SELECT 1"}},
+        },
+        {"event": "tool_done", "data": {"sql": "SELECT 1", "tool": "run_sql"}},
+        {"event": "assistant_message", "data": {"text": "First final paragraph."}},
+        {"event": "assistant_message", "data": {"text": "Second final paragraph."}},
+    ]
+    script = export_session_python(events, title="t", db_path="/tmp/x.duckdb", db_mode="duckdb")
+    ast.parse(script)
+    assert "First intro paragraph." in script
+    assert "Second intro paragraph." in script
+    assert "First final paragraph." in script
+    assert "Second final paragraph." in script
+
+
 def test_export_python_unknown_db_mode_emits_todo_scaffold():
     events, _ = _python_export_events()
     script = export_session_python(events, title="t", db_path="", db_mode="postgres")
@@ -498,7 +523,7 @@ def test_export_python_runs_against_real_duckdb(tmp_path):
     script = export_session_python(events, title="Live", db_path=str(db_path), db_mode="duckdb")
 
     script_path = tmp_path / "session.py"
-    script_path.write_text(script)
+    script_path.write_text(script, encoding="utf-8")
 
     result = subprocess.run(
         [sys.executable, str(script_path)],
@@ -529,7 +554,7 @@ def test_export_python_argparse_overrides_db_and_output_dir(tmp_path):
         db_mode="duckdb",
     )
     script_path = tmp_path / "session.py"
-    script_path.write_text(script)
+    script_path.write_text(script, encoding="utf-8")
 
     charts_dir = tmp_path / "charts"
     result = subprocess.run(
@@ -561,7 +586,7 @@ def test_export_python_help_lists_db_and_output_dir(tmp_path):
         db_mode="duckdb",
     )
     script_path = tmp_path / "s.py"
-    script_path.write_text(script)
+    script_path.write_text(script, encoding="utf-8")
     result = subprocess.run(
         [sys.executable, str(script_path), "--help"],
         capture_output=True,
