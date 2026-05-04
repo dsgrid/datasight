@@ -362,7 +362,7 @@ Examples:
 
 ```
 datasight session list
-datasight session export abc123 analysis.zip
+datasight session export abc123 --output-path analysis.zip
 datasight session export abc123 --include-data
 datasight session import analysis.zip
 datasight session import analysis.zip --session-id copied-session --overwrite
