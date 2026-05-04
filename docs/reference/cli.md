@@ -58,6 +58,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `demo`: Create ready-to-run demo projects with sample datasets.
 - `generate`: Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 - `run`: Start the datasight web UI.
+- `session`: Export and import shareable datasight session archives.
 - `verify`: Verify LLM-generated SQL against expected results.
 - `ask`: Ask a question about your data from the command line.
 - `profile`: Profile your dataset - row counts, date coverage, and column statistics.
@@ -352,6 +353,78 @@ datasight run [OPTIONS]
 | `--model` | LLM model name (overrides .env). |
 | `--project-dir` | Auto-load this project on startup (optional). |
 | `-v`, `--verbose` | Enable debug logging. |
+
+### `datasight session`
+
+Export and import shareable datasight session archives.
+
+Examples:
+
+```
+datasight session list
+datasight session export abc123 analysis.zip
+datasight session export abc123 --include-data
+datasight session import analysis.zip
+datasight session import analysis.zip --session-id copied-session --overwrite
+```
+
+```bash
+datasight session [OPTIONS] COMMAND [ARGS]...
+```
+
+**Subcommands**
+
+- `list`: List saved sessions available for export.
+- `export`: Export SESSION_ID as a versioned datasight session archive.
+- `import`: Import a datasight session archive into PROJECT_DIR.
+
+#### `datasight session list`
+
+List saved sessions available for export.
+
+```bash
+datasight session list [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .datasight/ state (default: cwd). Default: `.`. |
+
+#### `datasight session export`
+
+Export SESSION_ID as a versioned datasight session archive.
+
+```bash
+datasight session export [OPTIONS] SESSION_ID
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `SESSION_ID` |   |
+| `--project-dir` | Project directory containing .datasight/ state (default: cwd). Default: `.`. |
+| `--output-path` | Output archive path. Defaults to <session_id>.zip in the current directory. |
+| `--include-data` | Embed the DuckDB or SQLite database file into the archive for a runnable import. |
+
+#### `datasight session import`
+
+Import a datasight session archive into PROJECT_DIR.
+
+```bash
+datasight session import [OPTIONS] ARCHIVE_PATH
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `ARCHIVE_PATH` |   |
+| `--project-dir` | Project directory containing .datasight/ state (default: cwd). Default: `.`. |
+| `--session-id` | Import under this session ID instead of the archived ID. |
+| `--overwrite` | Replace an existing session with the same ID. |
 
 ### `datasight verify`
 

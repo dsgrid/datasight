@@ -1464,6 +1464,7 @@ def _register_commands() -> None:
     from datasight.cli_commands.recipes import recipes
     from datasight.cli_commands.report import report
     from datasight.cli_commands.run import run
+    from datasight.cli_commands.session import session
     from datasight.cli_commands.templates import templates
     from datasight.cli_commands.trends import trends
     from datasight.cli_commands.validate import validate
@@ -1474,6 +1475,7 @@ def _register_commands() -> None:
     cli.add_command(demo)
     cli.add_command(generate)
     cli.add_command(run)
+    cli.add_command(session)
     cli.add_command(verify)
     cli.add_command(ask)
     cli.add_command(profile)
