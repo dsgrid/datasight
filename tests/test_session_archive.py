@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 import zipfile
 
@@ -15,6 +16,7 @@ from datasight.session_archive import (
     build_session_archive,
     import_session_archive,
     read_session_archive,
+    validate_session_archive_id,
 )
 
 
@@ -145,6 +147,30 @@ def test_archive_include_data_embeds_database_file(tmp_path: Path) -> None:
         assert "data/database.duckdb" in zf.namelist()
 
 
+def test_archive_include_data_resolves_relative_db_path_from_project_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "source"
+    project_dir.mkdir()
+    db_path = project_dir / "database.duckdb"
+    duckdb.connect(str(db_path)).close()
+
+    original_cwd = Path.cwd()
+    try:
+        archive = build_session_archive(
+            session_id="fuel-review",
+            conversation=_sample_conversation(),
+            dashboard=_sample_dashboard(),
+            project_dir=str(project_dir),
+            db_mode="duckdb",
+            db_path="database.duckdb",
+            include_data=True,
+        )
+    finally:
+        assert Path.cwd() == original_cwd
+
+    payload = read_session_archive(archive)
+    assert payload["source_data"]["database"]["embedded"] is True
+
+
 def test_import_session_archive_writes_conversation_and_dashboard(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     target_dir = tmp_path / "target"
@@ -214,6 +240,94 @@ def test_import_session_archive_restores_embedded_database_and_env(tmp_path: Pat
     rows = conn.execute("SELECT energy_source_code FROM generation_fuel").fetchall()
     conn.close()
     assert rows == [("NG",)]
+
+
+def test_import_session_archive_restores_absolute_source_db_inside_project(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    target_dir = tmp_path / "target"
+    source_dir.mkdir()
+    target_dir.mkdir()
+
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    db_path = external_dir / "shared.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE generation_fuel (energy_source_code VARCHAR)")
+    conn.close()
+
+    archive = build_session_archive(
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        dashboard=_sample_dashboard(),
+        project_dir=str(source_dir),
+        db_mode="duckdb",
+        db_path=str(db_path),
+        include_data=True,
+    )
+
+    import_session_archive(
+        archive=archive,
+        project_dir=str(target_dir),
+    )
+
+    assert (target_dir / "shared.duckdb").exists()
+    assert not (external_dir / "shared.duckdb").samefile(target_dir / "shared.duckdb")
+    assert (target_dir / ".env").read_text(encoding="utf-8") == (
+        "DB_MODE=duckdb\nDB_PATH=shared.duckdb\n"
+    )
+
+
+def test_import_session_archive_rejects_traversal_restore_path(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    archive = build_session_archive(
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        dashboard=_sample_dashboard(),
+        project_dir=str(project_dir),
+        db_mode="duckdb",
+        db_path="database.duckdb",
+    )
+
+    original = BytesIO(archive)
+    mutated = BytesIO()
+    with (
+        zipfile.ZipFile(original) as src,
+        zipfile.ZipFile(mutated, "w", compression=zipfile.ZIP_DEFLATED) as dst,
+    ):
+        for name in src.namelist():
+            if name == "metadata/source_data.json":
+                source_data = json.loads(src.read(name))
+                source_data["database"] = {
+                    "mode": "duckdb",
+                    "embedded": True,
+                    "path_kind": "relative",
+                    "path": "../escape.duckdb",
+                    "archive_path": "data/database.duckdb",
+                }
+                dst.writestr(name, json.dumps(source_data))
+            else:
+                dst.writestr(name, src.read(name))
+        dst.writestr("data/database.duckdb", b"not-a-real-db")
+
+    try:
+        import_session_archive(
+            archive=mutated.getvalue(),
+            project_dir=str(project_dir),
+        )
+    except ValueError as err:
+        assert "traverse upward" in str(err)
+    else:
+        raise AssertionError("Expected import to reject traversal restore path")
+
+
+def test_validate_session_archive_id_rejects_dotted_ids() -> None:
+    try:
+        validate_session_archive_id("fuel.review")
+    except ValueError as err:
+        assert "Invalid session ID" in str(err)
+    else:
+        raise AssertionError("Expected dotted session ID to be rejected")
 
 
 def test_cli_session_export_import_round_trip(tmp_path: Path, monkeypatch) -> None:

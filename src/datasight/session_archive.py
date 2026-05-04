@@ -14,7 +14,7 @@ from datasight import __version__
 
 SESSION_ARCHIVE_FORMAT = "datasight-session-archive"
 SESSION_ARCHIVE_VERSION = 1
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def validate_session_archive_id(session_id: str) -> str:
@@ -41,6 +41,34 @@ def _relative_or_absolute_path(path: str, project_dir: str) -> dict[str, Any] | 
     except ValueError:
         return {"path": str(target), "path_kind": "absolute"}
     return {"path": str(rel_path), "path_kind": "relative"}
+
+
+def _resolve_db_file_path(path: str, project_dir: str) -> Path:
+    raw_path = str(path or "").strip()
+    if not raw_path:
+        return Path(project_dir).resolve()
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = Path(project_dir) / candidate
+    return candidate.resolve()
+
+
+def _safe_project_relative_path(path: str) -> Path:
+    candidate = Path(str(path))
+    if candidate.is_absolute():
+        raise ValueError(f"Archive restore path must be relative: {path!r}")
+
+    clean_parts: list[str] = []
+    for part in candidate.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise ValueError(f"Archive restore path cannot traverse upward: {path!r}")
+        clean_parts.append(part)
+
+    if not clean_parts:
+        raise ValueError(f"Archive restore path is empty: {path!r}")
+    return Path(*clean_parts)
 
 
 def build_session_archive(
@@ -73,7 +101,7 @@ def build_session_archive(
                 raise ValueError(
                     "--include-data is only supported for DuckDB and SQLite projects."
                 )
-            resolved_db_path = Path(db_path).resolve()
+            resolved_db_path = _resolve_db_file_path(db_path, project_dir)
             if not resolved_db_path.exists() or not resolved_db_path.is_file():
                 raise ValueError(f"Database file not found for --include-data: {resolved_db_path}")
             archive_name = (
@@ -209,8 +237,13 @@ def import_session_archive(
         archive_path = database.get("archive_path")
         if not isinstance(archive_path, str) or not archive_path:
             raise ValueError("Archive metadata for embedded database is incomplete.")
-        restore_rel_path = database.get("path") or Path(archive_path).name
-        restore_path = (project_root / str(restore_rel_path)).resolve()
+        restore_rel_path_raw = (
+            database.get("path")
+            if database.get("path_kind") == "relative" and isinstance(database.get("path"), str)
+            else Path(archive_path).name
+        )
+        restore_rel_path = _safe_project_relative_path(str(restore_rel_path_raw))
+        restore_path = project_root / restore_rel_path
         restore_path.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(BytesIO(archive)) as zf:
             try:
@@ -222,9 +255,8 @@ def import_session_archive(
         db_mode = str(database.get("mode") or "").strip()
         if db_mode in {"duckdb", "sqlite"}:
             env_path = project_root / ".env"
-            rel_db_path = restore_path.relative_to(project_root)
             env_path.write_text(
-                f"DB_MODE={db_mode}\nDB_PATH={rel_db_path.as_posix()}\n",
+                f"DB_MODE={db_mode}\nDB_PATH={restore_rel_path.as_posix()}\n",
                 encoding="utf-8",
             )
 
