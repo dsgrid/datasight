@@ -487,6 +487,67 @@ def test_cli_session_export_defaults_to_zip_filename(tmp_path: Path, monkeypatch
         assert Path("fuel-review.zip").exists()
 
 
+def test_cli_session_export_uses_full_session_id_for_default_filename(
+    tmp_path: Path, monkeypatch
+) -> None:
+    for key in ("DB_PATH", "DB_MODE", "DATASIGHT_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+
+    project_dir = tmp_path / "project"
+    long_session_id = "fuel-review-with-a-long-session-id"
+    conv_dir = project_dir / ".datasight" / "conversations"
+    conv_dir.mkdir(parents=True)
+
+    db_path = project_dir / "database.duckdb"
+    duckdb.connect(str(db_path)).close()
+    (project_dir / ".env").write_text(
+        "DB_MODE=duckdb\nDB_PATH=database.duckdb\n", encoding="utf-8"
+    )
+
+    conversation = _sample_conversation()
+    conversation["dashboard"] = _sample_dashboard()
+    (conv_dir / "{}.json".format(long_session_id)).write_text(
+        json.dumps(conversation), encoding="utf-8"
+    )
+
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
+        result = runner.invoke(
+            cli,
+            [
+                "session",
+                "export",
+                long_session_id,
+                "--project-dir",
+                str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert Path("{}.zip".format(long_session_id)).exists()
+
+
+def test_cli_session_list_warns_about_unreadable_session_files(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    conv_dir = project_dir / ".datasight" / "conversations"
+    conv_dir.mkdir(parents=True)
+    (conv_dir / "valid.json").write_text(
+        json.dumps(
+            {
+                "title": "Valid",
+                "events": [{"event": "user_message", "data": {"text": "hi"}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (conv_dir / "broken.json").write_text("{not json", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["session", "list", "--project-dir", str(project_dir)])
+    assert result.exit_code == 0, result.output
+    assert "valid" in result.output
+    assert "Warning: skipped unreadable session file broken.json" in result.output
+
+
 def test_cli_session_import_requires_overwrite_for_existing_session(tmp_path: Path) -> None:
     project_dir = tmp_path / "project"
     project_dir.mkdir()

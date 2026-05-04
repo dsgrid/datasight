@@ -20,7 +20,7 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 def validate_session_archive_id(session_id: str) -> str:
     """Validate a session ID used in archive export/import."""
     if not _SESSION_ID_RE.match(session_id) or len(session_id) > 128:
-        raise ValueError(f"Invalid session ID: {session_id!r}")
+        raise ValueError("Invalid session ID: {!r}".format(session_id))
     return session_id
 
 
@@ -56,18 +56,18 @@ def _resolve_db_file_path(path: str, project_dir: str) -> Path:
 def _safe_project_relative_path(path: str) -> Path:
     candidate = Path(str(path))
     if candidate.is_absolute():
-        raise ValueError(f"Archive restore path must be relative: {path!r}")
+        raise ValueError("Archive restore path must be relative: {!r}".format(path))
 
     clean_parts: list[str] = []
     for part in candidate.parts:
         if part in ("", "."):
             continue
         if part == "..":
-            raise ValueError(f"Archive restore path cannot traverse upward: {path!r}")
+            raise ValueError("Archive restore path cannot traverse upward: {!r}".format(path))
         clean_parts.append(part)
 
     if not clean_parts:
-        raise ValueError(f"Archive restore path is empty: {path!r}")
+        raise ValueError("Archive restore path is empty: {!r}".format(path))
     return Path(*clean_parts)
 
 
@@ -103,7 +103,9 @@ def build_session_archive(
                 )
             resolved_db_path = _resolve_db_file_path(db_path, project_dir)
             if not resolved_db_path.exists() or not resolved_db_path.is_file():
-                raise ValueError(f"Database file not found for --include-data: {resolved_db_path}")
+                raise ValueError(
+                    "Database file not found for --include-data: {}".format(resolved_db_path)
+                )
             archive_name = (
                 path_ref["path"]
                 if path_ref and path_ref.get("path_kind") == "relative"
@@ -161,17 +163,18 @@ def read_session_archive(archive: bytes) -> dict[str, Any]:
             dashboard = json.loads(zf.read("session/dashboard.json"))
             source_data = json.loads(zf.read("metadata/source_data.json"))
         except KeyError as err:
-            raise ValueError(f"Archive is missing required entry: {err.args[0]}") from err
+            raise ValueError("Archive is missing required entry: {}".format(err.args[0])) from err
         except json.JSONDecodeError as err:
-            raise ValueError(f"Archive JSON is invalid: {err}") from err
+            raise ValueError("Archive JSON is invalid: {}".format(err)) from err
 
         if manifest.get("format") != SESSION_ARCHIVE_FORMAT:
             raise ValueError("Not a datasight session archive.")
         version = manifest.get("archive_version")
         if version != SESSION_ARCHIVE_VERSION:
             raise ValueError(
-                f"Unsupported session archive version {version!r}. "
-                f"Expected {SESSION_ARCHIVE_VERSION}."
+                "Unsupported session archive version {!r}. Expected {}.".format(
+                    version, SESSION_ARCHIVE_VERSION
+                )
             )
 
         if not isinstance(conversation, dict):
@@ -213,8 +216,9 @@ def import_session_archive(
     conversation_path = conversations_dir / f"{imported_session_id}.json"
     if conversation_path.exists() and not overwrite:
         raise ValueError(
-            f"Session {imported_session_id!r} already exists in {project_root}. "
-            "Pass --overwrite to replace it."
+            "Session {!r} already exists in {}. Pass --overwrite to replace it.".format(
+                imported_session_id, project_root
+            )
         )
 
     conversation = dict(payload["conversation"])
@@ -249,7 +253,9 @@ def import_session_archive(
             try:
                 restore_path.write_bytes(zf.read(archive_path))
             except KeyError as err:
-                raise ValueError(f"Archive is missing embedded data file: {archive_path}") from err
+                raise ValueError(
+                    "Archive is missing embedded data file: {}".format(archive_path)
+                ) from err
         restored_paths.append(restore_path)
 
         db_mode = str(database.get("mode") or "").strip()

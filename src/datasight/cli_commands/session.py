@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import click
+from rich.console import Console
+from rich.table import Table
 
 from datasight.cli import _epilog, _resolve_db_path, _resolve_settings
 from datasight.session_archive import (
@@ -33,12 +35,14 @@ def _load_session(project_dir: str, session_id: str) -> dict[str, Any]:
     path = _conversation_dir(project_dir) / f"{session_id}.json"
     if not path.exists():
         raise click.ClickException(
-            f"Session not found: {session_id}. Use 'datasight session list' to see available sessions."
+            "Session not found: {}. Use 'datasight session list' to see available sessions.".format(
+                session_id
+            )
         )
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as err:
-        raise click.ClickException(f"Session JSON is invalid: {err}") from err
+        raise click.ClickException("Session JSON is invalid: {}".format(err)) from err
     if not isinstance(data, dict):
         raise click.ClickException("Session JSON must be an object.")
     return data
@@ -71,10 +75,12 @@ def session_list(project_dir: str) -> None:
         return
 
     sessions: list[dict[str, Any]] = []
+    invalid_paths: list[Path] = []
     for path in sorted(conv_dir.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
+            invalid_paths.append(path)
             continue
         events = data.get("events", [])
         if not events and not data.get("dashboard"):
@@ -88,11 +94,10 @@ def session_list(project_dir: str) -> None:
         )
 
     if not sessions:
+        for path in invalid_paths:
+            click.echo("Warning: skipped unreadable session file {}".format(path.name), err=True)
         click.echo("No conversations found.")
         return
-
-    from rich.console import Console
-    from rich.table import Table
 
     console = Console()
     table = Table(title="Available Sessions")
@@ -102,6 +107,8 @@ def session_list(project_dir: str) -> None:
     for item in sessions:
         table.add_row(item["id"], item["title"], str(item["messages"]))
     console.print(table)
+    for path in invalid_paths:
+        click.echo("Warning: skipped unreadable session file {}".format(path.name), err=True)
 
 
 @click.command(name="export")
@@ -128,7 +135,7 @@ def session_export(
     """Export SESSION_ID as a versioned datasight session archive."""
     project_root = str(Path(project_dir).resolve())
     session_data = _load_session(project_root, session_id)
-    resolved_output_path = output_path or Path(f"{session_id[:20]}.zip")
+    resolved_output_path = output_path or Path("{}.zip".format(session_id))
 
     settings, _ = _resolve_settings(project_root)
     archive = build_session_archive(
@@ -142,7 +149,7 @@ def session_export(
     )
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_output_path.write_bytes(archive)
-    click.echo(f"Session archive exported to {resolved_output_path}")
+    click.echo("Session archive exported to {}".format(resolved_output_path))
 
 
 @click.command(name="import")
@@ -172,7 +179,9 @@ def session_import(
         raise click.ClickException(str(err)) from err
 
     click.echo(
-        f"Imported session {result['session_id']} into {result['conversation_path'].parent.parent}"
+        "Imported session {} into {}".format(
+            result["session_id"], result["conversation_path"].parent.parent
+        )
     )
 
 
