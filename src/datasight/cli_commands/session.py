@@ -35,14 +35,13 @@ def _load_session(project_dir: str, session_id: str) -> dict[str, Any]:
     path = _conversation_dir(project_dir) / f"{session_id}.json"
     if not path.exists():
         raise click.ClickException(
-            "Session not found: {}. Use 'datasight session list' to see available sessions.".format(
-                session_id
-            )
+            f"Session not found: {session_id}. "
+            "Use 'datasight session list' to see available sessions."
         )
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as err:
-        raise click.ClickException("Session JSON is invalid: {}".format(err)) from err
+        raise click.ClickException(f"Session JSON is invalid: {err}") from err
     if not isinstance(data, dict):
         raise click.ClickException("Session JSON must be an object.")
     return data
@@ -82,20 +81,26 @@ def session_list(project_dir: str) -> None:
         except (json.JSONDecodeError, OSError):
             invalid_paths.append(path)
             continue
-        events = data.get("events", [])
+        if not isinstance(data, dict):
+            invalid_paths.append(path)
+            continue
+        events = data.get("events") or []
         if not events and not data.get("dashboard"):
             continue
         sessions.append(
             {
                 "id": path.stem,
                 "title": data.get("title", "Untitled"),
-                "messages": sum(1 for event in events if event.get("event") == "user_message"),
+                "messages": sum(1 for e in events if e.get("event") == "user_message"),
             }
         )
 
+    def _warn() -> None:
+        for p in invalid_paths:
+            click.echo(f"Warning: skipped unreadable session file {p.name}", err=True)
+
     if not sessions:
-        for path in invalid_paths:
-            click.echo("Warning: skipped unreadable session file {}".format(path.name), err=True)
+        _warn()
         click.echo("No conversations found.")
         return
 
@@ -107,8 +112,7 @@ def session_list(project_dir: str) -> None:
     for item in sessions:
         table.add_row(item["id"], item["title"], str(item["messages"]))
     console.print(table)
-    for path in invalid_paths:
-        click.echo("Warning: skipped unreadable session file {}".format(path.name), err=True)
+    _warn()
 
 
 @click.command(name="export")
@@ -135,21 +139,25 @@ def session_export(
     """Export SESSION_ID as a versioned datasight session archive."""
     project_root = str(Path(project_dir).resolve())
     session_data = _load_session(project_root, session_id)
-    resolved_output_path = output_path or Path("{}.zip".format(session_id))
+    resolved_output_path = output_path or Path(f"{session_id}.zip")
 
     settings, _ = _resolve_settings(project_root)
-    archive = build_session_archive(
-        session_id=session_id,
-        conversation=session_data,
-        dashboard=session_data.get("dashboard") or {},
-        project_dir=project_root,
-        db_mode=settings.database.mode or "duckdb",
-        db_path=_resolve_db_path(settings, project_root),
-        include_data=include_data,
-    )
+    try:
+        archive = build_session_archive(
+            session_id=session_id,
+            conversation=session_data,
+            project_dir=project_root,
+            db_mode=settings.database.mode,
+            db_path=_resolve_db_path(settings, project_root),
+            include_data=include_data,
+        )
+    except ValueError as err:
+        raise click.ClickException(str(err)) from err
+
     resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_output_path.write_bytes(archive)
-    click.echo("Session archive exported to {}".format(resolved_output_path))
+    click.echo(f"Session archive exported to {resolved_output_path}")
+    click.echo("Archive does not include .env or any LLM API keys.")
 
 
 @click.command(name="import")
@@ -160,7 +168,11 @@ def session_export(
     default=None,
     help="Import under this session ID instead of the archived ID.",
 )
-@click.option("--overwrite", is_flag=True, help="Replace an existing session with the same ID.")
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    help="Replace an existing session or restored database file.",
+)
 def session_import(
     archive_path: Path,
     project_dir: str,
@@ -168,21 +180,25 @@ def session_import(
     overwrite: bool,
 ) -> None:
     """Import a datasight session archive into PROJECT_DIR."""
+    target_root = Path(project_dir).resolve()
     try:
         result = import_session_archive(
             archive=archive_path.read_bytes(),
-            project_dir=str(Path(project_dir).resolve()),
+            project_dir=str(target_root),
             session_id=session_id,
             overwrite=overwrite,
         )
     except ValueError as err:
         raise click.ClickException(str(err)) from err
 
-    click.echo(
-        "Imported session {} into {}".format(
-            result["session_id"], result["conversation_path"].parent.parent
-        )
-    )
+    click.echo(f"Imported session {result['session_id']} into {target_root}")
+    if result["restored_db_path"] is not None:
+        click.echo(f"Restored database file to {result['restored_db_path']}")
+        if not result["env_written"]:
+            click.echo(
+                "Note: .env already exists; ensure DB_MODE and DB_PATH point to the "
+                "restored database to run this session."
+            )
 
 
 session.add_command(session_list)

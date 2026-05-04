@@ -424,7 +424,7 @@ datasight session import [OPTIONS] ARCHIVE_PATH
 | `ARCHIVE_PATH` |   |
 | `--project-dir` | Project directory containing .datasight/ state (default: cwd). Default: `.`. |
 | `--session-id` | Import under this session ID instead of the archived ID. |
-| `--overwrite` | Replace an existing session with the same ID. |
+| `--overwrite` | Replace an existing session or restored database file. |
 
 ### `datasight verify`
 
