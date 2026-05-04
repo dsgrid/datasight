@@ -401,4 +401,5 @@ def test_cli_session_import_requires_overwrite_for_existing_session(tmp_path: Pa
         ],
     )
     assert result.exit_code != 0
-    assert "Pass --overwrite" in result.output
+    assert "already exists" in result.output
+    assert "--overwrite" in result.output
