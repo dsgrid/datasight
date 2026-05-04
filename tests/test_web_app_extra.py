@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import json
 import os
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -906,6 +909,20 @@ def test_export_session_no_conversations(isolated_web_state: None) -> None:
     assert "No conversation data" in resp.text
 
 
+def test_export_session_bundle_no_conversations_returns_404(isolated_web_state: None) -> None:
+    with TestClient(web_app.app) as client:
+        resp = client.post("/api/export/anything", json={"format": "bundle"})
+    assert resp.status_code == 404
+    assert "No conversation data available." in resp.text
+
+
+def test_export_session_python_no_conversations_returns_404(isolated_web_state: None) -> None:
+    with TestClient(web_app.app) as client:
+        resp = client.post("/api/export/anything", json={"format": "py"})
+    assert resp.status_code == 404
+    assert "No conversation data available." in resp.text
+
+
 def test_export_session_with_project(isolated_web_state: None, project_dir: str) -> None:
     with TestClient(web_app.app) as client:
         client.post("/api/projects/load", json={"path": project_dir})
@@ -913,6 +930,23 @@ def test_export_session_with_project(isolated_web_state: None, project_dir: str)
     assert resp.status_code == 200
     # should return HTML, with attachment disposition
     assert "attachment" in resp.headers.get("content-disposition", "")
+
+
+def test_export_session_bundle_with_project(isolated_web_state: None, project_dir: str) -> None:
+    with TestClient(web_app.app) as client:
+        client.post("/api/projects/load", json={"path": project_dir})
+        resp = client.post(
+            "/api/export/somesid",
+            json={"format": "bundle", "include": ["html", "sql", "metadata"]},
+        )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["schema_version"] == 1
+        assert manifest["session_id"] == "somesid"
+        assert "report/session.html" in zf.namelist()
+        assert "metadata/session.json" in zf.namelist()
 
 
 def test_export_dashboard(isolated_web_state: None) -> None:

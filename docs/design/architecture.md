@@ -164,8 +164,9 @@ sequenceDiagram
   descriptions and example queries from raw data files.
 
 `datasight.export`
-: Converts a conversation session into a self-contained HTML page with
-  inline CSS, Plotly charts, and syntax-highlighted SQL.
+: Converts a conversation session into self-contained exports: HTML,
+  runnable Python, and portable bundle archives with SQL, CSV extracts,
+  Plotly specs, and provenance metadata.
 
 `datasight.web.app`
 : FastAPI application with SSE streaming, tool execution, and REST API

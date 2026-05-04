@@ -61,6 +61,7 @@ async def _run_ask_pipeline(*args, **kwargs):
             datasight export --list-sessions
             datasight export abc123def -o my-analysis.html
             datasight export abc123def --format py -o my-analysis.py
+            datasight export abc123def --format bundle -o analysis-bundle.zip
             datasight export abc123def --exclude 2,3
         """
     )
@@ -80,9 +81,18 @@ async def _run_ask_pipeline(*args, **kwargs):
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["html", "py"], case_sensitive=False),
+    type=click.Choice(["html", "py", "bundle"], case_sensitive=False),
     default="html",
-    help="html (self-contained viewer, default) or py (runnable Python script).",
+    help="html (viewer), py (runnable script), or bundle (zip archive with artifacts).",
+)
+@click.option(
+    "--include",
+    "include_artifacts",
+    default=None,
+    help=(
+        "Bundle-only: comma-separated artifacts to include. Choices: "
+        "html,sql,python,csv,charts,metadata. Default: all."
+    ),
 )
 @click.option(
     "--project-dir",
@@ -96,7 +106,15 @@ async def _run_ask_pipeline(*args, **kwargs):
     help="Comma-separated turn indices to exclude (0-based, each turn is a Q&A pair).",
 )
 @click.option("--list-sessions", is_flag=True, help="List available sessions and exit.")
-def export(session_id, output_path, output_format, project_dir, exclude, list_sessions):
+def export(
+    session_id,
+    output_path,
+    output_format,
+    include_artifacts,
+    project_dir,
+    exclude,
+    list_sessions,
+):
     """Export a conversation session as a self-contained HTML page or Python script.
 
     SESSION_ID is the conversation ID (use --list-sessions to see available IDs).
@@ -175,6 +193,19 @@ def export(session_id, output_path, output_format, project_dir, exclude, list_se
             sys.exit(1)
 
     fmt = output_format.lower()
+    include_values = None
+    if include_artifacts:
+        include_values = [item.strip() for item in include_artifacts.split(",") if item.strip()]
+        if not include_values:
+            click.echo(
+                "Error: --include must name at least one artifact or be omitted.",
+                err=True,
+            )
+            sys.exit(1)
+    if include_values and fmt != "bundle":
+        click.echo("Error: --include is only supported with --format bundle.", err=True)
+        sys.exit(1)
+
     if fmt == "py":
         from datasight.export import export_session_python
 
@@ -190,6 +221,30 @@ def export(session_id, output_path, output_format, project_dir, exclude, list_se
         if not output_path:
             output_path = f"{session_id[:20]}.py"
         Path(output_path).write_text(script, encoding="utf-8")
+        click.echo(f"Session exported to {output_path}")
+        return
+
+    if fmt == "bundle":
+        from datasight.export import export_session_bundle, normalize_bundle_includes
+
+        settings, _ = _resolve_settings(project_dir)
+        db_path = _resolve_db_path(settings, project_dir)
+        try:
+            bundle = export_session_bundle(
+                events,
+                title=title,
+                session_id=session_id,
+                db_path=db_path,
+                db_mode=settings.database.mode or "duckdb",
+                exclude_indices=exclude_indices,
+                include=normalize_bundle_includes(include_values),
+            )
+        except ValueError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        if not output_path:
+            output_path = f"{session_id[:20]}.zip"
+        Path(output_path).write_bytes(bundle)
         click.echo(f"Session exported to {output_path}")
         return
 

@@ -855,6 +855,7 @@ Examples:
 datasight export --list-sessions
 datasight export abc123def -o my-analysis.html
 datasight export abc123def --format py -o my-analysis.py
+datasight export abc123def --format bundle -o analysis-bundle.zip
 datasight export abc123def --exclude 2,3
 ```
 
@@ -868,7 +869,8 @@ datasight export [OPTIONS] [SESSION_ID]
 | --- | --- |
 | `SESSION_ID` |   |
 | `--output`, `-o` | Output file path. Defaults to <session_id>.<format> with the session ID truncated to 20 characters. |
-| `--format` | html (self-contained viewer, default) or py (runnable Python script). Default: `html`. |
+| `--format` | html (viewer), py (runnable script), or bundle (zip archive with artifacts). Default: `html`. |
+| `--include` | Bundle-only: comma-separated artifacts to include. Choices: html,sql,python,csv,charts,metadata. Default: all. |
 | `--project-dir` | Project directory containing .datasight/conversations/. Default: `.`. |
 | `--exclude` | Comma-separated turn indices to exclude (0-based, each turn is a Q&A pair). |
 | `--list-sessions` | List available sessions and exit. |
