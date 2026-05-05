@@ -358,12 +358,15 @@ datasight run [OPTIONS]
 
 Export and import shareable datasight session archives.
 
+Archives carry the conversation transcript and per-session dashboard
+only — never .env or LLM credentials, and never the underlying
+database. Recipients need to bring their own data.
+
 Examples:
 
 ```
 datasight session list
 datasight session export abc123 --output-path analysis.zip
-datasight session export abc123 --include-data
 datasight session import analysis.zip
 datasight session import analysis.zip --session-id copied-session --overwrite
 ```
@@ -407,7 +410,6 @@ datasight session export [OPTIONS] SESSION_ID
 | `SESSION_ID` |   |
 | `--project-dir` | Project directory containing .datasight/ state (default: cwd). Default: `.`. |
 | `--output-path` | Output archive path. Defaults to <session_id>.zip in the current directory. |
-| `--include-data` | Embed the DuckDB or SQLite database file into the archive for a runnable import. |
 
 #### `datasight session import`
 
@@ -424,7 +426,7 @@ datasight session import [OPTIONS] ARCHIVE_PATH
 | `ARCHIVE_PATH` |   |
 | `--project-dir` | Project directory containing .datasight/ state (default: cwd). Default: `.`. |
 | `--session-id` | Import under this session ID instead of the archived ID. |
-| `--overwrite` | Replace an existing session or restored database file. |
+| `--overwrite` | Replace an existing session with the same ID. |
 
 ### `datasight verify`
 

@@ -10,7 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from datasight.cli_helpers import _epilog, _resolve_db_path, _resolve_settings
+from datasight.cli_helpers import _epilog
 from datasight.session_archive import (
     import_session_archive,
     validate_session_archive_id,
@@ -56,14 +56,18 @@ def _load_session(project_dir: str, session_id: str) -> dict[str, Any]:
 
             datasight session list
             datasight session export abc123 --output-path analysis.zip
-            datasight session export abc123 --include-data
             datasight session import analysis.zip
             datasight session import analysis.zip --session-id copied-session --overwrite
         """
     )
 )
 def session() -> None:
-    """Export and import shareable datasight session archives."""
+    """Export and import shareable datasight session archives.
+
+    Archives carry the conversation transcript and per-session dashboard
+    only — never .env or LLM credentials, and never the underlying
+    database. Recipients need to bring their own data.
+    """
 
 
 @click.command(name="list")
@@ -120,22 +124,6 @@ def session_list(project_dir: str) -> None:
     _warn()
 
 
-def _project_db_config(project_root: str) -> tuple[str, str]:
-    """Return ``(db_mode, db_path)`` only when the project explicitly configures one.
-
-    A bare ``Settings.from_env()`` call always falls back to
-    ``DB_MODE=duckdb``/``DB_PATH=database.duckdb`` even for projects with
-    no ``.env`` and no shell-set DB env vars. Stamping those defaults into
-    the archive metadata would falsely claim a DuckDB backing file the
-    project never had, so only emit the config when the project has an
-    ``.env`` we can attribute it to.
-    """
-    if not (Path(project_root) / ".env").exists():
-        return "", ""
-    settings, _ = _resolve_settings(project_root)
-    return settings.database.mode, _resolve_db_path(settings, project_root)
-
-
 @click.command(name="export")
 @click.argument("session_id")
 @_PROJECT_DIR_OPT
@@ -146,45 +134,26 @@ def _project_db_config(project_root: str) -> tuple[str, str]:
     default=None,
     help="Output archive path. Defaults to <session_id>.zip in the current directory.",
 )
-@click.option(
-    "--include-data",
-    is_flag=True,
-    help="Embed the DuckDB or SQLite database file into the archive for a runnable import.",
-)
 def session_export(
     session_id: str,
     project_dir: str,
     output_path: Path | None,
-    include_data: bool,
 ) -> None:
     """Export SESSION_ID as a versioned datasight session archive."""
     project_root = str(Path(project_dir).resolve())
     session_data = _load_session(project_root, session_id)
     resolved_output_path = output_path or Path(f"{session_id}.zip")
 
-    db_mode, db_path = _project_db_config(project_root)
-    if include_data and not db_mode:
-        msg = (
-            "--include-data requires a configured database. Add DB_MODE/DB_PATH to "
-            f"{project_root}/.env or remove the flag."
-        )
-        raise click.ClickException(msg)
-
     try:
         write_session_archive(
             output=resolved_output_path,
             session_id=session_id,
             conversation=session_data,
-            project_dir=project_root,
-            db_mode=db_mode,
-            db_path=db_path,
-            include_data=include_data,
         )
     except ValueError as err:
         raise click.ClickException(str(err)) from err
 
     click.echo(f"Session archive exported to {resolved_output_path}")
-    click.echo("Archive does not include .env or any LLM API keys.")
 
 
 @click.command(name="import")
@@ -195,11 +164,7 @@ def session_export(
     default=None,
     help="Import under this session ID instead of the archived ID.",
 )
-@click.option(
-    "--overwrite",
-    is_flag=True,
-    help="Replace an existing session or restored database file.",
-)
+@click.option("--overwrite", is_flag=True, help="Replace an existing session with the same ID.")
 def session_import(
     archive_path: Path,
     project_dir: str,
@@ -221,13 +186,6 @@ def session_import(
         raise click.ClickException(str(err)) from err
 
     click.echo(f"Imported session {result['session_id']} into {target_root}")
-    if result["restored_db_path"] is not None:
-        click.echo(f"Restored database file to {result['restored_db_path']}")
-        if not result["env_written"]:
-            click.echo(
-                "Note: .env already exists; ensure DB_MODE and DB_PATH point to the "
-                "restored database to run this session."
-            )
 
 
 session.add_command(session_list)
