@@ -10,7 +10,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from datasight.cli import _epilog, _resolve_db_path, _resolve_settings
+from datasight.cli_helpers import _epilog, _resolve_db_path, _resolve_settings
 from datasight.session_archive import (
     import_session_archive,
     validate_session_archive_id,

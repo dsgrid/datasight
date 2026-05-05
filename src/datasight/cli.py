@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import sys
-from textwrap import dedent
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +15,16 @@ import yaml
 from loguru import logger
 
 from datasight import __version__
+
+# Helpers used by both this module and the subcommand modules live in
+# datasight.cli_helpers so that subcommand modules can import them
+# without forming an import cycle with this file. Re-exported here for
+# back-compat with ``from datasight.cli import _epilog`` callers.
+from datasight.cli_helpers import (
+    _epilog as _epilog,
+    _resolve_db_path as _resolve_db_path,
+    _resolve_settings as _resolve_settings,
+)
 from datasight.config import create_sql_runner_from_settings
 from datasight.data_profile import (
     build_column_profile,
@@ -85,13 +94,6 @@ _SHARED_EXPORTS = (
 )
 
 
-def _epilog(text: str) -> str:
-    """Normalize Click epilog text defined in indented decorators."""
-    # Rich Click reflows epilog paragraphs. Treat each authored line as its
-    # own paragraph so examples remain scannable in terminal help.
-    return "\n\n".join(line.rstrip() for line in dedent(text).strip().splitlines())
-
-
 # One-line log format that shows the module name but not the function or
 # line number — ``function:line`` noise rarely helps users diagnose their
 # own CLI runs, and leaving it out makes each line fit comfortably.
@@ -107,37 +109,6 @@ def _configure_logging(level: str = "INFO") -> None:
     """
     logger.remove()
     logger.add(sys.stderr, level=level, format=_LOG_FORMAT)
-
-
-def _resolve_settings(
-    project_dir: str,
-    model_override: str | None = None,
-) -> tuple[Settings, str]:
-    """Load settings from project directory and apply any CLI overrides.
-
-    Parameters
-    ----------
-    project_dir:
-        Path to the project directory containing .env.
-    model_override:
-        Optional model name to override settings.
-
-    Returns
-    -------
-    Tuple of (settings, resolved_model).
-    """
-    from dotenv import load_dotenv
-
-    env_path = os.path.join(project_dir, ".env")
-    if os.path.exists(env_path):
-        load_dotenv(env_path, override=False)
-    load_global_env(override=False)
-    settings = Settings.from_env()
-
-    # Apply model override if provided
-    resolved_model = model_override if model_override else settings.llm.model
-
-    return settings, resolved_model
 
 
 def _current_db_settings_or_none():
@@ -178,22 +149,6 @@ def _validate_settings_for_llm(settings: Settings) -> None:
         if "API_KEY" in error or "TOKEN" in error:
             click.echo(f"Error: {error}", err=True)
             sys.exit(1)
-
-
-def _resolve_db_path(settings: Settings, project_dir: str) -> str:
-    """Resolve database path, making relative paths absolute.
-
-    Returns
-    -------
-    Resolved database path, or empty string for non-file databases.
-    """
-    if settings.database.mode not in ("duckdb", "sqlite"):
-        return ""
-
-    raw_path = settings.database.path
-    if os.path.isabs(raw_path):
-        return raw_path
-    return str(Path(project_dir) / raw_path)
 
 
 async def _run_ask_pipeline(
