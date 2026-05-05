@@ -69,6 +69,7 @@ nav:
       - Tutorials:
           - Explore US electricity generation (EIA): use/tutorials/getting-started.md
           - Explore EV charging demand (TEMPO): use/tutorials/tempo.md
+          - Tidy a wide-month spreadsheet: use/tutorials/tidy.md
       - How-to guides:
           - Install datasight: use/how-to/install.md
           - Explore files without a project: use/how-to/explore-files.md
