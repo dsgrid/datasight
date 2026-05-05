@@ -269,6 +269,7 @@
       shortcutsOpen = false;
     } else if (exportMode) {
       exportMode = false;
+      exportExcludeIndices = new Set();
     } else if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }

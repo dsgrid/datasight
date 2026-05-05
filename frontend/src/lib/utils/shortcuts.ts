@@ -74,8 +74,10 @@ export function matchShortcut(
   // Escape works regardless of focus
   if (e.key === "Escape") return "escape";
 
-  // Plain keys must not be held with any modifier (Cmd+Shift+K shouldn't
-  // accidentally fire the J/K message-navigation shortcuts).
+  // Plain keys must not be held with Cmd/Ctrl/Alt (Cmd+Shift+K shouldn't
+  // accidentally fire the J/K message-navigation shortcuts). Shift is allowed
+  // because some shortcuts are inherently shifted ("?") or accept either case
+  // ("N" / "n").
   if (e.metaKey || e.ctrlKey || e.altKey) return null;
 
   // Remaining shortcuts only when not in an input

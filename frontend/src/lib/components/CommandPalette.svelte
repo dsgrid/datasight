@@ -167,7 +167,8 @@
         },
       },
       ...(dashboardStore.currentView === "dashboard" &&
-      dashboardStore.selectedCardIdx >= 0
+      dashboardStore.selectedCardIdx >= 0 &&
+      dashboardStore.selectedCardIdx < dashboardStore.pinnedItems.length
         ? [
             {
               title: "Fullscreen Selected Card",
