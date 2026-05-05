@@ -12,9 +12,9 @@ from rich.table import Table
 
 from datasight.cli import _epilog, _resolve_db_path, _resolve_settings
 from datasight.session_archive import (
-    build_session_archive,
     import_session_archive,
     validate_session_archive_id,
+    write_session_archive,
 )
 
 _PROJECT_DIR_OPT = click.option(
@@ -34,14 +34,16 @@ def _load_session(project_dir: str, session_id: str) -> dict[str, Any]:
     validate_session_archive_id(session_id)
     path = _conversation_dir(project_dir) / f"{session_id}.json"
     if not path.exists():
-        raise click.ClickException(
+        msg = (
             f"Session not found: {session_id}. "
             "Use 'datasight session list' to see available sessions."
         )
+        raise click.ClickException(msg)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as err:
-        raise click.ClickException(f"Session JSON is invalid: {err}") from err
+        msg = f"Session JSON is invalid: {err}"
+        raise click.ClickException(msg) from err
     if not isinstance(data, dict):
         raise click.ClickException("Session JSON must be an object.")
     return data
@@ -78,7 +80,10 @@ def session_list(project_dir: str) -> None:
     for path in sorted(conv_dir.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError:
+            # Bad JSON is the deliberate skip case; OS-level errors
+            # (missing file, permission denied) are real problems and are
+            # allowed to propagate.
             invalid_paths.append(path)
             continue
         if not isinstance(data, dict):
@@ -115,6 +120,22 @@ def session_list(project_dir: str) -> None:
     _warn()
 
 
+def _project_db_config(project_root: str) -> tuple[str, str]:
+    """Return ``(db_mode, db_path)`` only when the project explicitly configures one.
+
+    A bare ``Settings.from_env()`` call always falls back to
+    ``DB_MODE=duckdb``/``DB_PATH=database.duckdb`` even for projects with
+    no ``.env`` and no shell-set DB env vars. Stamping those defaults into
+    the archive metadata would falsely claim a DuckDB backing file the
+    project never had, so only emit the config when the project has an
+    ``.env`` we can attribute it to.
+    """
+    if not (Path(project_root) / ".env").exists():
+        return "", ""
+    settings, _ = _resolve_settings(project_root)
+    return settings.database.mode, _resolve_db_path(settings, project_root)
+
+
 @click.command(name="export")
 @click.argument("session_id")
 @_PROJECT_DIR_OPT
@@ -141,21 +162,27 @@ def session_export(
     session_data = _load_session(project_root, session_id)
     resolved_output_path = output_path or Path(f"{session_id}.zip")
 
-    settings, _ = _resolve_settings(project_root)
+    db_mode, db_path = _project_db_config(project_root)
+    if include_data and not db_mode:
+        msg = (
+            "--include-data requires a configured database. Add DB_MODE/DB_PATH to "
+            f"{project_root}/.env or remove the flag."
+        )
+        raise click.ClickException(msg)
+
     try:
-        archive = build_session_archive(
+        write_session_archive(
+            output=resolved_output_path,
             session_id=session_id,
             conversation=session_data,
             project_dir=project_root,
-            db_mode=settings.database.mode,
-            db_path=_resolve_db_path(settings, project_root),
+            db_mode=db_mode,
+            db_path=db_path,
             include_data=include_data,
         )
     except ValueError as err:
         raise click.ClickException(str(err)) from err
 
-    resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
-    resolved_output_path.write_bytes(archive)
     click.echo(f"Session archive exported to {resolved_output_path}")
     click.echo("Archive does not include .env or any LLM API keys.")
 
@@ -182,8 +209,10 @@ def session_import(
     """Import a datasight session archive into PROJECT_DIR."""
     target_root = Path(project_dir).resolve()
     try:
+        # Pass the path through so import_session_archive streams from
+        # disk instead of materializing the whole archive in memory.
         result = import_session_archive(
-            archive=archive_path.read_bytes(),
+            archive=archive_path,
             project_dir=str(target_root),
             session_id=session_id,
             overwrite=overwrite,

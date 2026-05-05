@@ -18,6 +18,7 @@ from datasight.session_archive import (
     import_session_archive,
     read_session_archive,
     validate_session_archive_id,
+    write_session_archive,
 )
 
 
@@ -159,24 +160,25 @@ def test_include_data_embeds_database_file(tmp_path: Path) -> None:
         assert "data/database.duckdb" in zf.namelist()
 
 
-def test_include_data_resolves_relative_path_independent_of_cwd(tmp_path: Path) -> None:
+def test_include_data_resolves_relative_path_independent_of_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project_dir = tmp_path / "source"
     project_dir.mkdir()
     _make_duckdb(project_dir / "database.duckdb")
 
-    original_cwd = Path.cwd()
-    try:
-        archive = build_session_archive(
-            session_id="fuel-review",
-            conversation=_sample_conversation(),
-            project_dir=str(project_dir),
-            db_mode="duckdb",
-            db_path="database.duckdb",
-            include_data=True,
-        )
-    finally:
-        assert Path.cwd() == original_cwd
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
 
+    archive = build_session_archive(
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        project_dir=str(project_dir),
+        db_mode="duckdb",
+        db_path="database.duckdb",
+        include_data=True,
+    )
     assert read_session_archive(archive)["source_data"]["database"]["embedded"] is True
 
 
@@ -498,6 +500,167 @@ def test_read_archive_rejects_future_major_version(tmp_path: Path) -> None:
         read_session_archive(mutated.getvalue())
 
 
+def test_write_session_archive_streams_to_disk(tmp_path: Path) -> None:
+    project_dir = tmp_path / "source"
+    project_dir.mkdir()
+    _make_duckdb(project_dir / "database.duckdb", with_row=True)
+
+    out_path = tmp_path / "out.zip"
+    final = write_session_archive(
+        output=out_path,
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        project_dir=str(project_dir),
+        db_mode="duckdb",
+        db_path="database.duckdb",
+        include_data=True,
+    )
+
+    assert final == out_path
+    assert out_path.exists()
+    # No leftover .part-* siblings on success.
+    assert not list(tmp_path.glob("out.zip.part-*"))
+
+    payload = read_session_archive(out_path)
+    assert payload["manifest"]["includes_data"] is True
+    assert payload["source_data"]["database"]["archive_path"] == "data/database.duckdb"
+
+
+def test_write_session_archive_cleans_up_partial_on_failure(tmp_path: Path) -> None:
+    project_dir = tmp_path / "source"
+    project_dir.mkdir()
+    # No database file → include_data fails after the .part has been opened.
+    out_path = tmp_path / "out.zip"
+    with pytest.raises(ValueError, match="Database file not found"):
+        write_session_archive(
+            output=out_path,
+            session_id="fuel-review",
+            conversation=_sample_conversation(),
+            project_dir=str(project_dir),
+            db_mode="duckdb",
+            db_path="database.duckdb",
+            include_data=True,
+        )
+    assert not out_path.exists()
+    assert not list(tmp_path.glob("out.zip.part-*"))
+
+
+def test_read_archive_accepts_path(tmp_path: Path) -> None:
+    project_dir = tmp_path / "source"
+    project_dir.mkdir()
+    out_path = tmp_path / "session.zip"
+    write_session_archive(
+        output=out_path,
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        project_dir=str(project_dir),
+    )
+    payload = read_session_archive(out_path)
+    assert payload["session_id"] == "fuel-review"
+
+
+def test_read_archive_rejects_bad_zip(tmp_path: Path) -> None:
+    bogus = tmp_path / "garbage.zip"
+    bogus.write_bytes(b"not a zip at all")
+    with pytest.raises(ValueError, match="valid zip archive"):
+        read_session_archive(bogus)
+
+
+def test_read_archive_rejects_non_object_manifest(tmp_path: Path) -> None:
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(["this", "is", "an", "array"]))
+    with pytest.raises(ValueError, match="manifest.json must be a JSON object"):
+        read_session_archive(buf.getvalue())
+
+
+def test_import_rejects_symlink_escape(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    # ``project_dir/data`` is a symlink to a sibling outside the project.
+    (project_dir / "data").symlink_to(outside_dir, target_is_directory=True)
+
+    _make_duckdb(tmp_path / "src.duckdb")
+    base = build_session_archive(
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        project_dir=str(project_dir),
+        db_mode="duckdb",
+        db_path=str(tmp_path / "src.duckdb"),
+        include_data=True,
+    )
+
+    # Mutate the metadata to claim the embedded DB belongs at data/x.duckdb,
+    # which would resolve through the symlink and escape the project tree.
+    mutated = BytesIO()
+    with (
+        zipfile.ZipFile(BytesIO(base)) as src,
+        zipfile.ZipFile(mutated, "w", compression=zipfile.ZIP_DEFLATED) as dst,
+    ):
+        for name in src.namelist():
+            if name == "metadata/source_data.json":
+                source_data = json.loads(src.read(name))
+                source_data["database"]["path"] = "data/x.duckdb"
+                source_data["database"]["path_kind"] = "relative"
+                dst.writestr(name, json.dumps(source_data))
+            else:
+                dst.writestr(name, src.read(name))
+
+    with pytest.raises(ValueError, match="escapes the project directory"):
+        import_session_archive(archive=mutated.getvalue(), project_dir=str(project_dir))
+    # No conversation file written on rejection.
+    assert not (project_dir / ".datasight" / "conversations" / "fuel-review.json").exists()
+    # No file extracted into the symlinked-out location.
+    assert not list(outside_dir.iterdir())
+
+
+def test_import_rolls_back_on_missing_archive_member(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    base = build_session_archive(
+        session_id="fuel-review",
+        conversation=_sample_conversation(),
+        project_dir=str(project_dir),
+        db_mode="duckdb",
+        db_path="database.duckdb",
+    )
+
+    # Mark the archive as embedding a data file that doesn't actually exist
+    # in the zip — the import must reject before writing the conversation.
+    mutated = BytesIO()
+    with (
+        zipfile.ZipFile(BytesIO(base)) as src,
+        zipfile.ZipFile(mutated, "w", compression=zipfile.ZIP_DEFLATED) as dst,
+    ):
+        for name in src.namelist():
+            if name == "metadata/source_data.json":
+                source_data = json.loads(src.read(name))
+                source_data["database"] = {
+                    "mode": "duckdb",
+                    "embedded": True,
+                    "path": "database.duckdb",
+                    "path_kind": "relative",
+                    "archive_path": "data/database.duckdb",
+                }
+                dst.writestr(name, json.dumps(source_data))
+            else:
+                dst.writestr(name, src.read(name))
+
+    with pytest.raises(ValueError, match="missing embedded data file"):
+        import_session_archive(archive=mutated.getvalue(), project_dir=str(project_dir))
+
+    assert not (project_dir / ".datasight" / "conversations" / "fuel-review.json").exists()
+    assert not (project_dir / "database.duckdb").exists()
+    # No leftover .part-* files.
+    assert (
+        not list((project_dir / ".datasight" / "conversations").glob("*.part-*"))
+        if (project_dir / ".datasight" / "conversations").exists()
+        else True
+    )
+
+
 def test_validate_session_archive_id_rejects_dotted_ids() -> None:
     with pytest.raises(ValueError, match="Invalid session ID"):
         validate_session_archive_id("fuel.review")
@@ -597,6 +760,65 @@ def test_cli_session_export_include_data_round_trip(tmp_path: Path, monkeypatch)
     rows = conn.execute("SELECT energy_source_code FROM generation_fuel").fetchall()
     conn.close()
     assert rows == [("NG",)]
+
+
+def test_cli_session_export_omits_db_metadata_for_project_without_env(
+    tmp_path: Path, monkeypatch
+) -> None:
+    for key in ("DB_PATH", "DB_MODE", "DATASIGHT_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+
+    project_dir = tmp_path / "project"
+    _write_project(project_dir, session_id="fuel-review", with_db=False)
+    assert not (project_dir / ".env").exists()
+
+    archive_path = tmp_path / "out.zip"
+    runner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
+        result = runner.invoke(
+            cli,
+            [
+                "session",
+                "export",
+                "fuel-review",
+                "--project-dir",
+                str(project_dir),
+                "--output-path",
+                str(archive_path),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    payload = read_session_archive(archive_path)
+    # A bare Settings.from_env() would have stamped DuckDB defaults into
+    # source_data; with no .env we should record no database metadata.
+    assert payload["source_data"] == {}
+
+
+def test_cli_session_export_include_data_without_env_errors(tmp_path: Path, monkeypatch) -> None:
+    for key in ("DB_PATH", "DB_MODE", "DATASIGHT_PROJECT"):
+        monkeypatch.delenv(key, raising=False)
+
+    project_dir = tmp_path / "project"
+    _write_project(project_dir, session_id="fuel-review", with_db=False)
+
+    archive_path = tmp_path / "out.zip"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "session",
+            "export",
+            "fuel-review",
+            "--project-dir",
+            str(project_dir),
+            "--output-path",
+            str(archive_path),
+            "--include-data",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "requires a configured database" in result.output
 
 
 def test_cli_session_export_defaults_filename_to_zip(tmp_path: Path, monkeypatch) -> None:
