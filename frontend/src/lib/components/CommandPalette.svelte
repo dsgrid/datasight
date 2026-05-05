@@ -7,6 +7,9 @@
   import { dashboardStore } from "$lib/stores/dashboard.svelte";
   import { chatStore } from "$lib/stores/chat.svelte";
   import { sendMessage } from "$lib/api/chat";
+  import { saveDashboard } from "$lib/api/dashboard";
+  import { switchConversation } from "$lib/utils/conversation";
+  import { pinLatestResult } from "$lib/utils/pin";
   import { loadPreview } from "$lib/api/schema";
   import {
     loadDatasetOverview,
@@ -23,9 +26,19 @@
     onToggleSettings: () => void;
     onToggleSidebar: () => void;
     onNewChat: () => void;
+    onToggleExport: () => void;
+    onToggleHistory: () => void;
+    onShowShortcuts: () => void;
   }
 
-  let { onToggleSettings, onToggleSidebar, onNewChat }: Props = $props();
+  let {
+    onToggleSettings,
+    onToggleSidebar,
+    onNewChat,
+    onToggleExport,
+    onToggleHistory,
+    onShowShortcuts,
+  }: Props = $props();
 
   let inputEl = $state<HTMLInputElement | null>(null);
   let resultsEl = $state<HTMLElement | null>(null);
@@ -95,6 +108,12 @@
         run: () => (dashboardStore.currentView = "dashboard"),
       },
       {
+        title: "Switch to SQL Editor",
+        subtitle: "View",
+        score: 790,
+        run: () => (dashboardStore.currentView = "sql"),
+      },
+      {
         title: "Open Settings",
         subtitle: "Panel",
         score: 740,
@@ -107,10 +126,80 @@
         run: onToggleSidebar,
       },
       {
+        title: "Toggle Query History",
+        subtitle: "Panel",
+        score: 720,
+        run: onToggleHistory,
+      },
+      {
+        title: "Focus Schema Inspector",
+        subtitle: "Panel",
+        score: 700,
+        run: () => {
+          sidebarStore.sidebarOpen = true;
+          requestAnimationFrame(() => {
+            const input = document.querySelector<HTMLInputElement>(
+              ".schema-search-input",
+            );
+            input?.focus();
+            input?.select();
+          });
+        },
+      },
+      {
         title: "New Conversation",
         subtitle: "Action",
         score: 760,
         run: onNewChat,
+      },
+      {
+        title: "Toggle Export Mode",
+        subtitle: "Action",
+        score: 730,
+        run: onToggleExport,
+      },
+      {
+        title: "Pin Latest Result",
+        subtitle: "Action",
+        score: 730,
+        run: () => {
+          void pinLatestResult();
+        },
+      },
+      ...(dashboardStore.currentView === "dashboard" &&
+      dashboardStore.selectedCardIdx >= 0
+        ? [
+            {
+              title: "Fullscreen Selected Card",
+              subtitle: "Dashboard",
+              score: 720,
+              run: () => {
+                const idx = dashboardStore.selectedCardIdx;
+                const item = dashboardStore.pinnedItems[idx];
+                if (!item) return;
+                dashboardStore.fullscreenCardId =
+                  dashboardStore.fullscreenCardId === item.id ? null : item.id;
+              },
+            },
+            {
+              title: "Unpin Selected Card",
+              subtitle: "Dashboard",
+              score: 710,
+              run: () => {
+                const idx = dashboardStore.selectedCardIdx;
+                const item = dashboardStore.pinnedItems[idx];
+                if (!item) return;
+                dashboardStore.removeItem(item.id);
+                void saveDashboard();
+              },
+            },
+          ]
+        : []),
+      {
+        title: "Show Keyboard Shortcuts",
+        subtitle: "Help",
+        score: 690,
+        run: onShowShortcuts,
       },
       {
         title: "Summarize Dataset",
@@ -268,7 +357,7 @@
           subtitle: `${conv.message_count} messages`,
           score,
           run: () => {
-            // Will be handled by ConversationsList
+            void switchConversation(conv.session_id);
           },
         });
       }

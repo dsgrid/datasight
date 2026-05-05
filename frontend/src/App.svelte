@@ -40,7 +40,12 @@
   } from "$lib/api/dashboard";
   import { loadMeasureCatalog } from "$lib/api/measures";
   import { loadConversation } from "$lib/api/saved";
-  import { replayConversationEvents } from "$lib/utils/conversation";
+  import {
+    replayConversationEvents,
+    switchConversation,
+  } from "$lib/utils/conversation";
+  import { matchShortcut, type ShortcutAction } from "$lib/utils/shortcuts";
+  import { pinLatestResult } from "$lib/utils/pin";
   import {
     loadDatasetOverview,
     loadMeasureOverview,
@@ -257,114 +262,227 @@
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
 
+  function handleEscape() {
+    if (dashboardStore.fullscreenCardId !== null) {
+      dashboardStore.fullscreenCardId = null;
+    } else if (shortcutsOpen) {
+      shortcutsOpen = false;
+    } else if (exportMode) {
+      exportMode = false;
+    } else if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }
+
+  function focusChatOrEditor() {
+    if (dashboardStore.currentView === "sql") {
+      const cm = document.querySelector<HTMLElement>(
+        "[data-sql-editor] .cm-content",
+      );
+      cm?.focus();
+    } else {
+      const input = document.querySelector<HTMLTextAreaElement>(
+        "textarea[data-chat-input]",
+      );
+      input?.focus();
+    }
+  }
+
+  function moveDashboardSelection(direction: "up" | "down" | "left" | "right") {
+    const items = dashboardStore.pinnedItems;
+    if (items.length === 0) return;
+    const cols =
+      dashboardStore.columns || Math.max(1, Math.floor(window.innerWidth / 500));
+    let idx = dashboardStore.selectedCardIdx;
+    if (idx < 0) idx = 0;
+    else if (direction === "right") idx = Math.min(idx + 1, items.length - 1);
+    else if (direction === "left") idx = Math.max(idx - 1, 0);
+    else if (direction === "down") idx = Math.min(idx + cols, items.length - 1);
+    else if (direction === "up") idx = Math.max(idx - cols, 0);
+    dashboardStore.selectedCardIdx = idx;
+  }
+
+  function fullscreenSelectedCard() {
+    // If a card is already fullscreen, exit it.
+    if (dashboardStore.fullscreenCardId !== null) {
+      dashboardStore.fullscreenCardId = null;
+      return;
+    }
+    const items = dashboardStore.pinnedItems;
+    if (items.length === 0) return;
+    let idx = dashboardStore.selectedCardIdx;
+    if (idx < 0 || idx >= items.length) {
+      idx = 0;
+      dashboardStore.selectedCardIdx = 0;
+    }
+    dashboardStore.fullscreenCardId = items[idx].id;
+  }
+
+  function deleteSelectedCard() {
+    const idx = dashboardStore.selectedCardIdx;
+    if (idx >= 0 && idx < dashboardStore.pinnedItems.length) {
+      dashboardStore.removeItem(dashboardStore.pinnedItems[idx].id);
+      void saveDashboard();
+    }
+  }
+
+  function togglePin() {
+    if (dashboardStore.currentView === "dashboard") {
+      deleteSelectedCard();
+    } else {
+      void pinLatestResult();
+    }
+  }
+
+  function scrollToAdjacentMessage(direction: 1 | -1) {
+    const container = document.querySelector<HTMLElement>("[data-message-list]");
+    if (!container) return;
+    const items = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-msg-idx]"),
+    );
+    if (items.length === 0) return;
+    const top = container.scrollTop;
+    let target = -1;
+    if (direction === 1) {
+      target = items.findIndex((el) => el.offsetTop > top + 8);
+      if (target === -1) target = items.length - 1;
+    } else {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].offsetTop < top - 8) target = i;
+      }
+      if (target === -1) target = 0;
+    }
+    items[target].scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  function cycleConversation(direction: 1 | -1) {
+    const list = sidebarStore.conversationsCache;
+    if (list.length === 0) return;
+    const currentId = sessionStore.sessionId;
+    const currentIdx = list.findIndex((c) => c.session_id === currentId);
+    const start = currentIdx === -1 ? (direction === 1 ? -1 : 0) : currentIdx;
+    const next = (start + direction + list.length) % list.length;
+    const target = list[next];
+    if (!target || target.session_id === currentId) return;
+    void switchConversation(target.session_id);
+  }
+
+  function focusSchemaInspector() {
+    if (!sidebarStore.sidebarOpen) sidebarStore.sidebarOpen = true;
+    requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>(
+        ".schema-search-input",
+      );
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  function dispatchAction(action: ShortcutAction) {
+    switch (action) {
+      case "open-settings":
+        settingsOpen = !settingsOpen;
+        return;
+      case "toggle-palette":
+        paletteStore.toggle();
+        return;
+      case "toggle-sidebar":
+        sidebarStore.toggleSidebar();
+        return;
+      case "escape":
+        handleEscape();
+        return;
+      case "focus-input":
+        focusChatOrEditor();
+        return;
+      case "toggle-shortcuts":
+        shortcutsOpen = !shortcutsOpen;
+        return;
+      case "new-chat":
+        startNewChat();
+        return;
+      case "toggle-chat-dashboard":
+        dashboardStore.currentView =
+          dashboardStore.currentView === "chat" ? "dashboard" : "chat";
+        return;
+      case "toggle-chat-sql":
+        dashboardStore.currentView =
+          dashboardStore.currentView === "sql" ? "chat" : "sql";
+        return;
+      case "view-chat":
+        dashboardStore.currentView = "chat";
+        return;
+      case "view-dashboard":
+        dashboardStore.currentView = "dashboard";
+        return;
+      case "view-sql":
+        dashboardStore.currentView = "sql";
+        return;
+      case "toggle-export":
+        exportMode = !exportMode;
+        if (!exportMode) exportExcludeIndices = new Set();
+        return;
+      case "toggle-history":
+        sqlPanelOpen = !sqlPanelOpen;
+        return;
+      case "toggle-pin":
+        togglePin();
+        return;
+      case "fullscreen-selected":
+        fullscreenSelectedCard();
+        return;
+      case "next-message":
+        scrollToAdjacentMessage(1);
+        return;
+      case "prev-message":
+        scrollToAdjacentMessage(-1);
+        return;
+      case "next-conversation":
+        cycleConversation(1);
+        return;
+      case "prev-conversation":
+        cycleConversation(-1);
+        return;
+      case "focus-schema":
+        focusSchemaInspector();
+        return;
+      case "dashboard-up":
+        moveDashboardSelection("up");
+        return;
+      case "dashboard-down":
+        moveDashboardSelection("down");
+        return;
+      case "dashboard-left":
+        moveDashboardSelection("left");
+        return;
+      case "dashboard-right":
+        moveDashboardSelection("right");
+        return;
+      case "dashboard-enter":
+        fullscreenSelectedCard();
+        return;
+      case "dashboard-delete":
+        deleteSelectedCard();
+        return;
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     const tag = (document.activeElement as HTMLElement)?.tagName;
     const isInput =
       tag === "INPUT" ||
       tag === "TEXTAREA" ||
       tag === "SELECT" ||
-      (document.activeElement as HTMLElement)?.isContentEditable;
+      Boolean((document.activeElement as HTMLElement)?.isContentEditable);
 
-    // Platform-aware mod key: Cmd on Mac, Ctrl elsewhere. Treating raw Ctrl
-    // as a mod on Mac stole emacs chords (Ctrl-k, Ctrl-b) from the editors.
-    const modDown = isMac ? e.metaKey : e.ctrlKey;
-    if (modDown && !e.altKey && !e.shiftKey) {
-      // On non-Mac, Ctrl is both the app mod key and readline's chord prefix
-      // inside inputs; let the focused element handle chords there.
-      if (!isMac && isInput && (e.key === "k" || e.key === "b")) return;
-      if (e.key === ",") {
-        e.preventDefault();
-        settingsOpen = !settingsOpen;
-      } else if (e.key === "k") {
-        e.preventDefault();
-        paletteStore.toggle();
-      } else if (e.key === "b") {
-        e.preventDefault();
-        sidebarStore.toggleSidebar();
-      }
-      return;
-    }
-
-    // Escape always works
-    if (e.key === "Escape") {
-      if (dashboardStore.fullscreenCardId !== null) {
-        dashboardStore.fullscreenCardId = null;
-      } else if (shortcutsOpen) {
-        shortcutsOpen = false;
-      } else if (exportMode) {
-        exportMode = false;
-      } else if (document.activeElement instanceof HTMLElement) {
-        document.activeElement.blur();
-      }
-      return;
-    }
-
-    // Remaining shortcuts only when not in an input
-    if (isInput) return;
-
-    if (e.key === "/") {
-      e.preventDefault();
-      if (dashboardStore.currentView === "sql") {
-        // Focus the SQL editor's contenteditable surface.
-        const cm = document.querySelector<HTMLElement>(
-          "[data-sql-editor] .cm-content",
-        );
-        cm?.focus();
-      } else {
-        const input = document.querySelector<HTMLTextAreaElement>(
-          "textarea[data-chat-input]",
-        );
-        input?.focus();
-      }
-    } else if (e.key === "?") {
-      e.preventDefault();
-      shortcutsOpen = !shortcutsOpen;
-    } else if (e.key === "n" || e.key === "N") {
-      e.preventDefault();
-      startNewChat();
-    } else if (e.key === "d" || e.key === "D") {
-      e.preventDefault();
-      dashboardStore.currentView =
-        dashboardStore.currentView === "chat" ? "dashboard" : "chat";
-    } else if (e.key === "s" || e.key === "S") {
-      e.preventDefault();
-      dashboardStore.currentView =
-        dashboardStore.currentView === "sql" ? "chat" : "sql";
-    } else if (
-      dashboardStore.currentView === "dashboard" &&
-      ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
-    ) {
-      e.preventDefault();
-      const items = dashboardStore.pinnedItems;
-      if (items.length === 0) return;
-      const cols = dashboardStore.columns || Math.max(1, Math.floor(window.innerWidth / 500));
-      let idx = dashboardStore.selectedCardIdx;
-      if (idx < 0) idx = 0;
-      else if (e.key === "ArrowRight") idx = Math.min(idx + 1, items.length - 1);
-      else if (e.key === "ArrowLeft") idx = Math.max(idx - 1, 0);
-      else if (e.key === "ArrowDown") idx = Math.min(idx + cols, items.length - 1);
-      else if (e.key === "ArrowUp") idx = Math.max(idx - cols, 0);
-      dashboardStore.selectedCardIdx = idx;
-    } else if (
-      dashboardStore.currentView === "dashboard" &&
-      e.key === "Enter"
-    ) {
-      const idx = dashboardStore.selectedCardIdx;
-      if (idx >= 0 && idx < dashboardStore.pinnedItems.length) {
-        const item = dashboardStore.pinnedItems[idx];
-        dashboardStore.fullscreenCardId =
-          dashboardStore.fullscreenCardId === item.id ? null : item.id;
-      }
-    } else if (
-      dashboardStore.currentView === "dashboard" &&
-      (e.key === "Delete" || e.key === "Backspace")
-    ) {
-      const idx = dashboardStore.selectedCardIdx;
-      if (idx >= 0 && idx < dashboardStore.pinnedItems.length) {
-        dashboardStore.removeItem(dashboardStore.pinnedItems[idx].id);
-        void saveDashboard();
-      }
-    }
+    const action = matchShortcut(e, {
+      isMac,
+      isInput,
+      view: dashboardStore.currentView,
+    });
+    if (!action) return;
+    e.preventDefault();
+    dispatchAction(action);
   }
 </script>
 
@@ -446,6 +564,12 @@
   onToggleSettings={() => (settingsOpen = !settingsOpen)}
   onToggleSidebar={() => sidebarStore.toggleSidebar()}
   onNewChat={startNewChat}
+  onToggleExport={() => {
+    exportMode = !exportMode;
+    if (!exportMode) exportExcludeIndices = new Set();
+  }}
+  onToggleHistory={() => (sqlPanelOpen = !sqlPanelOpen)}
+  onShowShortcuts={() => (shortcutsOpen = true)}
 />
 <ShortcutsModal
   open={shortcutsOpen}
