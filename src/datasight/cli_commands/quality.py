@@ -103,6 +103,7 @@ def quality(project_dir, table, output_format, output_path):
 
     from datasight.config import load_time_series_config
     from datasight.data_profile import build_time_series_quality
+    from datasight.tidy import analyze_tidy_patterns
 
     time_series_configs = load_time_series_config(None, project_dir)
 
@@ -121,6 +122,9 @@ def quality(project_dir, table, output_format, output_path):
             ts_data = await build_time_series_quality(ts_configs, sql_runner.run_sql)
             base["time_series_issues"] = ts_data.get("time_series_issues", [])
             base["time_series_summaries"] = ts_data.get("time_series_summaries", [])
+        tidy = analyze_tidy_patterns(schema_info)
+        base["tidy_suggestions"] = tidy["period_suggestions"]
+        base["wide_tables"] = tidy["wide_tables"]
         return base
 
     quality_data = asyncio.run(_run_quality())
@@ -209,6 +213,45 @@ def quality(project_dir, table, output_format, output_path):
                         item["detail"],
                     ]
                     for item in quality_data["time_series_issues"]
+                ],
+            )
+        )
+    if quality_data.get("tidy_suggestions"):
+        console.print(
+            _build_profile_detail_table(
+                "Tidy Reshape Suggestions",
+                [
+                    ("Table", "left"),
+                    ("Pattern", "left"),
+                    ("Period", "left"),
+                    ("Columns", "right"),
+                    ("Rationale", "left"),
+                ],
+                [
+                    [
+                        item["table"],
+                        item["pattern"],
+                        item["period_kind"],
+                        str(len(item["affected_columns"])),
+                        item["rationale"],
+                    ]
+                    for item in quality_data["tidy_suggestions"]
+                ],
+            )
+        )
+    if quality_data.get("wide_tables"):
+        console.print(
+            _build_profile_detail_table(
+                "Wide Tables",
+                [("Table", "left"), ("Columns", "right"), ("Rows", "right"), ("Reason", "left")],
+                [
+                    [
+                        item["table"],
+                        str(item["column_count"]),
+                        str(item.get("row_count") if item.get("row_count") is not None else "?"),
+                        item["reason"],
+                    ]
+                    for item in quality_data["wide_tables"]
                 ],
             )
         )

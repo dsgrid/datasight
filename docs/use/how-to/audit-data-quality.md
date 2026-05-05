@@ -63,6 +63,110 @@ Use it to spot:
 - quick notes worth turning into follow-up questions
 - temporal completeness issues when [`time_series.yaml`](../../project-setup/how-to/declare-time-series.md) is present
 
+## Detect untidy column shapes
+
+`datasight quality` also flags tables whose **column names encode dimension
+values** — a common spreadsheet shape that confuses both DuckDB and the LLM
+agent. To list, preview, or apply reshapes, use the dedicated
+`datasight tidy` command described below.
+
+### What "tidy" means
+
+A *tidy* dataset, as defined by Hadley Wickham in [Tidy
+Data](https://www.jstatsoft.org/article/view/v059i10) (J. Stat. Softw., 2014),
+follows three rules:
+
+1. each variable forms a column,
+2. each observation forms a row,
+3. each type of observational unit forms a table.
+
+In a tidy `generation_fuel` table, that means one row per *(plant, date, fuel)*
+observation, with `net_generation_mwh` as a single column — not 12 columns
+named `jan`, `feb`, `mar`, … or 24 columns named `hour_00`, `hour_01`, ….
+When dimension values (year, month, quarter, hour, day) live in the column
+headers, the data is *untidy* and queries become awkward (e.g. "average across
+months" turns into a SUM across 12 columns instead of a `GROUP BY month`).
+
+For a longer treatment with worked examples, the R for Data Science chapter
+[Data tidying](https://r4ds.hadley.nz/data-tidy) walks through the same ideas
+with concrete reshapes.
+
+### What datasight detects
+
+The `quality` command flags two structural patterns from the schema alone — no
+extra SQL is issued:
+
+- **Period values in column names** — three or more columns whose names match
+  a recognized year, year-month, year-quarter, quarter, month, hour, or day
+  token. Both shared-prefix shapes (`sales_2020`, `sales_2021`, `sales_2022`)
+  and bare-token shapes (`q1`, `q2`, `q3`, `q4` or `hour_00` … `hour_23`) are
+  recognized.
+- **Wide tables with low row counts** — tables with 30 or more columns where
+  the row count is comparable to the column count. This is a softer note,
+  emitted only when no period pattern is detected.
+
+### List suggestions: `datasight tidy suggest`
+
+To inspect the suggestions on their own, use:
+
+```bash
+datasight tidy suggest
+datasight tidy suggest --table sales_wide
+datasight tidy suggest --format markdown -o tidy.md
+```
+
+Example output:
+
+```
+$ datasight tidy suggest --table sales_wide --format markdown
+# Tidy Reshape Suggestions
+
+- Tables scanned: 1
+
+## Suggestions
+- `sales_wide` (repeated_prefix_period, year, 4 columns): Columns share prefix
+  `sales` with year suffixes — 4 columns look like a single measure spread
+  across year values.
+
+  ```sql
+  CREATE OR REPLACE VIEW "sales_wide_long" AS
+  SELECT "region", '2020' AS "year", "sales_2020" AS "sales" FROM "sales_wide"
+  UNION ALL SELECT "region", '2021', "sales_2021" FROM "sales_wide"
+  UNION ALL SELECT "region", '2022', "sales_2022" FROM "sales_wide"
+  UNION ALL SELECT "region", '2023', "sales_2023" FROM "sales_wide";
+  ```
+```
+
+### Apply a reshape: `datasight tidy view` / `tidy table`
+
+Two sibling subcommands write the long-form object directly to the project's
+DuckDB database. Both accept `--dry-run` to preview the DDL without executing
+it:
+
+```bash
+# Preview the view DDL
+datasight tidy view --dry-run
+
+# Create one long-form view per suggestion (CREATE OR REPLACE VIEW)
+datasight tidy view
+
+# Materialize as physical tables instead (CREATE OR REPLACE TABLE)
+datasight tidy table
+
+# Scope to a single source table
+datasight tidy view --table sales_wide
+```
+
+The default target name is `<source_table>_long`; existing objects with that
+name are replaced. After the view or table exists, reference it in your
+`schema_description.md` so the LLM agent prefers tidy queries like
+`SELECT year, SUM(sales) FROM sales_wide_long GROUP BY year` over wide-column
+arithmetic.
+
+The generated SQL is portable `UNION ALL` — it survives DuckDB's view storage
+and is also valid SQLite / PostgreSQL, though `tidy view` and `tidy table`
+currently only execute against DuckDB project databases.
+
 ## Find measures
 
 `datasight measures` infers likely metrics and their aggregation semantics:
@@ -237,7 +341,7 @@ directory name appears in the report title.
 For a thorough data quality audit, run the commands in this order:
 
 1. **Profile** — understand the shape of the data
-2. **Quality** — find nulls, range issues, and date gaps
+2. **Quality** — find nulls, range issues, date gaps, and untidy column shapes
 3. **Integrity** — verify primary keys, foreign keys, and join behavior
 4. **Distribution** — inspect percentiles, outliers, and temporal spikes
 5. **Measures** — identify metrics and verify aggregation defaults

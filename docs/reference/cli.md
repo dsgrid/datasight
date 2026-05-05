@@ -64,6 +64,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 - `profile`: Profile your dataset - row counts, date coverage, and column statistics.
 - `measures`: Surface likely measures and default aggregations.
 - `quality`: Audit data quality - nulls, suspicious ranges, and date coverage.
+- `tidy`: Detect untidy column shapes and reshape into long form.
 - `integrity`: Audit cross-table referential integrity - keys, orphans, and join risks.
 - `distribution`: Profile value distributions - percentiles, outliers, and measure flags.
 - `validate`: Run declarative validation rules against the database.
@@ -600,6 +601,108 @@ datasight quality [OPTIONS]
 | `--table` | Audit a specific table. |
 | `--format` | Output format (default: table). Default: `table`. |
 | `--output`, `-o` | Write the quality audit to a file instead of stdout. |
+
+### `datasight tidy`
+
+Detect untidy column shapes and reshape into long form.
+
+Use 'tidy suggest' to inspect candidates, 'tidy view' to create
+long-form views, or 'tidy table' to materialize long-form tables.
+Detection is deterministic — column names plus dtypes plus row counts —
+so no LLM is involved.
+
+Examples:
+
+```
+datasight tidy suggest
+datasight tidy suggest --table sales_wide
+datasight tidy view --dry-run
+datasight tidy view
+datasight tidy table --table sales_wide
+```
+
+```bash
+datasight tidy [OPTIONS] COMMAND [ARGS]...
+```
+
+**Subcommands**
+
+- `suggest`: List detected untidy column shapes without changing the database.
+- `view`: Create CREATE OR REPLACE VIEW <table>_long for each detected pattern.
+- `table`: Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern.
+
+#### `datasight tidy suggest`
+
+List detected untidy column shapes without changing the database.
+
+Examples:
+
+```
+datasight tidy suggest
+datasight tidy suggest --table sales_wide
+datasight tidy suggest --format markdown -o tidy.md
+```
+
+```bash
+datasight tidy suggest [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Scope tidy detection to a specific source table. |
+| `--format` | Output format (default: table). Default: `table`. |
+| `--output`, `-o` | Write the tidy listing to a file instead of stdout. |
+
+#### `datasight tidy view`
+
+Create CREATE OR REPLACE VIEW <table>_long for each detected pattern.
+
+Examples:
+
+```
+datasight tidy view
+datasight tidy view --dry-run
+datasight tidy view --table sales_wide
+```
+
+```bash
+datasight tidy view [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Scope tidy detection to a specific source table. |
+| `--dry-run` | Print the DDL without executing it. |
+
+#### `datasight tidy table`
+
+Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern.
+
+Examples:
+
+```
+datasight tidy table
+datasight tidy table --dry-run
+datasight tidy table --table sales_wide
+```
+
+```bash
+datasight tidy table [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Scope tidy detection to a specific source table. |
+| `--dry-run` | Print the DDL without executing it. |
 
 ### `datasight integrity`
 

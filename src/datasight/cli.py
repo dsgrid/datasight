@@ -520,6 +520,22 @@ def _render_quality_markdown(quality_data: dict[str, Any]) -> str:
             lines.append(
                 f"- `{item['table']}.{item['timestamp_column']}` [{item['issue']}]: {item['detail']}"
             )
+    if quality_data.get("tidy_suggestions"):
+        lines.extend(["", "## Tidy Reshape Suggestions"])
+        for item in quality_data["tidy_suggestions"]:
+            lines.append(
+                f"- `{item['table']}` ({item['pattern']}, {item['period_kind']}, "
+                f"{len(item['affected_columns'])} columns): {item['rationale']}"
+            )
+            lines.append("")
+            lines.append("  ```sql")
+            for sql_line in item["reshape_sql"].splitlines():
+                lines.append(f"  {sql_line}")
+            lines.append("  ```")
+    if quality_data.get("wide_tables"):
+        lines.extend(["", "## Wide Tables"])
+        for item in quality_data["wide_tables"]:
+            lines.append(f"- `{item['table']}`: {item['reason']}")
     if quality_data["notes"]:
         lines.extend(["", "## Notes"])
         for item in quality_data["notes"]:
@@ -729,6 +745,42 @@ def _render_validation_markdown(data: dict[str, Any]) -> str:
             lines.append(
                 f"- [{r['status'].upper()}] `{r['table']}` {r['rule']}{col}: {r['detail']}"
             )
+    return "\n".join(lines)
+
+
+def _render_tidy_markdown(data: dict[str, Any]) -> str:
+    lines = [
+        "# Tidy Reshape Suggestions",
+        "",
+        f"- Tables scanned: {data['table_count']}",
+    ]
+    suggestions = data.get("period_suggestions") or []
+    wide_tables = data.get("wide_tables") or []
+    if suggestions:
+        lines.extend(["", "## Suggestions"])
+        for item in suggestions:
+            lines.append(
+                f"- `{item['table']}` ({item['pattern']}, {item['period_kind']}, "
+                f"{len(item['affected_columns'])} columns): {item['rationale']}"
+            )
+            lines.append("")
+            lines.append("  ```sql")
+            for sql_line in item["reshape_sql"].splitlines():
+                lines.append(f"  {sql_line}")
+            lines.append("  ```")
+    if wide_tables:
+        lines.extend(["", "## Wide Tables"])
+        for item in wide_tables:
+            lines.append(f"- `{item['table']}`: {item['reason']}")
+    if data.get("applied"):
+        lines.extend(["", "## Applied"])
+        for item in data["applied"]:
+            lines.append(
+                f"- Created {item['object_type']} `{item['suggested_view']}` "
+                f"from `{item['table']}` ({len(item['affected_columns'])} columns)"
+            )
+    if not suggestions and not wide_tables:
+        lines.extend(["", "_No untidy column-shape patterns detected._"])
     return "\n".join(lines)
 
 
@@ -1421,6 +1473,7 @@ def _register_commands() -> None:
     from datasight.cli_commands.run import run
     from datasight.cli_commands.session import session
     from datasight.cli_commands.templates import templates
+    from datasight.cli_commands.tidy import tidy
     from datasight.cli_commands.trends import trends
     from datasight.cli_commands.validate import validate
     from datasight.cli_commands.verify import verify
@@ -1436,6 +1489,7 @@ def _register_commands() -> None:
     cli.add_command(profile)
     cli.add_command(measures)
     cli.add_command(quality)
+    cli.add_command(tidy)
     cli.add_command(integrity)
     cli.add_command(distribution)
     cli.add_command(validate)
