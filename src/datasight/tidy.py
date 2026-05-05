@@ -3,8 +3,8 @@
 Inspects table schemas and flags columns whose names appear to encode a
 dimension value (year, month, quarter, hour, day) rather than holding a
 single measure across rows. Each suggestion is paired with a previewable
-DuckDB ``UNPIVOT`` statement so users can inspect or materialize the
-reshape via ``CREATE VIEW``.
+``CREATE OR REPLACE VIEW … UNION ALL …`` statement so users can inspect
+or materialize the reshape.
 
 The detection is deterministic and purely structural (column names plus
 dtypes plus row count), so it can run as part of the schema inspection
@@ -197,12 +197,15 @@ def _build_reshape_sql(
     suggested_view: str,
     mode: str = "view",
 ) -> str:
-    """Build a portable ``UNION ALL`` reshape statement.
+    """Build a ``CREATE OR REPLACE VIEW|TABLE`` reshape statement.
 
     DuckDB's ``UNPIVOT … ON col AS 'literal'`` form gets mangled when stored
     inside a view definition (column references get rewritten as string
     literals on round-trip), so we emit explicit ``UNION ALL`` branches
-    instead. The result is also valid SQLite / PostgreSQL.
+    instead. The inner ``SELECT … UNION ALL …`` body is portable to
+    SQLite and PostgreSQL; the ``CREATE OR REPLACE`` wrapper is
+    DuckDB-specific (PostgreSQL has no ``CREATE OR REPLACE TABLE``,
+    SQLite has no ``CREATE OR REPLACE VIEW``).
     """
     keyword = "VIEW" if mode == "view" else "TABLE"
     quoted_period = _quote_identifier(period_column_name)
@@ -233,10 +236,11 @@ def _build_period_suggestion(
     column_period_pairs: list[tuple[str, str]],
     period_kind: str,
     common_prefix: str,
+    excluded_from_id: set[str] | None = None,
 ) -> TidySuggestion:
     affected_columns = [col for col, _ in column_period_pairs]
-    affected_set = set(affected_columns)
-    id_columns = [c for c in all_columns if c not in affected_set]
+    excluded = set(affected_columns) if excluded_from_id is None else excluded_from_id
+    id_columns = [c for c in all_columns if c not in excluded]
     period_column_name = _PERIOD_COLUMN_NAMES.get(period_kind, "period")
     value_column_name = common_prefix.strip("_") if common_prefix else "value"
     if not value_column_name:
@@ -286,10 +290,14 @@ def _detect_period_groups(table: dict[str, Any]) -> list[TidySuggestion]:
             continue
         prefix, period_token, kind = result
         groups[(prefix, kind)].append((column_name, period_token))
+    qualifying_groups = [
+        ((prefix, kind), entries)
+        for (prefix, kind), entries in groups.items()
+        if len(entries) >= MIN_GROUP_SIZE
+    ]
+    excluded_from_id: set[str] = {col for _, entries in qualifying_groups for col, _ in entries}
     suggestions: list[TidySuggestion] = []
-    for (prefix, kind), entries in groups.items():
-        if len(entries) < MIN_GROUP_SIZE:
-            continue
+    for (prefix, kind), entries in qualifying_groups:
         suggestions.append(
             _build_period_suggestion(
                 table_name=table["name"],
@@ -297,6 +305,7 @@ def _detect_period_groups(table: dict[str, Any]) -> list[TidySuggestion]:
                 column_period_pairs=entries,
                 period_kind=kind,
                 common_prefix=prefix,
+                excluded_from_id=excluded_from_id,
             )
         )
     suggestions.sort(key=lambda s: (-len(s.affected_columns), s.common_prefix))

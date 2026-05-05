@@ -249,6 +249,34 @@ def test_multiple_groups_in_same_table():
     assert prefixes == {"sales", "cost"}
 
 
+def test_multi_group_id_columns_exclude_sibling_period_columns():
+    """When a table has two period groups, neither suggestion should keep the
+    other group's pivoted columns as id columns — that would defeat the tidy
+    reshape by carrying duplicated wide measures into the long form."""
+    schema = [
+        _table(
+            "mixed",
+            [
+                ("region", "VARCHAR"),
+                ("year_started", "INTEGER"),
+                ("sales_2020", "DOUBLE"),
+                ("sales_2021", "DOUBLE"),
+                ("sales_2022", "DOUBLE"),
+                ("cost_q1", "DOUBLE"),
+                ("cost_q2", "DOUBLE"),
+                ("cost_q3", "DOUBLE"),
+            ],
+        )
+    ]
+    out = analyze_tidy_patterns(schema)
+    suggestions = out["period_suggestions"]
+    assert len(suggestions) == 2
+    for s in suggestions:
+        assert s["id_columns"] == ["region", "year_started"]
+        for col in ("sales_2020", "sales_2021", "cost_q1", "cost_q2"):
+            assert col not in s["id_columns"]
+
+
 # ---------------------------------------------------------------------------
 # Generated reshape SQL must round-trip in DuckDB (and survive view storage)
 # ---------------------------------------------------------------------------

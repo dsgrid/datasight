@@ -163,9 +163,13 @@ name are replaced. After the view or table exists, reference it in your
 `SELECT year, SUM(sales) FROM sales_wide_long GROUP BY year` over wide-column
 arithmetic.
 
-The generated SQL is portable `UNION ALL` — it survives DuckDB's view storage
-and is also valid SQLite / PostgreSQL, though `tidy view` and `tidy table`
-currently only execute against DuckDB project databases.
+The inner `SELECT … UNION ALL …` body is portable to SQLite and PostgreSQL,
+but the surrounding `CREATE OR REPLACE VIEW` / `CREATE OR REPLACE TABLE`
+wrapper is DuckDB-specific (PostgreSQL has no `CREATE OR REPLACE TABLE`,
+SQLite has no `CREATE OR REPLACE VIEW`). `tidy view` and `tidy table`
+correspondingly only execute against DuckDB project databases — paste the
+`SELECT` body into the equivalent `CREATE VIEW` / `CREATE TABLE AS` syntax
+yourself if your project runs on a different backend.
 
 ## Find measures
 
