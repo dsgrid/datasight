@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import duckdb
 import pytest
@@ -630,7 +631,10 @@ def test_tidy_suggest_file_mode_rejects_table_filter(tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli, ["tidy", "suggest", str(csv_path), "--table", "anything"])
     assert result.exit_code != 0
-    assert "--table cannot be combined" in result.output
+    # Click 8.3 wraps usage errors in a Rich panel with ANSI styling that
+    # interpolates codes inside option names, so check the ANSI-stripped form.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--table cannot be combined" in plain
 
 
 def test_tidy_suggest_no_suggestions_message(tmp_path):
