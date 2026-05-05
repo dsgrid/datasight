@@ -1,10 +1,15 @@
-import type {
-  ChatEvent,
-  ProvenanceData,
-  ProvenanceTool,
-  ToolMeta,
+import {
+  chatStore,
+  type ChatEvent,
+  type ProvenanceData,
+  type ProvenanceTool,
+  type ToolMeta,
 } from "$lib/stores/chat.svelte";
-import type { QueryEntry } from "$lib/stores/queries.svelte";
+import { queriesStore, type QueryEntry } from "$lib/stores/queries.svelte";
+import { sessionStore } from "$lib/stores/session.svelte";
+import { dashboardStore } from "$lib/stores/dashboard.svelte";
+import { loadConversation } from "$lib/api/saved";
+import { applyDashboardData } from "$lib/api/dashboard";
 
 type RawConversationEvent = Record<string, unknown>;
 
@@ -199,4 +204,27 @@ export function replayConversationEvents(events: unknown[]): ConversationReplay 
   }
 
   return { messages, queries, totalCost };
+}
+
+/**
+ * Load a saved conversation by session id, replay it into the chat/queries
+ * stores, and switch the dashboard view to chat. Returns true on success.
+ */
+export async function switchConversation(sessionId: string): Promise<boolean> {
+  if (!sessionId) return false;
+  try {
+    const data = await loadConversation(sessionId);
+    const replay = replayConversationEvents(data.events);
+    chatStore.clear();
+    queriesStore.clear();
+    chatStore.messages = replay.messages;
+    queriesStore.sessionQueries = replay.queries;
+    queriesStore.sessionTotalCost = replay.totalCost;
+    sessionStore.sessionId = sessionId;
+    applyDashboardData(data.dashboard || { items: [], columns: 0, filters: [] });
+    dashboardStore.currentView = "chat";
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -75,6 +75,7 @@
 
   function toggleFullscreen() {
     dashboardStore.fullscreenCardId = isFullscreen ? null : item.id;
+    if (!isFullscreen) dashboardStore.selectedCardIdx = index;
   }
 
   function removeCard() {

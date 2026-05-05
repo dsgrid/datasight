@@ -1,32 +1,15 @@
 <script lang="ts">
   import { sidebarStore } from "$lib/stores/sidebar.svelte";
-  import { chatStore } from "$lib/stores/chat.svelte";
   import { sessionStore } from "$lib/stores/session.svelte";
-  import { queriesStore } from "$lib/stores/queries.svelte";
-  import { dashboardStore } from "$lib/stores/dashboard.svelte";
-  import {
-    loadConversation,
-    clearConversations,
-  } from "$lib/api/saved";
-  import { applyDashboardData } from "$lib/api/dashboard";
-  import { replayConversationEvents } from "$lib/utils/conversation";
+  import { clearConversations } from "$lib/api/saved";
+  import { switchConversation } from "$lib/utils/conversation";
 
   let loadingId = $state<string | null>(null);
 
   async function handleLoad(sessionId: string) {
     loadingId = sessionId;
     try {
-      const data = await loadConversation(sessionId);
-      const replay = replayConversationEvents(data.events);
-      chatStore.clear();
-      queriesStore.clear();
-      chatStore.messages = replay.messages;
-      queriesStore.sessionQueries = replay.queries;
-      queriesStore.sessionTotalCost = replay.totalCost;
-
-      sessionStore.sessionId = sessionId;
-      applyDashboardData(data.dashboard || { items: [], columns: 0, filters: [] });
-      dashboardStore.currentView = "chat";
+      await switchConversation(sessionId);
     } finally {
       loadingId = null;
     }

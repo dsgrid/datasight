@@ -1,14 +1,12 @@
 <script lang="ts">
   import { chatStore } from "$lib/stores/chat.svelte";
-  import { dashboardStore } from "$lib/stores/dashboard.svelte";
-  import { schemaStore } from "$lib/stores/schema.svelte";
   import { settingsStore } from "$lib/stores/settings.svelte";
   import type { ChatEvent } from "$lib/stores/chat.svelte";
-  import { sendMessage, loadPlotlySpec, replayFromEdit } from "$lib/api/chat";
+  import { sendMessage, replayFromEdit } from "$lib/api/chat";
   import { summarizeDataset } from "$lib/api/summarize";
   import { addBookmark } from "$lib/api/saved";
   import { addReport } from "$lib/api/saved";
-  import { saveDashboard } from "$lib/api/dashboard";
+  import { findToolContextForResult, pinResult } from "$lib/utils/pin";
   import MessageBubble from "./MessageBubble.svelte";
   import ToolIndicator from "./ToolIndicator.svelte";
   import ChartResult from "./ChartResult.svelte";
@@ -93,35 +91,6 @@
     await replayFromEdit(turnIdx, newText, subsequent);
   }
 
-  async function pinResult(
-    event: ChatEvent & { type: "tool_result" },
-    toolCtx: { sql: string; tool: string; plotlySpec: unknown; meta?: Record<string, unknown> } | null,
-  ) {
-    let plotlySpec = event.plotlySpec;
-    if (!plotlySpec && event.plotlySpecRef) {
-      try {
-        plotlySpec = await loadPlotlySpec(event.plotlySpecRef);
-      } catch (err) {
-        console.error("Failed to load Plotly spec before pinning:", err);
-      }
-    }
-    dashboardStore.addItem({
-      type: event.resultType === "chart" ? "chart" : "table",
-      html: event.html,
-      title: event.title || "",
-      sql: toolCtx?.sql,
-      tool: toolCtx?.tool || (event.resultType === "chart" ? "visualize_data" : "run_sql"),
-      render_plotly_spec: plotlySpec,
-      plotly_spec: toolCtx?.plotlySpec ?? plotlySpec,
-      source_meta: {
-        question: "",
-        resultType: event.resultType,
-        meta: toolCtx?.meta,
-      },
-    });
-    await saveDashboard();
-  }
-
   function bookmarkResult(sql: string, tool: string, name: string) {
     addBookmark(sql, tool, name);
   }
@@ -149,44 +118,14 @@
   }
 
   /** Get the last sql/tool info for action buttons. */
-  function getLastToolContext(
-    upToIndex: number,
-  ): { sql: string; tool: string; plotlySpec: unknown; meta?: Record<string, unknown> } | null {
-    let toolMeta: Record<string, unknown> | undefined;
-    for (let i = upToIndex + 1; i < chatStore.messages.length; i++) {
-      const msg = chatStore.messages[i];
-      if (msg.type === "tool_done") {
-        toolMeta = msg.meta as unknown as Record<string, unknown>;
-        break;
-      }
-      if (msg.type === "tool_start" || msg.type === "user_message") break;
-    }
-
-    for (let i = upToIndex; i >= 0; i--) {
-      const msg = chatStore.messages[i];
-      if (msg.type === "tool_done") {
-        return {
-          sql: msg.meta.sql,
-          tool: msg.meta.tool,
-          plotlySpec: null,
-          meta: msg.meta as unknown as Record<string, unknown>,
-        };
-      }
-      if (msg.type === "tool_start") {
-        return {
-          sql: msg.sql || "",
-          tool: msg.tool,
-          plotlySpec: msg.plotlySpec,
-          meta: toolMeta,
-        };
-      }
-    }
-    return null;
+  function getLastToolContext(upToIndex: number) {
+    return findToolContextForResult(chatStore.messages, upToIndex);
   }
 </script>
 
 <div
   bind:this={messagesEl}
+  data-message-list
   class="flex-1 overflow-y-auto overflow-x-hidden min-w-0"
   style="padding: 28px 18px; scroll-behavior: smooth;"
 >
@@ -236,6 +175,7 @@
     {@const excluded = turnIdx >= 0 && excludeIndices.has(turnIdx)}
     {@const isTurnAnchor = event.type === "user_message"}
     <div
+      data-msg-idx={idx}
       class="flex items-start gap-2 transition-opacity"
       style:opacity={exportMode && excluded ? "0.4" : "1"}
     >
