@@ -571,6 +571,38 @@ def test_tidy_view_table_filter_scopes_apply(tmp_path):
     assert "costs_wide_long" not in names
 
 
+def test_tidy_suggest_accepts_csv_without_project(tmp_path):
+    csv_path = tmp_path / "monthly_generation.csv"
+    csv_path.write_text(
+        "plant_id,fuel_type,jan,feb,mar,apr,may,jun,jul,aug,sep,oct,nov,dec\n"
+        "1,coal,180,165,140,120,110,100,95,105,130,160,175,200\n"
+        "2,gas,220,200,180,170,160,175,200,220,210,200,215,230\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["tidy", "suggest", str(csv_path), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["table_count"] == 1
+    assert len(data["period_suggestions"]) == 1
+    s = data["period_suggestions"][0]
+    assert s["period_kind"] == "month"
+    assert len(s["affected_columns"]) == 12
+    assert s["id_columns"] == ["plant_id", "fuel_type"]
+
+
+def test_tidy_suggest_file_mode_rejects_table_filter(tmp_path):
+    csv_path = tmp_path / "monthly.csv"
+    csv_path.write_text(
+        "plant_id,jan,feb,mar,apr\n1,1,2,3,4\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["tidy", "suggest", str(csv_path), "--table", "anything"])
+    assert result.exit_code != 0
+    assert "--table cannot be combined" in result.output
+
+
 def test_tidy_suggest_no_suggestions_message(tmp_path):
     db_path = tmp_path / "clean.duckdb"
     conn = duckdb.connect(str(db_path))

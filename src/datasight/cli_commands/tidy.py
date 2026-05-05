@@ -88,6 +88,36 @@ async def _gather_tidy_data(project_dir: str, source_table: str | None, settings
         sql_runner.close()
 
 
+async def _gather_tidy_data_for_files(files: tuple[str, ...]):
+    """Like ``_gather_tidy_data`` but registers ``files`` in an ephemeral DuckDB.
+
+    No project / .env required; mirrors the file-mode entry point used by
+    ``datasight inspect``. The returned ``suggestions_by_table`` is empty
+    on this path because ephemeral file sessions can't usefully persist a
+    reshape — callers should treat file mode as suggest-only.
+    """
+    from datasight.explore import create_files_session_for_settings
+    from datasight.schema import introspect_schema
+    from datasight.tidy import analyze_tidy_patterns
+
+    runner, _tables_info = create_files_session_for_settings(list(files), None)
+    try:
+        tables = await introspect_schema(runner.run_sql, runner=runner)
+        schema_info = [
+            {
+                "name": t.name,
+                "row_count": t.row_count,
+                "columns": [
+                    {"name": c.name, "dtype": c.dtype, "nullable": c.nullable} for c in t.columns
+                ],
+            }
+            for t in tables
+        ]
+        return analyze_tidy_patterns(schema_info)
+    finally:
+        runner.close()
+
+
 def _resolve_tidy_settings(project_dir: str) -> tuple[Any, str, str]:
     project_dir = str(Path(project_dir).resolve())
     settings, _ = _resolve_settings(project_dir)
@@ -175,12 +205,15 @@ def tidy():
         """
         Examples:
 
-            datasight tidy suggest
+            datasight tidy suggest                           # current project
+            datasight tidy suggest monthly_generation.csv    # standalone file
+            datasight tidy suggest gen.csv plants.parquet    # multiple files
             datasight tidy suggest --table sales_wide
             datasight tidy suggest --format markdown -o tidy.md
         """
     ),
 )
+@click.argument("files", nargs=-1, required=False, type=click.Path(exists=True))
 @_project_scope_options
 @click.option(
     "--format",
@@ -197,12 +230,25 @@ def tidy():
     default=None,
     help="Write the tidy listing to a file instead of stdout.",
 )
-def tidy_suggest(project_dir, source_table, output_format, output_path):
-    """List detected untidy column shapes without changing the database."""
+def tidy_suggest(files, project_dir, source_table, output_format, output_path):
+    """List detected untidy column shapes without changing the database.
+
+    Pass one or more CSV / Parquet / Excel / DuckDB files as positional
+    arguments to inspect them in an ephemeral session — no project setup
+    required. With no files, runs against the current project's database.
+    """
     from rich.console import Console
 
-    settings, project_dir, _ = _resolve_tidy_settings(project_dir)
-    tidy_data, _ = asyncio.run(_gather_tidy_data(project_dir, source_table, settings))
+    if files:
+        if source_table:
+            raise click.UsageError(
+                "--table cannot be combined with positional FILES; "
+                "scope is implicit when files are passed."
+            )
+        tidy_data = asyncio.run(_gather_tidy_data_for_files(files))
+    else:
+        settings, project_dir, _ = _resolve_tidy_settings(project_dir)
+        tidy_data, _ = asyncio.run(_gather_tidy_data(project_dir, source_table, settings))
 
     if output_format == "json":
         _write_or_print(json.dumps(tidy_data, indent=2), output_path)

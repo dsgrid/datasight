@@ -635,22 +635,29 @@ datasight tidy [OPTIONS] COMMAND [ARGS]...
 
 List detected untidy column shapes without changing the database.
 
+Pass one or more CSV / Parquet / Excel / DuckDB files as positional
+arguments to inspect them in an ephemeral session — no project setup
+required. With no files, runs against the current project's database.
+
 Examples:
 
 ```
-datasight tidy suggest
+datasight tidy suggest                           # current project
+datasight tidy suggest monthly_generation.csv    # standalone file
+datasight tidy suggest gen.csv plants.parquet    # multiple files
 datasight tidy suggest --table sales_wide
 datasight tidy suggest --format markdown -o tidy.md
 ```
 
 ```bash
-datasight tidy suggest [OPTIONS]
+datasight tidy suggest [OPTIONS] [FILES]...
 ```
 
 **Parameters**
 
 | Name | Details |
 | --- | --- |
+| `FILES` |   |
 | `--project-dir` | Project directory containing .env and config files. Default: `.`. |
 | `--table` | Scope tidy detection to a specific source table. |
 | `--format` | Output format (default: table). Default: `table`. |

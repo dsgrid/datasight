@@ -110,10 +110,16 @@ extra SQL is issued:
 To inspect the suggestions on their own, use:
 
 ```bash
-datasight tidy suggest
+datasight tidy suggest                        # current project
+datasight tidy suggest sales_wide.csv         # standalone file, no project
+datasight tidy suggest gen.csv plants.parquet # multiple files
 datasight tidy suggest --table sales_wide
 datasight tidy suggest --format markdown -o tidy.md
 ```
+
+When you pass file arguments, datasight registers them in an ephemeral
+DuckDB session and skips project loading entirely — useful for the "is
+this spreadsheet untidy?" question before committing to project setup.
 
 Example output:
 
