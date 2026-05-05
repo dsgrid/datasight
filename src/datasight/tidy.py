@@ -1,14 +1,29 @@
-"""Detect untidy dataset patterns and suggest tidy-reshape views.
+"""Detect untidy dataset patterns and suggest tidy-reshape DDL.
 
 Inspects table schemas and flags columns whose names appear to encode a
 dimension value (year, month, quarter, hour, day) rather than holding a
-single measure across rows. Each suggestion is paired with a previewable
-``CREATE OR REPLACE VIEW … UNION ALL …`` statement so users can inspect
-or materialize the reshape.
+single measure across rows. Each suggestion carries a previewable DuckDB
+DDL statement so users can inspect or materialize the reshape.
 
-The detection is deterministic and purely structural (column names plus
-dtypes plus row count), so it can run as part of the schema inspection
-pass without issuing extra SQL.
+The DDL emitted depends on the target object:
+
+- ``CREATE OR REPLACE TABLE`` uses the canonical DuckDB ``UNPIVOT`` form,
+  which is what ``tidy table`` runs and what ``tidy suggest`` displays.
+- ``CREATE OR REPLACE VIEW`` falls back to ``UNION ALL`` branches because
+  of a regression in the Python ``duckdb`` 1.5.2 binding — UNPIVOT stored
+  inside a view fails to re-bind on a fresh connection in that binding,
+  raising ``Binder Error: UNPIVOT name count mismatch``. (The standalone
+  ``duckdb`` CLI 1.5.1 is unaffected, but datasight depends on the Python
+  binding for every internal query path, so views created through
+  datasight need the workaround to remain queryable from datasight
+  itself.) Materialized tables don't re-bind, so they keep the cleaner
+  UNPIVOT form.
+
+Detection is deterministic and purely structural (column names plus
+dtypes plus row count), so it runs without issuing extra SQL. The DDL is
+DuckDB-specific — which matches the typical workflow for this feature:
+untidy CSV / Parquet / Excel sources land in DuckDB before being
+reshaped.
 """
 
 from __future__ import annotations
@@ -138,8 +153,8 @@ class TidySuggestion:
     rationale: str
     reshape_sql: str
 
-    def build_sql(self, mode: str = "view") -> str:
-        """Return DDL that materializes this suggestion as a view or table."""
+    def build_sql(self, mode: str = "table") -> str:
+        """Return DDL that materializes this suggestion as a table or view."""
         if mode not in ("view", "table"):
             raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
         pairs = _column_period_pairs(self.affected_columns)
@@ -188,26 +203,62 @@ class WideTableNote:
         return asdict(self)
 
 
-def _build_reshape_sql(
+def _build_unpivot_sql(
+    table: str,
+    column_period_pairs: list[tuple[str, str]],
+    period_column_name: str,
+    value_column_name: str,
+    suggested_view: str,
+    mode: str,
+) -> str:
+    """Build a ``CREATE OR REPLACE TABLE|VIEW`` using DuckDB ``UNPIVOT``.
+
+    Use ``UNPIVOT … ON col AS '<period>'`` so each affected column maps to
+    a clean period token in the new period column. UNPIVOT carries the
+    remaining id columns through automatically.
+
+    Note: this form is only safe for ``mode='table'``. The Python
+    ``duckdb`` 1.5.2 binding has a regression where UNPIVOT stored inside
+    a view fails to re-bind on a fresh connection (the standalone CLI
+    1.5.1 is unaffected). ``_build_reshape_sql`` falls back to UNION ALL
+    for view mode so views remain queryable through datasight itself.
+    """
+    keyword = "TABLE" if mode == "table" else "VIEW"
+    on_clause = ",\n    ".join(
+        f"{_quote_identifier(col)} AS '{period.replace(chr(39), chr(39) * 2)}'"
+        for col, period in column_period_pairs
+    )
+    return (
+        f"CREATE OR REPLACE {keyword} {_quote_identifier(suggested_view)} AS\n"
+        f"SELECT * FROM (\n"
+        f"  UNPIVOT {_quote_identifier(table)}\n"
+        f"  ON {on_clause}\n"
+        f"  INTO\n"
+        f"    NAME {_quote_identifier(period_column_name)}\n"
+        f"    VALUE {_quote_identifier(value_column_name)}\n"
+        f");"
+    )
+
+
+def _build_union_all_view_sql(
     table: str,
     id_columns: list[str],
     column_period_pairs: list[tuple[str, str]],
     period_column_name: str,
     value_column_name: str,
     suggested_view: str,
-    mode: str = "view",
 ) -> str:
-    """Build a ``CREATE OR REPLACE VIEW|TABLE`` reshape statement.
+    """Build a ``CREATE OR REPLACE VIEW`` using ``UNION ALL`` branches.
 
-    DuckDB's ``UNPIVOT … ON col AS 'literal'`` form gets mangled when stored
-    inside a view definition (column references get rewritten as string
-    literals on round-trip), so we emit explicit ``UNION ALL`` branches
-    instead. The inner ``SELECT … UNION ALL …`` body is portable to
-    SQLite and PostgreSQL; the ``CREATE OR REPLACE`` wrapper is
-    DuckDB-specific (PostgreSQL has no ``CREATE OR REPLACE TABLE``,
-    SQLite has no ``CREATE OR REPLACE VIEW``).
+    A workaround for a regression in the Python ``duckdb`` 1.5.2 binding:
+    UNPIVOT stored inside a view re-binds incorrectly on a fresh
+    connection through that binding, raising ``UNPIVOT name count
+    mismatch``. The standalone ``duckdb`` CLI 1.5.1 doesn't reproduce
+    the failure, but every datasight query path uses the Python binding,
+    so we need a form that survives re-bind. Materialized tables
+    (``CREATE OR REPLACE TABLE``) don't re-bind and keep the cleaner
+    UNPIVOT form.
     """
-    keyword = "VIEW" if mode == "view" else "TABLE"
     quoted_period = _quote_identifier(period_column_name)
     quoted_value = _quote_identifier(value_column_name)
     quoted_table = _quote_identifier(table)
@@ -227,7 +278,52 @@ def _build_reshape_sql(
                 f"UNION ALL SELECT {id_prefix}'{period_literal}', {quoted_col} FROM {quoted_table}"
             )
     body = "\n".join(branches)
-    return f"CREATE OR REPLACE {keyword} {_quote_identifier(suggested_view)} AS\n{body};"
+    return (
+        f"-- Python `duckdb` 1.5.2 fails to re-bind UNPIVOT inside views on a fresh\n"
+        f"-- connection (Binder Error: UNPIVOT name count mismatch), so we use\n"
+        f"-- UNION ALL here. `tidy table` keeps the cleaner UNPIVOT form because\n"
+        f"-- materialized tables don't re-bind. The standalone duckdb CLI 1.5.1\n"
+        f"-- is unaffected.\n"
+        f"CREATE OR REPLACE VIEW {_quote_identifier(suggested_view)} AS\n"
+        f"{body};"
+    )
+
+
+def _build_reshape_sql(
+    table: str,
+    id_columns: list[str],
+    column_period_pairs: list[tuple[str, str]],
+    period_column_name: str,
+    value_column_name: str,
+    suggested_view: str,
+    mode: str = "table",
+) -> str:
+    """Build the DDL for one tidy reshape.
+
+    For ``mode='table'`` (the default), emits the canonical DuckDB
+    ``UNPIVOT`` form. For ``mode='view'``, falls back to ``UNION ALL``
+    branches because of a DuckDB binder bug that breaks UNPIVOT inside
+    stored views.
+    """
+    if mode == "table":
+        return _build_unpivot_sql(
+            table,
+            column_period_pairs,
+            period_column_name,
+            value_column_name,
+            suggested_view,
+            mode,
+        )
+    if mode == "view":
+        return _build_union_all_view_sql(
+            table,
+            id_columns,
+            column_period_pairs,
+            period_column_name,
+            value_column_name,
+            suggested_view,
+        )
+    raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
 
 
 def _build_period_suggestion(
@@ -265,6 +361,7 @@ def _build_period_suggestion(
         period_column_name,
         value_column_name,
         suggested_view,
+        mode="table",
     )
     return TidySuggestion(
         pattern=pattern,

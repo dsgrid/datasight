@@ -127,7 +127,8 @@ def test_detects_year_columns_with_shared_prefix():
     assert s["value_column_name"] == "sales"
     assert s["period_column_name"] == "year"
     assert s["suggested_view"] == "sales_wide_long"
-    assert "UNION ALL" in s["reshape_sql"]
+    assert "UNPIVOT" in s["reshape_sql"]
+    assert "CREATE OR REPLACE TABLE" in s["reshape_sql"]
 
 
 def test_detects_hour_columns_no_prefix():
@@ -359,7 +360,7 @@ def test_quality_cli_emits_tidy_suggestions_json(wide_project):
     s = data["tidy_suggestions"][0]
     assert s["table"] == "sales_wide"
     assert s["period_kind"] == "year"
-    assert "UNION ALL" in s["reshape_sql"]
+    assert "UNPIVOT" in s["reshape_sql"]
 
 
 def test_quality_cli_emits_tidy_suggestions_markdown(wide_project):
@@ -368,7 +369,7 @@ def test_quality_cli_emits_tidy_suggestions_markdown(wide_project):
     assert result.exit_code == 0, result.output
     assert "Tidy Reshape Suggestions" in result.output
     assert "sales_wide" in result.output
-    assert "UNION ALL" in result.output
+    assert "UNPIVOT" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +453,35 @@ def test_tidy_table_dry_run_emits_table_ddl(tmp_path):
     rows = conn.execute("SHOW TABLES").fetchall()
     conn.close()
     assert all("long" not in name for (name,) in rows)
+
+
+def test_tidy_view_sql_uses_union_all_workaround(tmp_path):
+    """View mode must use UNION ALL — UNPIVOT inside a view fails to re-bind
+    on a fresh DuckDB connection (1.5.2 binder bug). This test pins the
+    workaround so a future "simplification" back to UNPIVOT doesn't silently
+    re-introduce the bug."""
+    project_dir, db_path = _wide_project_dir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["tidy", "view", "--project-dir", project_dir, "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "UNION ALL" in result.output
+    # Strip leading SQL comments before checking — the workaround note
+    # mentions UNPIVOT in prose, but the actual SQL must not use it.
+    body = "\n".join(
+        line for line in result.output.splitlines() if not line.lstrip().startswith("--")
+    )
+    assert "UNPIVOT" not in body
+
+
+def test_tidy_table_sql_uses_unpivot(tmp_path):
+    """Table mode uses the canonical UNPIVOT form (works because materialized
+    tables don't re-bind on query)."""
+    project_dir, _ = _wide_project_dir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["tidy", "table", "--project-dir", project_dir, "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "UNPIVOT" in result.output
+    assert "UNION ALL" not in result.output
 
 
 def test_tidy_view_actually_creates_view(tmp_path):

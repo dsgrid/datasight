@@ -135,11 +135,17 @@ $ datasight tidy suggest --table sales_wide --format markdown
   across year values.
 
   ```sql
-  CREATE OR REPLACE VIEW "sales_wide_long" AS
-  SELECT "region", '2020' AS "year", "sales_2020" AS "sales" FROM "sales_wide"
-  UNION ALL SELECT "region", '2021', "sales_2021" FROM "sales_wide"
-  UNION ALL SELECT "region", '2022', "sales_2022" FROM "sales_wide"
-  UNION ALL SELECT "region", '2023', "sales_2023" FROM "sales_wide";
+  CREATE OR REPLACE TABLE "sales_wide_long" AS
+  SELECT * FROM (
+    UNPIVOT "sales_wide"
+    ON "sales_2020" AS '2020',
+      "sales_2021" AS '2021',
+      "sales_2022" AS '2022',
+      "sales_2023" AS '2023'
+    INTO
+      NAME "year"
+      VALUE "sales"
+  );
   ```
 ```
 
@@ -150,32 +156,37 @@ DuckDB database. Both accept `--dry-run` to preview the DDL without executing
 it:
 
 ```bash
-# Preview the view DDL
-datasight tidy view --dry-run
-
-# Create one long-form view per suggestion (CREATE OR REPLACE VIEW)
-datasight tidy view
-
-# Materialize as physical tables instead (CREATE OR REPLACE TABLE)
+# Materialize a physical table — the recommended default
 datasight tidy table
 
+# Preview the table DDL first
+datasight tidy table --dry-run
+
+# Or create a view that re-evaluates against the source on every query
+datasight tidy view
+
 # Scope to a single source table
-datasight tidy view --table sales_wide
+datasight tidy table --table sales_wide
 ```
 
 The default target name is `<source_table>_long`; existing objects with that
-name are replaced. After the view or table exists, reference it in your
+name are replaced. After the table or view exists, reference it in your
 `schema_description.md` so the LLM agent prefers tidy queries like
 `SELECT year, SUM(sales) FROM sales_wide_long GROUP BY year` over wide-column
 arithmetic.
 
-The inner `SELECT … UNION ALL …` body is portable to SQLite and PostgreSQL,
-but the surrounding `CREATE OR REPLACE VIEW` / `CREATE OR REPLACE TABLE`
-wrapper is DuckDB-specific (PostgreSQL has no `CREATE OR REPLACE TABLE`,
-SQLite has no `CREATE OR REPLACE VIEW`). `tidy view` and `tidy table`
-correspondingly only execute against DuckDB project databases — paste the
-`SELECT` body into the equivalent `CREATE VIEW` / `CREATE TABLE AS` syntax
-yourself if your project runs on a different backend.
+!!! note "Why view and table emit different SQL"
+    `tidy table` emits the canonical DuckDB `UNPIVOT` form. `tidy view`
+    falls back to `UNION ALL` branches because of a regression in the
+    Python `duckdb` 1.5.2 binding — UNPIVOT stored inside a view fails to
+    re-bind on a fresh connection through that binding, raising
+    `Binder Error: UNPIVOT name count mismatch`. The standalone `duckdb`
+    CLI 1.5.1 doesn't reproduce the failure, but every datasight query
+    path (the agent, the web UI, `datasight ask`) goes through the Python
+    binding, so views created without the workaround would break for any
+    in-datasight consumer. Materialized tables don't re-bind, so they
+    keep the cleaner form. Prefer `tidy table` unless you specifically
+    need the view's auto-update semantics.
 
 ## Find measures
 

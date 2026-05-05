@@ -104,31 +104,33 @@ questions.
 Before writing anything to the database, see exactly what would run:
 
 ```bash
-datasight tidy view --dry-run
+datasight tidy table --dry-run
 ```
 
-You'll see a `CREATE OR REPLACE VIEW` statement built from a `UNION ALL`
-of twelve per-month `SELECT`s. The `id_columns` (`plant_id`, `fuel_type`)
-are carried through; the wide measure columns are stacked into a
+You'll see a `CREATE OR REPLACE TABLE` statement built around a DuckDB
+`UNPIVOT`. The id columns (`plant_id`, `fuel_type`) come through
+automatically; the twelve wide measure columns are stacked into a
 two-column `(month, value)` pair.
 
 ## 6. Apply the reshape
 
-When the preview looks right, drop the `--dry-run` flag to write the
-view:
+When the preview looks right, drop the `--dry-run` flag:
 
 ```bash
-datasight tidy view
+datasight tidy table
 ```
 
 ```
-Created view 'monthly_generation_mwh_long' from monthly_generation_mwh (12 columns)
+Created table 'monthly_generation_mwh_long' from monthly_generation_mwh (12 columns)
 ```
 
-If you'd rather materialize a physical table instead of a view, use
-`datasight tidy table`. The shape of the result is identical; the
-difference is whether the rows are computed on demand (view) or stored
-once (table).
+`datasight tidy view` is also available if you want a view that
+re-evaluates against the source on every query (useful when the source
+table is updated periodically). Because of a regression in the Python
+`duckdb` 1.5.2 binding that breaks UNPIVOT inside views, `tidy view`
+emits a `UNION ALL` form instead — the result is identical but the SQL
+is more verbose. Prefer `tidy table` unless you specifically need view
+semantics.
 
 ## 7. Query the tidy form
 
