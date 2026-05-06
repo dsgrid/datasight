@@ -161,5 +161,11 @@ plain `GROUP BY`.
 - **Audit the rest of your data.** [Audit data quality](../how-to/audit-data-quality.md)
   covers `datasight quality`, which surfaces tidy suggestions alongside
   null/range/date-coverage checks during routine audits.
+- **Reshape pivots the regex misses.** This tutorial covered period
+  pivots (`jan` … `dec`). For category pivots like `coal_mwh`,
+  `gas_mwh`, `nuclear_mwh`, or multi-axis pivots like `coal_2020`,
+  `gas_2020`, `coal_2021`, `gas_2021`, see
+  [Curate datasets with `tidy review`](../how-to/curate-with-tidy-review.md).
+  That command asks an LLM for proposals and lets you approve each one.
 - **Try a real dataset.** [Explore US electricity generation (EIA)](getting-started.md)
   walks through the same loop on the PUDL EIA dataset.

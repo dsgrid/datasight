@@ -606,10 +606,14 @@ datasight quality [OPTIONS]
 
 Detect untidy column shapes and reshape into long form.
 
-Use 'tidy suggest' to inspect candidates, 'tidy view' to create
-long-form views, or 'tidy table' to materialize long-form tables.
-Detection is deterministic — column names plus dtypes plus row counts —
-so no LLM is involved.
+Two paths:
+
+- Deterministic: 'tidy suggest' lists candidates, 'tidy view' creates
+  long-form views, 'tidy table' materializes long-form tables. These
+  run on column-name pattern matching and never call an LLM.
+- LLM-augmented: 'tidy review' adds an advisor that proposes pivots
+  the regex misses (fuel-type-as-column, geography-as-column,
+  multi-axis pivots) for the developer to approve before applying.
 
 Examples:
 
@@ -619,6 +623,7 @@ datasight tidy suggest --table sales_wide
 datasight tidy view --dry-run
 datasight tidy view
 datasight tidy table --table sales_wide
+datasight tidy review --from plan.json --apply-all
 ```
 
 ```bash
@@ -639,6 +644,8 @@ List detected untidy column shapes without changing the database.
 Pass one or more CSV / Parquet / Excel / DuckDB files as positional
 arguments to inspect them in an ephemeral session — no project setup
 required. With no files, runs against the current project's database.
+Detection is deterministic: column names plus dtypes plus row counts.
+No LLM is involved. For pivots the regex misses, see 'tidy review'.
 
 Examples:
 
@@ -668,6 +675,10 @@ datasight tidy suggest [OPTIONS] [FILES]...
 
 Create CREATE OR REPLACE VIEW <table>_long for each detected pattern.
 
+Deterministic — applies the regex detector's hits without consulting
+an LLM. For LLM-augmented proposals (fuel-type-as-column, multi-axis
+pivots), use 'tidy review'.
+
 Examples:
 
 ```
@@ -691,6 +702,10 @@ datasight tidy view [OPTIONS]
 #### `datasight tidy table`
 
 Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern.
+
+Deterministic — applies the regex detector's hits without consulting
+an LLM. For LLM-augmented proposals (fuel-type-as-column, multi-axis
+pivots), use 'tidy review'.
 
 Examples:
 

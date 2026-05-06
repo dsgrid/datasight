@@ -147,16 +147,22 @@ def _apply_reshapes(
             datasight tidy view --dry-run
             datasight tidy view
             datasight tidy table --table sales_wide
+            datasight tidy review --from plan.json --apply-all
         """
     )
 )
 def tidy():
     """Detect untidy column shapes and reshape into long form.
 
-    Use 'tidy suggest' to inspect candidates, 'tidy view' to create
-    long-form views, or 'tidy table' to materialize long-form tables.
-    Detection is deterministic — column names plus dtypes plus row counts —
-    so no LLM is involved.
+    Two paths:
+
+    \b
+    - Deterministic: 'tidy suggest' lists candidates, 'tidy view' creates
+      long-form views, 'tidy table' materializes long-form tables. These
+      run on column-name pattern matching and never call an LLM.
+    - LLM-augmented: 'tidy review' adds an advisor that proposes pivots
+      the regex misses (fuel-type-as-column, geography-as-column,
+      multi-axis pivots) for the developer to approve before applying.
     """
 
 
@@ -197,6 +203,8 @@ def tidy_suggest(files, project_dir, source_table, output_format, output_path):
     Pass one or more CSV / Parquet / Excel / DuckDB files as positional
     arguments to inspect them in an ephemeral session — no project setup
     required. With no files, runs against the current project's database.
+    Detection is deterministic: column names plus dtypes plus row counts.
+    No LLM is involved. For pivots the regex misses, see 'tidy review'.
     """
     from rich.console import Console
 
@@ -299,7 +307,12 @@ def tidy_suggest(files, project_dir, source_table, output_format, output_path):
     help="Print the DDL without executing it.",
 )
 def tidy_view(project_dir, source_table, dry_run):
-    """Create CREATE OR REPLACE VIEW <table>_long for each detected pattern."""
+    """Create CREATE OR REPLACE VIEW <table>_long for each detected pattern.
+
+    Deterministic — applies the regex detector's hits without consulting
+    an LLM. For LLM-augmented proposals (fuel-type-as-column, multi-axis
+    pivots), use 'tidy review'.
+    """
     settings, project_dir, resolved_db_path = _resolve_tidy_settings(project_dir)
     if settings.database.mode != "duckdb":
         raise click.UsageError(
@@ -330,7 +343,12 @@ def tidy_view(project_dir, source_table, dry_run):
     help="Print the DDL without executing it.",
 )
 def tidy_table(project_dir, source_table, dry_run):
-    """Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern."""
+    """Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern.
+
+    Deterministic — applies the regex detector's hits without consulting
+    an LLM. For LLM-augmented proposals (fuel-type-as-column, multi-axis
+    pivots), use 'tidy review'.
+    """
     settings, project_dir, resolved_db_path = _resolve_tidy_settings(project_dir)
     if settings.database.mode != "duckdb":
         raise click.UsageError(

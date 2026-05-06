@@ -80,6 +80,7 @@ nav:
           - Save a dashboard as a template: use/how-to/save-dashboard-template.md
           - Save and rerun results: use/how-to/save-and-rerun.md
           - Audit data quality: use/how-to/audit-data-quality.md
+          - Curate datasets with tidy review: use/how-to/curate-with-tidy-review.md
           - Review the SQL query log: use/how-to/review-query-log.md
           - Run on an HPC compute node: use/how-to/run-on-hpc.md
           - Connect to a remote Flight SQL backend: use/how-to/connect-flight-sql.md
