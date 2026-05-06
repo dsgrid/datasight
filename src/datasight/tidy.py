@@ -1,23 +1,32 @@
-"""Detect untidy dataset patterns and suggest tidy-reshape DDL.
+"""Detect untidy dataset patterns and generate tidy-reshape DDL.
 
-Inspects table schemas and flags columns whose names appear to encode a
-dimension value (year, month, quarter, hour, day) rather than holding a
-single measure across rows. Each suggestion carries a previewable DuckDB
-DDL statement so users can inspect or materialize the reshape.
+The deterministic detector inspects table schemas and flags columns whose
+names appear to encode a dimension value (year, month, quarter, hour, day)
+rather than holding a single measure across rows. Each suggestion carries a
+previewable DuckDB DDL statement so users can inspect or materialize the
+reshape.
 
-The DDL emitted depends on the target object:
+The data model supports multi-pivot proposals as a first-class case: a
+suggestion carries a ``dimensions`` list (one or more) and a
+``column_mappings`` list whose entries map a source column to one
+``dimension_value`` per dimension. Single-pivot is just the
+one-dimension case. The deterministic detector emits single-pivot
+proposals only; multi-pivot proposals come from the ``tidy review``
+LLM-augmented advisor.
 
-- ``CREATE OR REPLACE TABLE`` uses the canonical DuckDB ``UNPIVOT`` form,
-  which is what ``tidy table`` runs and what ``tidy suggest`` displays.
-- ``CREATE OR REPLACE VIEW`` falls back to ``UNION ALL`` branches because
-  of a regression in the Python ``duckdb`` 1.5.2 binding — UNPIVOT stored
-  inside a view fails to re-bind on a fresh connection in that binding,
-  raising ``Binder Error: UNPIVOT name count mismatch``. (The standalone
-  ``duckdb`` CLI 1.5.1 is unaffected, but datasight depends on the Python
-  binding for every internal query path, so views created through
-  datasight need the workaround to remain queryable from datasight
-  itself.) Materialized tables don't re-bind, so they keep the cleaner
-  UNPIVOT form.
+The DDL emitted depends on the target object and the dimension count:
+
+- Single-pivot, ``CREATE OR REPLACE TABLE`` — DuckDB ``UNPIVOT``. This
+  is the canonical, terse form.
+- Single-pivot, ``CREATE OR REPLACE VIEW`` — ``UNION ALL`` branches.
+  Workaround for a regression in the Python ``duckdb`` 1.5.2 binding:
+  UNPIVOT stored inside a view fails to re-bind on a fresh connection
+  (``Binder Error: UNPIVOT name count mismatch``). The standalone
+  ``duckdb`` CLI 1.5.1 isn't affected, but every datasight query path
+  uses the Python binding, so views need a form that survives re-bind.
+- Multi-pivot, table or view — ``UNION ALL`` with N dimension literals
+  per branch. UNPIVOT only emits one name column, so it doesn't extend
+  cleanly to multiple dimensions.
 
 Detection is deterministic and purely structural (column names plus
 dtypes plus row count), so it runs without issuing extra SQL. The DDL is
@@ -123,7 +132,7 @@ def _split_prefix_period(name: str) -> tuple[str, str, str] | None:
     return None
 
 
-_PERIOD_COLUMN_NAMES: dict[str, str] = {
+_PERIOD_DIMENSION_NAMES: dict[str, str] = {
     "year": "year",
     "year_month": "year_month",
     "year_quarter": "year_quarter",
@@ -137,57 +146,101 @@ _PERIOD_COLUMN_NAMES: dict[str, str] = {
 }
 
 
+# Allowed dimension kinds. ``date_period`` covers any time-axis pivot (year,
+# month, quarter, hour, day). The remaining kinds are used by LLM-proposed
+# reshapes and won't appear in deterministic output.
+DIMENSION_KINDS: frozenset[str] = frozenset(
+    {"date_period", "category", "geography", "scenario", "other"}
+)
+
+# Allowed confidence labels. The deterministic detector always emits "high".
+CONFIDENCE_LEVELS: frozenset[str] = frozenset({"high", "medium", "low"})
+
+
 @dataclass
-class TidySuggestion:
-    """A concrete suggestion to reshape an untidy table into long form."""
+class Dimension:
+    """One axis of a tidy reshape (e.g., year, fuel_type)."""
 
-    pattern: str
-    table: str
-    affected_columns: list[str]
-    id_columns: list[str]
-    period_kind: str
-    common_prefix: str
-    period_column_name: str
-    value_column_name: str
-    suggested_view: str
-    rationale: str
-    reshape_sql: str
-
-    def build_sql(self, mode: str = "table") -> str:
-        """Return DDL that materializes this suggestion as a table or view."""
-        if mode not in ("view", "table"):
-            raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
-        pairs = _column_period_pairs(self.affected_columns)
-        return _build_reshape_sql(
-            self.table,
-            self.id_columns,
-            pairs,
-            self.period_column_name,
-            self.value_column_name,
-            self.suggested_view,
-            mode=mode,
-        )
+    name: str
+    kind: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def _column_period_pairs(affected_columns: list[str]) -> list[tuple[str, str]]:
-    """Recover (column_name, period_token) pairs by re-running the period split.
+@dataclass
+class ColumnMapping:
+    """How one source column maps to dimension values in the long form.
 
-    The period token isn't stored on ``TidySuggestion`` because it can be
-    derived deterministically from the column name; this helper exposes that
-    derivation for callers (CLI ``--create-table``) that need to regenerate
-    the SQL with a different ``CREATE`` mode.
+    ``dimension_values`` keys must exactly match the names of every
+    ``Dimension`` on the parent ``TidySuggestion``.
     """
-    pairs: list[tuple[str, str]] = []
-    for col in affected_columns:
-        result = _split_prefix_period(col)
-        if result is None:
-            continue
-        _, period_token, _ = result
-        pairs.append((col, period_token))
-    return pairs
+
+    column: str
+    dimension_values: dict[str, str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class TidySuggestion:
+    """A concrete proposal to reshape an untidy table into long form.
+
+    Multi-pivot is first-class: ``dimensions`` and each
+    ``column_mappings[i].dimension_values`` carry one entry per axis.
+    Single-pivot is just the one-dimension case.
+
+    ``source`` and ``confidence`` exist so deterministic and LLM-proposed
+    suggestions share one rendering path. The deterministic detector
+    always emits ``source="deterministic"`` and ``confidence="high"``.
+    """
+
+    pattern: str
+    table: str
+    dimensions: list[Dimension]
+    column_mappings: list[ColumnMapping]
+    id_columns: list[str]
+    value_column: str
+    target_object_name: str
+    rationale: str
+    reshape_sql: str
+    confidence: str = "high"
+    source: str = "deterministic"
+
+    def build_sql(self, mode: str = "table") -> str:
+        """Return DDL that materializes this suggestion as a table or view."""
+        if mode not in ("view", "table"):
+            raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
+        return _build_reshape_sql(
+            self.table,
+            self.id_columns,
+            self.dimensions,
+            self.column_mappings,
+            self.value_column,
+            self.target_object_name,
+            mode=mode,
+        )
+
+    @property
+    def affected_columns(self) -> list[str]:
+        """Source column names involved in the reshape, in mapping order."""
+        return [m.column for m in self.column_mappings]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pattern": self.pattern,
+            "table": self.table,
+            "dimensions": [d.to_dict() for d in self.dimensions],
+            "column_mappings": [m.to_dict() for m in self.column_mappings],
+            "id_columns": list(self.id_columns),
+            "value_column": self.value_column,
+            "target_object_name": self.target_object_name,
+            "rationale": self.rationale,
+            "reshape_sql": self.reshape_sql,
+            "confidence": self.confidence,
+            "source": self.source,
+        }
 
 
 @dataclass
@@ -205,125 +258,151 @@ class WideTableNote:
 
 def _build_unpivot_sql(
     table: str,
-    column_period_pairs: list[tuple[str, str]],
-    period_column_name: str,
-    value_column_name: str,
-    suggested_view: str,
+    column_mappings: list[ColumnMapping],
+    dimension: Dimension,
+    value_column: str,
+    target_object_name: str,
     mode: str,
 ) -> str:
-    """Build a ``CREATE OR REPLACE TABLE|VIEW`` using DuckDB ``UNPIVOT``.
+    """Build a single-pivot ``CREATE OR REPLACE TABLE|VIEW`` using ``UNPIVOT``.
 
-    Use ``UNPIVOT … ON col AS '<period>'`` so each affected column maps to
-    a clean period token in the new period column. UNPIVOT carries the
-    remaining id columns through automatically.
+    Only safe for ``mode='table'``. The Python ``duckdb`` 1.5.2 binding has a
+    regression where UNPIVOT stored inside a view fails to re-bind on a fresh
+    connection (the standalone CLI 1.5.1 is unaffected). ``_build_reshape_sql``
+    routes view mode to ``_build_union_all_sql`` instead.
 
-    Note: this form is only safe for ``mode='table'``. The Python
-    ``duckdb`` 1.5.2 binding has a regression where UNPIVOT stored inside
-    a view fails to re-bind on a fresh connection (the standalone CLI
-    1.5.1 is unaffected). ``_build_reshape_sql`` falls back to UNION ALL
-    for view mode so views remain queryable through datasight itself.
+    Multi-pivot reshapes never use this builder — UNPIVOT emits a single name
+    column, so it doesn't extend to multiple dimensions.
     """
     keyword = "TABLE" if mode == "table" else "VIEW"
     on_clause = ",\n    ".join(
-        f"{_quote_identifier(col)} AS '{period.replace(chr(39), chr(39) * 2)}'"
-        for col, period in column_period_pairs
+        f"{_quote_identifier(m.column)} AS '{m.dimension_values[dimension.name].replace(chr(39), chr(39) * 2)}'"
+        for m in column_mappings
     )
     return (
-        f"CREATE OR REPLACE {keyword} {_quote_identifier(suggested_view)} AS\n"
+        f"CREATE OR REPLACE {keyword} {_quote_identifier(target_object_name)} AS\n"
         f"SELECT * FROM (\n"
         f"  UNPIVOT {_quote_identifier(table)}\n"
         f"  ON {on_clause}\n"
         f"  INTO\n"
-        f"    NAME {_quote_identifier(period_column_name)}\n"
-        f"    VALUE {_quote_identifier(value_column_name)}\n"
+        f"    NAME {_quote_identifier(dimension.name)}\n"
+        f"    VALUE {_quote_identifier(value_column)}\n"
         f");"
     )
 
 
-def _build_union_all_view_sql(
+def _build_union_all_sql(
     table: str,
     id_columns: list[str],
-    column_period_pairs: list[tuple[str, str]],
-    period_column_name: str,
-    value_column_name: str,
-    suggested_view: str,
+    dimensions: list[Dimension],
+    column_mappings: list[ColumnMapping],
+    value_column: str,
+    target_object_name: str,
+    mode: str,
 ) -> str:
-    """Build a ``CREATE OR REPLACE VIEW`` using ``UNION ALL`` branches.
+    """Build a ``CREATE OR REPLACE TABLE|VIEW`` using ``UNION ALL`` branches.
 
-    A workaround for a regression in the Python ``duckdb`` 1.5.2 binding:
-    UNPIVOT stored inside a view re-binds incorrectly on a fresh
-    connection through that binding, raising ``UNPIVOT name count
-    mismatch``. The standalone ``duckdb`` CLI 1.5.1 doesn't reproduce
-    the failure, but every datasight query path uses the Python binding,
-    so we need a form that survives re-bind. Materialized tables
-    (``CREATE OR REPLACE TABLE``) don't re-bind and keep the cleaner
-    UNPIVOT form.
+    This is the unified path for:
+
+    - Single-pivot view mode (workaround for the duckdb 1.5.2 view-binding
+      bug; see module docstring).
+    - Multi-pivot, both table and view mode (UNPIVOT can't emit multiple
+      dimension columns).
+
+    Each affected column becomes one branch with N dimension literals plus
+    the value, in dimension-declaration order.
     """
-    quoted_period = _quote_identifier(period_column_name)
-    quoted_value = _quote_identifier(value_column_name)
+    keyword = "TABLE" if mode == "table" else "VIEW"
     quoted_table = _quote_identifier(table)
+    quoted_value = _quote_identifier(value_column)
     id_select = ", ".join(_quote_identifier(c) for c in id_columns)
     id_prefix = f"{id_select}, " if id_select else ""
+
     branches: list[str] = []
-    for index, (col, period) in enumerate(column_period_pairs):
-        period_literal = period.replace("'", "''")
-        quoted_col = _quote_identifier(col)
+    for index, mapping in enumerate(column_mappings):
+        dim_literals_first = ", ".join(
+            f"'{mapping.dimension_values[d.name].replace(chr(39), chr(39) * 2)}' "
+            f"AS {_quote_identifier(d.name)}"
+            for d in dimensions
+        )
+        dim_literals_subsequent = ", ".join(
+            f"'{mapping.dimension_values[d.name].replace(chr(39), chr(39) * 2)}'"
+            for d in dimensions
+        )
+        quoted_col = _quote_identifier(mapping.column)
         if index == 0:
             branches.append(
-                f"SELECT {id_prefix}'{period_literal}' AS {quoted_period}, "
+                f"SELECT {id_prefix}{dim_literals_first}, "
                 f"{quoted_col} AS {quoted_value} FROM {quoted_table}"
             )
         else:
             branches.append(
-                f"UNION ALL SELECT {id_prefix}'{period_literal}', {quoted_col} FROM {quoted_table}"
+                f"UNION ALL SELECT {id_prefix}{dim_literals_subsequent}, "
+                f"{quoted_col} FROM {quoted_table}"
             )
     body = "\n".join(branches)
+
+    # The single-pivot view case is the historical reason this builder
+    # exists — the comment surfaces that in the generated DDL so a reader
+    # tracing the file knows why UNION ALL appears instead of UNPIVOT.
+    if mode == "view" and len(dimensions) == 1:
+        header = (
+            "-- Python `duckdb` 1.5.2 fails to re-bind UNPIVOT inside views on a fresh\n"
+            "-- connection (Binder Error: UNPIVOT name count mismatch), so we use\n"
+            "-- UNION ALL here. `tidy table` keeps the cleaner UNPIVOT form because\n"
+            "-- materialized tables don't re-bind. The standalone duckdb CLI 1.5.1\n"
+            "-- is unaffected.\n"
+        )
+    elif len(dimensions) > 1:
+        header = (
+            "-- UNPIVOT only emits one name column, so multi-pivot reshapes use\n"
+            "-- UNION ALL with one literal per dimension on each branch.\n"
+        )
+    else:
+        header = ""
+
     return (
-        f"-- Python `duckdb` 1.5.2 fails to re-bind UNPIVOT inside views on a fresh\n"
-        f"-- connection (Binder Error: UNPIVOT name count mismatch), so we use\n"
-        f"-- UNION ALL here. `tidy table` keeps the cleaner UNPIVOT form because\n"
-        f"-- materialized tables don't re-bind. The standalone duckdb CLI 1.5.1\n"
-        f"-- is unaffected.\n"
-        f"CREATE OR REPLACE VIEW {_quote_identifier(suggested_view)} AS\n"
-        f"{body};"
+        f"{header}CREATE OR REPLACE {keyword} {_quote_identifier(target_object_name)} AS\n{body};"
     )
 
 
 def _build_reshape_sql(
     table: str,
     id_columns: list[str],
-    column_period_pairs: list[tuple[str, str]],
-    period_column_name: str,
-    value_column_name: str,
-    suggested_view: str,
+    dimensions: list[Dimension],
+    column_mappings: list[ColumnMapping],
+    value_column: str,
+    target_object_name: str,
     mode: str = "table",
 ) -> str:
     """Build the DDL for one tidy reshape.
 
-    For ``mode='table'`` (the default), emits the canonical DuckDB
-    ``UNPIVOT`` form. For ``mode='view'``, falls back to ``UNION ALL``
-    branches because of a DuckDB binder bug that breaks UNPIVOT inside
-    stored views.
+    Dispatch:
+
+    - single-pivot + ``mode='table'`` → UNPIVOT (canonical DuckDB form).
+    - single-pivot + ``mode='view'`` → UNION ALL (duckdb 1.5.2 view bug).
+    - multi-pivot, any mode → UNION ALL (UNPIVOT can't emit N name columns).
     """
-    if mode == "table":
+    if mode not in ("view", "table"):
+        raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
+    if len(dimensions) == 1 and mode == "table":
         return _build_unpivot_sql(
             table,
-            column_period_pairs,
-            period_column_name,
-            value_column_name,
-            suggested_view,
+            column_mappings,
+            dimensions[0],
+            value_column,
+            target_object_name,
             mode,
         )
-    if mode == "view":
-        return _build_union_all_view_sql(
-            table,
-            id_columns,
-            column_period_pairs,
-            period_column_name,
-            value_column_name,
-            suggested_view,
-        )
-    raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
+    return _build_union_all_sql(
+        table,
+        id_columns,
+        dimensions,
+        column_mappings,
+        value_column,
+        target_object_name,
+        mode,
+    )
 
 
 def _build_period_suggestion(
@@ -334,51 +413,57 @@ def _build_period_suggestion(
     common_prefix: str,
     excluded_from_id: set[str] | None = None,
 ) -> TidySuggestion:
-    affected_columns = [col for col, _ in column_period_pairs]
-    excluded = set(affected_columns) if excluded_from_id is None else excluded_from_id
+    """Build a single-pivot suggestion from a ``(prefix, period_kind)`` group."""
+    affected_column_names = [col for col, _ in column_period_pairs]
+    excluded = set(affected_column_names) if excluded_from_id is None else excluded_from_id
     id_columns = [c for c in all_columns if c not in excluded]
-    period_column_name = _PERIOD_COLUMN_NAMES.get(period_kind, "period")
-    value_column_name = common_prefix.strip("_") if common_prefix else "value"
-    if not value_column_name:
-        value_column_name = "value"
-    suggested_view = f"{table_name}_long"
+    dimension_name = _PERIOD_DIMENSION_NAMES.get(period_kind, "period")
+    value_column = common_prefix.strip("_") if common_prefix else "value"
+    if not value_column:
+        value_column = "value"
+    target_object_name = f"{table_name}_long"
     pattern = "repeated_prefix_period" if common_prefix else "date_in_column_names"
     if common_prefix:
         rationale = (
             f"Columns share prefix `{common_prefix}` with {period_kind} suffixes — "
-            f"{len(affected_columns)} columns look like a single measure spread across "
+            f"{len(affected_column_names)} columns look like a single measure spread across "
             f"{period_kind} values."
         )
     else:
         rationale = (
-            f"{len(affected_columns)} columns are named like {period_kind} values — "
+            f"{len(affected_column_names)} columns are named like {period_kind} values — "
             f"the {period_kind} dimension appears to be encoded in column headers."
         )
+
+    dimensions = [Dimension(name=dimension_name, kind="date_period")]
+    column_mappings = [
+        ColumnMapping(column=col, dimension_values={dimension_name: token})
+        for col, token in column_period_pairs
+    ]
     reshape_sql = _build_reshape_sql(
         table_name,
         id_columns,
-        column_period_pairs,
-        period_column_name,
-        value_column_name,
-        suggested_view,
+        dimensions,
+        column_mappings,
+        value_column,
+        target_object_name,
         mode="table",
     )
     return TidySuggestion(
         pattern=pattern,
         table=table_name,
-        affected_columns=affected_columns,
+        dimensions=dimensions,
+        column_mappings=column_mappings,
         id_columns=id_columns,
-        period_kind=period_kind,
-        common_prefix=common_prefix,
-        period_column_name=period_column_name,
-        value_column_name=value_column_name,
-        suggested_view=suggested_view,
+        value_column=value_column,
+        target_object_name=target_object_name,
         rationale=rationale,
         reshape_sql=reshape_sql,
     )
 
 
 def _detect_period_groups(table: dict[str, Any]) -> list[TidySuggestion]:
+    """Detect period-pattern groups in one table and emit single-pivot suggestions."""
     columns = [c["name"] for c in table.get("columns", [])]
     groups: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
     for column_name in columns:
@@ -405,7 +490,9 @@ def _detect_period_groups(table: dict[str, Any]) -> list[TidySuggestion]:
                 excluded_from_id=excluded_from_id,
             )
         )
-    suggestions.sort(key=lambda s: (-len(s.affected_columns), s.common_prefix))
+    suggestions.sort(
+        key=lambda s: (-len(s.column_mappings), s.value_column),
+    )
     return suggestions
 
 
@@ -427,7 +514,10 @@ def _detect_wide_low_rows(
     elif row_count <= column_count:
         reason = f"table has {column_count} columns and only {row_count} rows"
     else:
-        reason = f"table has {column_count} columns and only {row_count} rows ({row_count // column_count}x)"
+        reason = (
+            f"table has {column_count} columns and only {row_count} rows "
+            f"({row_count // column_count}x)"
+        )
     return WideTableNote(
         table=table["name"],
         column_count=column_count,
@@ -441,8 +531,14 @@ def analyze_tidy_patterns(schema_info: list[dict[str, Any]]) -> dict[str, Any]:
 
     The result has the same shape as other ``data_profile`` overviews: a
     JSON-serializable dict suitable for printing or feeding to a renderer.
+
+    Output keys: ``table_count``, ``suggestions`` (list of suggestion
+    dicts), ``wide_tables`` (list of wide-table notes), ``notes`` (list
+    of free-text strings). The ``suggestions`` key is generic — it
+    carries deterministic period-pattern hits today, and will carry
+    LLM-proposed multi-pivot suggestions once ``tidy review`` lands.
     """
-    period_suggestions: list[TidySuggestion] = []
+    suggestions: list[TidySuggestion] = []
     wide_tables: list[WideTableNote] = []
     notes: list[str] = []
 
@@ -450,17 +546,17 @@ def analyze_tidy_patterns(schema_info: list[dict[str, Any]]) -> dict[str, Any]:
         if not table.get("name"):
             continue
         table_period = _detect_period_groups(table)
-        period_suggestions.extend(table_period)
+        suggestions.extend(table_period)
         wide_note = _detect_wide_low_rows(table, table_period)
         if wide_note is not None:
             wide_tables.append(wide_note)
 
-    if not period_suggestions and not wide_tables:
+    if not suggestions and not wide_tables:
         notes.append("No untidy column-shape patterns detected.")
 
     return {
         "table_count": len(schema_info),
-        "period_suggestions": [s.to_dict() for s in period_suggestions],
+        "suggestions": [s.to_dict() for s in suggestions],
         "wide_tables": [w.to_dict() for w in wide_tables],
         "notes": notes,
     }
@@ -469,6 +565,10 @@ def analyze_tidy_patterns(schema_info: list[dict[str, Any]]) -> dict[str, Any]:
 __all__ = [
     "MIN_GROUP_SIZE",
     "WIDE_TABLE_COLUMN_THRESHOLD",
+    "DIMENSION_KINDS",
+    "CONFIDENCE_LEVELS",
+    "Dimension",
+    "ColumnMapping",
     "TidySuggestion",
     "WideTableNote",
     "analyze_tidy_patterns",

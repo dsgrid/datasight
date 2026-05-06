@@ -118,7 +118,7 @@ def _apply_reshapes(
             for source_table, suggestion in ddl_statements:
                 conn.execute(suggestion.build_sql(mode))
                 click.echo(
-                    f"Created {mode} {suggestion.suggested_view!r} "
+                    f"Created {mode} {suggestion.target_object_name!r} "
                     f"from {source_table} ({len(suggestion.affected_columns)} columns)"
                 )
         finally:
@@ -128,7 +128,7 @@ def _apply_reshapes(
         applied.append(
             {
                 "table": source_table,
-                "suggested_view": suggestion.suggested_view,
+                "target_object_name": suggestion.target_object_name,
                 "object_type": mode,
                 "affected_columns": suggestion.affected_columns,
                 "dry_run": dry_run,
@@ -225,11 +225,11 @@ def tidy_suggest(files, project_dir, source_table, output_format, output_path):
             "Tidy Reshape Suggestions",
             [
                 ("Tables scanned", str(tidy_data["table_count"])),
-                ("Suggestions", str(len(tidy_data.get("period_suggestions") or []))),
+                ("Suggestions", str(len(tidy_data.get("suggestions") or []))),
             ],
         )
     )
-    suggestions = tidy_data.get("period_suggestions") or []
+    suggestions = tidy_data.get("suggestions") or []
     if suggestions:
         console.print(
             cli.build_profile_detail_table(
@@ -238,17 +238,17 @@ def tidy_suggest(files, project_dir, source_table, output_format, output_path):
                     ("Source", "left"),
                     ("Target", "left"),
                     ("Pattern", "left"),
-                    ("Period", "left"),
+                    ("Dimensions", "left"),
                     ("Columns", "right"),
                     ("Rationale", "left"),
                 ],
                 [
                     [
                         item["table"],
-                        item["suggested_view"],
+                        item["target_object_name"],
                         item["pattern"],
-                        item["period_kind"],
-                        str(len(item["affected_columns"])),
+                        ", ".join(d["name"] for d in item["dimensions"]),
+                        str(len(item["column_mappings"])),
                         item["rationale"],
                     ]
                     for item in suggestions

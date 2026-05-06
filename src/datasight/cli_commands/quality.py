@@ -87,7 +87,7 @@ def quality(project_dir, table, output_format, output_path):
             base["time_series_issues"] = ts_data.get("time_series_issues", [])
             base["time_series_summaries"] = ts_data.get("time_series_summaries", [])
         tidy = analyze_tidy_patterns(schema_info)
-        base["tidy_suggestions"] = tidy["period_suggestions"]
+        base["tidy_suggestions"] = tidy["suggestions"]
         base["wide_tables"] = tidy["wide_tables"]
         return base
 
@@ -187,7 +187,7 @@ def quality(project_dir, table, output_format, output_path):
                 [
                     ("Table", "left"),
                     ("Pattern", "left"),
-                    ("Period", "left"),
+                    ("Dimensions", "left"),
                     ("Columns", "right"),
                     ("Rationale", "left"),
                 ],
@@ -195,8 +195,8 @@ def quality(project_dir, table, output_format, output_path):
                     [
                         item["table"],
                         item["pattern"],
-                        item["period_kind"],
-                        str(len(item["affected_columns"])),
+                        ", ".join(d["name"] for d in item["dimensions"]),
+                        str(len(item["column_mappings"])),
                         item["rationale"],
                     ]
                     for item in quality_data["tidy_suggestions"]
