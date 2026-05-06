@@ -1,13 +1,18 @@
-"""Tests for `datasight tidy review` — plan format, apply pipeline, and CLI.
+"""Tests for `datasight tidy review` — plan format, apply pipeline, LLM,
+and the interactive prompt loop.
 
-Covers the no-LLM portions of the feature:
+Covers:
   - Plan parsing (load_plan, structural validation).
   - Apply pipeline (apply_proposal, transactional verify-then-dispose).
   - The `tidy review --from` CLI path with single-pivot, multi-pivot, and
     every source-disposition variant.
   - `tidy review --out` round-trip from the deterministic detector.
+  - LLM proposal parsing and the LLM call wrapper, exercised with a
+    FakeLLMClient so tests are deterministic and offline.
+  - Interactive prompt loop: skip, apply, edit, quit.
 
-The LLM-augmented path is exercised separately in test_tidy_review_llm.py.
+A live LLM integration test against Ollama lives at the bottom under the
+`integration` mark and is skipped in CI.
 """
 
 from __future__ import annotations
@@ -812,10 +817,54 @@ def test_cli_review_out_dumps_deterministic_hits(tmp_path):
     assert plan.proposals[0].source == "deterministic"
 
 
-def test_cli_review_without_apply_all_errors_until_interactive_lands(tmp_path):
-    """The interactive prompt loop is task 4. Until it's wired, omitting
-    --apply-all must surface a clear UsageError pointing at --apply-all
-    or --dry-run."""
+def test_cli_review_interactive_apply_then_quit(tmp_path):
+    """Interactive: apply the first proposal, then quit at the second.
+
+    The loop sees two proposals (a multi-pivot plan with two distinct tables).
+    Sending "a\\nq\\n" applies the first and stops before the second. The
+    early-quit path must NOT roll back the first proposal — already-applied
+    work is committed and audited as it goes."""
+    db_path = tmp_path / "both.duckdb"
+    _build_single_pivot_db(db_path)
+    _build_multi_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    payload = {
+        "version": PLAN_VERSION,
+        "proposals": [
+            _single_pivot_plan_dict()["proposals"][0],
+            _multi_pivot_plan_dict()["proposals"][0],
+        ],
+    }
+    plan_path = _write_plan(tmp_path, payload)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--as",
+            "table",
+        ],
+        input="a\nq\n",
+    )
+    assert result.exit_code == 0, result.output
+    assert "Proposal 1 of 2" in result.output
+    assert "Stopped at proposal 2 of 2" in result.output
+    conn = duckdb.connect(str(db_path))
+    try:
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    assert "sales_long" in names  # proposal 1 was applied
+    assert "generation_long" not in names  # proposal 2 was skipped via quit
+
+
+def test_cli_review_interactive_skip_all(tmp_path):
+    """Skipping every proposal must leave the database untouched and exit 0."""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
     project_dir = _project_with_db(tmp_path, db_path)
@@ -831,9 +880,55 @@ def test_cli_review_without_apply_all_errors_until_interactive_lands(tmp_path):
             "--from",
             str(plan_path),
         ],
+        input="s\n",
     )
-    assert result.exit_code != 0
-    assert "Interactive review" in result.output
+    assert result.exit_code == 0, result.output
+    assert "Skipped" in result.output
+    assert "No proposals approved" in result.output
+    conn = duckdb.connect(str(db_path))
+    try:
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    assert "sales_long" not in names
+
+
+def test_cli_review_interactive_edit_then_apply(tmp_path):
+    """Edit the target name, then apply. The edited target should land in
+    the database, not the original `sales_long`."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--as",
+            "table",
+        ],
+        # Inputs (one per line):
+        #   e          -> enter edit menu
+        #   1          -> pick target_object_name
+        #   sales_tidy -> new name
+        #   b          -> back to main menu
+        #   a          -> apply
+        input="e\n1\nsales_tidy\nb\na\n",
+    )
+    assert result.exit_code == 0, result.output
+    conn = duckdb.connect(str(db_path))
+    try:
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    assert "sales_tidy" in names
+    assert "sales_long" not in names
 
 
 def test_cli_review_invalid_plan_against_schema(tmp_path):
@@ -911,3 +1006,385 @@ def test_cli_review_table_filter_scopes_apply(tmp_path):
         conn.close()
     assert "sales_long" in names
     assert "generation_long" not in names
+
+
+# ---------------------------------------------------------------------------
+# LLM proposal parsing — tolerant validator drops bad apples, keeps survivors
+# ---------------------------------------------------------------------------
+
+
+def _llm_proposal(
+    *,
+    table: str = "fuel_wide",
+    dimensions: list | None = None,
+    id_columns: list | None = None,
+    column_mappings: list | None = None,
+    value_column: str = "net_generation_mwh",
+    confidence: str = "medium",
+    rationale: str = "fuel-as-column",
+    target_object_name: str | None = None,
+) -> dict:
+    """Build a well-formed LLM proposal dict for tests."""
+    proposal = {
+        "table": table,
+        "dimensions": dimensions or [{"name": "fuel_type", "kind": "category"}],
+        "id_columns": id_columns or ["plant_id"],
+        "value_column": value_column,
+        "column_mappings": column_mappings
+        or [
+            {"column": "coal_mwh", "dimension_values": {"fuel_type": "coal"}},
+            {"column": "gas_mwh", "dimension_values": {"fuel_type": "gas"}},
+            {"column": "nuclear_mwh", "dimension_values": {"fuel_type": "nuclear"}},
+        ],
+        "confidence": confidence,
+        "rationale": rationale,
+    }
+    if target_object_name:
+        proposal["target_object_name"] = target_object_name
+    return proposal
+
+
+def test_parse_llm_proposals_passes_clean_proposal_through():
+    from datasight.tidy_llm import parse_llm_proposals
+
+    result = parse_llm_proposals([_llm_proposal()])
+    assert len(result.suggestions) == 1
+    assert result.parse_warnings == []
+    s = result.suggestions[0]
+    assert s.source == "llm"
+    assert [d.name for d in s.dimensions] == ["fuel_type"]
+    assert [m.column for m in s.column_mappings] == [
+        "coal_mwh",
+        "gas_mwh",
+        "nuclear_mwh",
+    ]
+
+
+def test_parse_llm_proposals_drops_malformed_keeps_rest():
+    """One malformed proposal must not torpedo the batch."""
+    from datasight.tidy_llm import parse_llm_proposals
+
+    bad = _llm_proposal(table="bad")
+    bad["dimensions"][0]["kind"] = "made_up_kind"  # invalid kind
+    good = _llm_proposal(table="good")
+    result = parse_llm_proposals([bad, good])
+    assert len(result.suggestions) == 1
+    assert result.suggestions[0].table == "good"
+    assert len(result.parse_warnings) == 1
+    assert "bad" in result.parse_warnings[0]
+
+
+def test_parse_llm_proposals_handles_multi_pivot():
+    from datasight.tidy_llm import parse_llm_proposals
+
+    proposal = _llm_proposal(
+        table="fuel_year_wide",
+        dimensions=[
+            {"name": "fuel_type", "kind": "category"},
+            {"name": "year", "kind": "date_period"},
+        ],
+        column_mappings=[
+            {
+                "column": "coal_2020",
+                "dimension_values": {"fuel_type": "coal", "year": "2020"},
+            },
+            {
+                "column": "coal_2021",
+                "dimension_values": {"fuel_type": "coal", "year": "2021"},
+            },
+            {
+                "column": "gas_2020",
+                "dimension_values": {"fuel_type": "gas", "year": "2020"},
+            },
+            {
+                "column": "gas_2021",
+                "dimension_values": {"fuel_type": "gas", "year": "2021"},
+            },
+        ],
+    )
+    result = parse_llm_proposals([proposal])
+    assert len(result.suggestions) == 1
+    s = result.suggestions[0]
+    assert [d.name for d in s.dimensions] == ["fuel_type", "year"]
+    body = "\n".join(
+        line for line in s.reshape_sql.splitlines() if not line.lstrip().startswith("--")
+    )
+    assert "UNION ALL" in body
+    assert "UNPIVOT" not in body
+
+
+def test_parse_llm_proposals_drops_overlap_between_id_and_mappings():
+    from datasight.tidy_llm import parse_llm_proposals
+
+    bad = _llm_proposal()
+    bad["id_columns"] = ["plant_id", "coal_mwh"]  # overlaps mapping
+    result = parse_llm_proposals([bad])
+    assert result.suggestions == []
+    assert any("overlap" in w for w in result.parse_warnings)
+
+
+def test_parse_llm_proposals_handles_non_dict_entry():
+    """Defensive: the model could in theory return something not dict-shaped."""
+    from datasight.tidy_llm import parse_llm_proposals
+
+    raw: list = ["not a dict", _llm_proposal()]  # ty: ignore[invalid-assignment]
+    result = parse_llm_proposals(raw)
+    assert len(result.suggestions) == 1
+    assert len(result.parse_warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# LLM call wrapper — fake LLMClient drives the structured-output path
+# ---------------------------------------------------------------------------
+
+
+class _FakeLLMClient:
+    """Scripted LLM that returns one canned response per call.
+
+    Mirrors the FakeLLMClient pattern in test_verify.py so tidy review
+    integration tests stay self-contained and don't require a live model.
+    """
+
+    def __init__(self, responses: list):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    async def create_message(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list,
+        tools: list,
+        max_tokens: int,
+    ):
+        self.calls.append(
+            {
+                "model": model,
+                "system": system,
+                "messages": [dict(m) for m in messages],
+                "tools": list(tools),
+                "max_tokens": max_tokens,
+            }
+        )
+        if not self._responses:
+            from datasight.llm import LLMResponse, TextBlock
+
+            return LLMResponse(content=[TextBlock(text="done")], stop_reason="end_turn")
+        return self._responses.pop(0)
+
+
+def _propose_response(proposals: list[dict]):
+    from datasight.llm import LLMResponse, ToolUseBlock, Usage
+
+    return LLMResponse(
+        content=[
+            ToolUseBlock(
+                id="tu_1",
+                name="propose_reshapes",
+                input={"proposals": proposals},
+            )
+        ],
+        stop_reason="tool_use",
+        usage=Usage(),
+    )
+
+
+async def test_propose_reshapes_calls_tool_and_parses(tmp_path):
+    from datasight.tidy_llm import propose_reshapes
+
+    fake = _FakeLLMClient([_propose_response([_llm_proposal()])])
+    schema_info = [
+        {
+            "name": "fuel_wide",
+            "row_count": 5,
+            "columns": [
+                {"name": "plant_id", "dtype": "INTEGER", "nullable": False},
+                {"name": "coal_mwh", "dtype": "DOUBLE", "nullable": True},
+                {"name": "gas_mwh", "dtype": "DOUBLE", "nullable": True},
+                {"name": "nuclear_mwh", "dtype": "DOUBLE", "nullable": True},
+            ],
+        }
+    ]
+    result = await propose_reshapes(
+        fake,
+        model="qwen2.5:7b",
+        schema_info=schema_info,
+        deterministic_hits=[],
+    )
+    assert len(result.suggestions) == 1
+    assert result.suggestions[0].source == "llm"
+    # The system prompt and tool went over the wire as expected.
+    [call] = fake.calls
+    assert call["tools"][0]["name"] == "propose_reshapes"
+    assert "energy-research" in call["system"].lower()
+    assert "<schema>" in call["messages"][0]["content"]
+    assert "<already_detected_by_regex>" in call["messages"][0]["content"]
+
+
+async def test_propose_reshapes_empty_proposals_is_valid():
+    from datasight.tidy_llm import propose_reshapes
+
+    fake = _FakeLLMClient([_propose_response([])])
+    result = await propose_reshapes(
+        fake,
+        model="qwen2.5:7b",
+        schema_info=[],
+        deterministic_hits=[],
+    )
+    assert result.suggestions == []
+    assert result.raw_proposals == []
+
+
+async def test_propose_reshapes_text_only_response_is_no_op():
+    """If the model returns prose without calling the tool, treat it as
+    'no proposals' rather than as an error."""
+    from datasight.llm import LLMResponse, TextBlock
+
+    from datasight.tidy_llm import propose_reshapes
+
+    fake = _FakeLLMClient(
+        [LLMResponse(content=[TextBlock(text="nothing to suggest")], stop_reason="end_turn")]
+    )
+    result = await propose_reshapes(
+        fake,
+        model="qwen2.5:7b",
+        schema_info=[],
+        deterministic_hits=[],
+    )
+    assert result.suggestions == []
+
+
+async def test_propose_reshapes_user_message_includes_samples():
+    from datasight.tidy_llm import propose_reshapes
+
+    fake = _FakeLLMClient([_propose_response([])])
+    samples = {"fuel_wide": [{"plant_id": 1, "coal_mwh": 100.0}]}
+    await propose_reshapes(
+        fake,
+        model="qwen2.5:7b",
+        schema_info=[],
+        deterministic_hits=[],
+        samples=samples,
+    )
+    [call] = fake.calls
+    content = call["messages"][0]["content"]
+    assert "<samples>" in content
+    assert "coal_mwh" in content
+
+
+# ---------------------------------------------------------------------------
+# CLI review with a fake LLMClient injected via monkeypatch
+# ---------------------------------------------------------------------------
+
+
+def test_cli_review_llm_path_with_fake_client(tmp_path, monkeypatch):
+    """End-to-end CLI test of the LLM path with a fake client.
+
+    Wires through `cli.create_llm_client` so the test doesn't hit a real
+    provider, then verifies the LLM-proposed suggestion gets applied.
+    """
+    db_path = tmp_path / "fuel.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE fuel_wide ("
+        "plant_id INTEGER, "
+        "coal_mwh DOUBLE, gas_mwh DOUBLE, nuclear_mwh DOUBLE)"
+    )
+    conn.execute("INSERT INTO fuel_wide VALUES (1, 100, 200, 300), (2, 50, 150, 250)")
+    conn.close()
+    project_dir = _project_with_db(tmp_path, db_path)
+
+    proposal = _llm_proposal(
+        table="fuel_wide",
+        column_mappings=[
+            {"column": "coal_mwh", "dimension_values": {"fuel_type": "coal"}},
+            {"column": "gas_mwh", "dimension_values": {"fuel_type": "gas"}},
+            {"column": "nuclear_mwh", "dimension_values": {"fuel_type": "nuclear"}},
+        ],
+        target_object_name="fuel_long",
+    )
+    fake = _FakeLLMClient([_propose_response([proposal])])
+
+    def _make_fake(**_kwargs):
+        return fake
+
+    monkeypatch.setattr("datasight.cli.create_llm_client", _make_fake)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--apply-all",
+            "--as",
+            "table",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    conn = duckdb.connect(str(db_path))
+    try:
+        rows = conn.execute(
+            "SELECT plant_id, fuel_type, net_generation_mwh "
+            "FROM fuel_long ORDER BY plant_id, fuel_type"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 6  # 2 source rows × 3 mapped columns
+    assert rows[0] == (1, "coal", 100.0)
+    # The fake LLM was called once.
+    assert len(fake.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Live LLM integration test — skipped in CI
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+async def test_propose_reshapes_live_llm_proposes_fuel_pivot():
+    """Smoke-test against a real local Ollama model. The deterministic
+    detector cannot recognize a fuel-type-as-column pivot; the LLM must.
+
+    Asserts only on `column_mappings.column` (the structural fact), not
+    on dimension_name or rationale text — those are LLM-stylistic choices
+    that drift between model versions."""
+    from datasight.llm import create_llm_client
+    from datasight.tidy_llm import propose_reshapes
+
+    schema_info = [
+        {
+            "name": "generation_fuel_wide",
+            "row_count": 100,
+            "columns": [
+                {"name": "plant_id", "dtype": "INTEGER", "nullable": False},
+                {"name": "report_date", "dtype": "DATE", "nullable": False},
+                {"name": "coal_mwh", "dtype": "DOUBLE", "nullable": True},
+                {"name": "gas_mwh", "dtype": "DOUBLE", "nullable": True},
+                {"name": "nuclear_mwh", "dtype": "DOUBLE", "nullable": True},
+                {"name": "solar_mwh", "dtype": "DOUBLE", "nullable": True},
+                {"name": "wind_mwh", "dtype": "DOUBLE", "nullable": True},
+            ],
+        }
+    ]
+    client = create_llm_client(
+        provider="ollama",
+        model="qwen2.5:7b",
+        api_key="",
+        base_url="http://localhost:11434",
+        timeout=120,
+    )
+    result = await propose_reshapes(
+        client,
+        model="qwen2.5:7b",
+        schema_info=schema_info,
+        deterministic_hits=[],
+    )
+    assert len(result.suggestions) >= 1
+    fuel_columns = {"coal_mwh", "gas_mwh", "nuclear_mwh", "solar_mwh", "wind_mwh"}
+    proposed_columns = {m.column for s in result.suggestions for m in s.column_mappings}
+    # The LLM should propose pivoting at least three of the five fuel columns.
+    assert len(fuel_columns & proposed_columns) >= 3

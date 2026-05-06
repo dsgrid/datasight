@@ -532,32 +532,214 @@ def tidy_review(
     if not valid:
         raise click.ClickException("No valid proposals after schema cross-check.")
 
-    if not apply_all:
-        # Interactive walk-through lands in task 4. For now require --apply-all
-        # so the plan-file pipeline is fully exercisable from CI.
-        raise click.UsageError(
-            "Interactive review is not available yet; pass --apply-all to "
-            "apply every valid proposal, or --dry-run to preview."
-        )
+    # `--apply-all` is the non-interactive code path used by tests and
+    # scripted prep. Without it, walk the developer through each proposal
+    # one by one and only act on the approved ones.
+    if apply_all:
+        approved = valid
+    else:
+        approved = _interactive_review(valid, disposition, as_mode)
+        if not approved:
+            click.echo("No proposals approved.")
+            return
 
-    _apply_review_proposals(valid, disposition, as_mode, dry_run, resolved_db_path)
+    _apply_review_proposals(approved, disposition, as_mode, dry_run, resolved_db_path)
 
 
 def _propose_via_llm(
     project_dir: str, settings: Any, source_table: str | None, sample_rows: int
 ) -> list:
-    """LLM-driven suggestion path. Stubbed until the prompt loop lands.
+    """Call the configured LLM provider for tidy-reshape proposals.
 
-    Once implemented, this will: load the schema, call the configured LLM
-    with the deterministic hits as already-known candidates, parse the
-    structured ``propose_reshapes`` tool call, validate the proposals, and
-    return them as TidySuggestion objects ready for the interactive review.
+    Loads the schema once, runs the deterministic detector against it (so
+    the LLM sees those hits as "already covered"), optionally fetches N
+    sample rows per table, then asks the model for additional candidates
+    via the ``propose_reshapes`` tool. The returned list combines the
+    deterministic hits (always single-pivot, always ``source='deterministic'``)
+    and the LLM's survivors (``source='llm'``) so the developer reviews
+    both in one loop.
     """
-    raise click.UsageError(
-        "LLM-based proposal generation is not implemented yet. "
-        "Use --from PLAN to apply a pre-built plan, or --out PLAN to "
-        "dump the deterministic detector's hits as a starting point."
+    import pandas as pd  # noqa: F401  — used implicitly via sql_runner.run_sql DataFrame return
+
+    from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
+    from datasight.tidy_llm import propose_reshapes
+
+    async def _gather():
+        sql_runner, schema_info = await cli.load_schema_info_for_project(project_dir, settings)
+        try:
+            schema_list = list(schema_info)
+            tidy_data = analyze_tidy_patterns(schema_list)
+            deterministic_hits = tidy_data["suggestions"]
+            samples: dict[str, list[dict[str, Any]]] = {}
+            if sample_rows > 0:
+                limit = int(sample_rows)
+                for tbl in schema_list:
+                    name = tbl["name"]
+                    # Quote with double-quotes — the same convention used
+                    # by the rest of the DuckDB-targeted code paths.
+                    df = await sql_runner.run_sql(f'SELECT * FROM "{name}" LIMIT {limit}')
+                    samples[name] = df.to_dict(orient="records")
+            return schema_list, deterministic_hits, samples
+        finally:
+            sql_runner.close()
+
+    schema_info, deterministic_hits, samples = asyncio.run(_gather())
+
+    llm_client = cli.create_llm_client(
+        provider=settings.llm.provider,
+        api_key=settings.llm.api_key,
+        base_url=settings.llm.base_url,
+        timeout=settings.llm.timeout,
+        model=settings.llm.model,
     )
+
+    async def _call():
+        return await propose_reshapes(
+            llm_client,
+            model=settings.llm.model,
+            schema_info=schema_info,
+            deterministic_hits=deterministic_hits,
+            samples=samples or None,
+        )
+
+    result = asyncio.run(_call())
+    for warning in result.parse_warnings:
+        click.echo(f"warn: {warning}", err=True)
+
+    # Combine deterministic + LLM proposals so the developer reviews
+    # everything in one loop. Deterministic ones come first because they
+    # are higher-confidence and structurally simpler.
+    deterministic_suggestions = [s for tbl in schema_info for s in _detect_period_groups(tbl)]
+    if source_table:
+        deterministic_suggestions = [
+            s for s in deterministic_suggestions if s.table == source_table
+        ]
+    return deterministic_suggestions + result.suggestions
+
+
+def _interactive_review(
+    suggestions: list,
+    disposition: Any,
+    mode: str,
+) -> list:
+    """Walk the developer through each proposal one at a time.
+
+    Per-proposal menu:
+
+      [a]pply / [s]kip / [e]dit / [q]uit
+
+    ``edit`` lets the developer rename the target object, the value column,
+    or trim the id columns. Renaming a dimension or remapping a column is
+    deliberately not editable inline — those changes warrant editing the
+    plan file directly via ``--out``.
+    """
+    approved: list = []
+    total = len(suggestions)
+    for index, suggestion in enumerate(suggestions, start=1):
+        click.echo("")
+        _render_proposal_summary(suggestion, index, total, disposition, mode)
+        while True:
+            choice = (
+                click.prompt(
+                    "  [a]pply / [s]kip / [e]dit / [q]uit",
+                    default="s",
+                    show_default=False,
+                )
+                .strip()
+                .lower()
+            )
+            if choice in ("a", "apply"):
+                approved.append(suggestion)
+                break
+            if choice in ("s", "skip", ""):
+                click.echo("  Skipped.")
+                break
+            if choice in ("e", "edit"):
+                _edit_proposal_inline(suggestion)
+                # Re-render after the edit so the developer sees the new state
+                # before deciding apply vs. skip.
+                _render_proposal_summary(suggestion, index, total, disposition, mode)
+                continue
+            if choice in ("q", "quit"):
+                click.echo(f"  Stopped at proposal {index} of {total}.")
+                return approved
+            click.echo("  Unknown choice; pick one of a / s / e / q.")
+    return approved
+
+
+def _render_proposal_summary(
+    suggestion: Any, index: int, total: int, disposition: Any, mode: str
+) -> None:
+    dim_label = ", ".join(f"{d.name} ({d.kind})" for d in suggestion.dimensions)
+    mapped_label = ", ".join(m.column for m in suggestion.column_mappings)
+    if len(mapped_label) > 80:
+        mapped_label = mapped_label[:77] + "..."
+    disp_text = disposition.mode
+    if disposition.mode == "rename":
+        disp_text = f"rename source -> {disposition.new_name}"
+    elif disposition.mode == "drop":
+        disp_text = "drop source"
+    else:
+        disp_text = "keep source"
+    click.echo(
+        f"Proposal {index} of {total} — {suggestion.table} -> {suggestion.target_object_name}"
+    )
+    click.echo(
+        f"  Source: {suggestion.source}   Confidence: {suggestion.confidence}   Mode: {mode}"
+    )
+    click.echo(f"  Dimensions: {dim_label}")
+    click.echo(f"  Mapped ({len(suggestion.column_mappings)}): {mapped_label}")
+    click.echo(f"  Id columns: {', '.join(suggestion.id_columns) or '<none>'}")
+    click.echo(f"  Value column: {suggestion.value_column}")
+    click.echo(f"  Source disposition: {disp_text}")
+    if suggestion.rationale:
+        click.echo(f"  Rationale: {suggestion.rationale}")
+
+
+def _edit_proposal_inline(suggestion: Any) -> None:
+    """Allow the developer to rename target / value column / id columns.
+
+    Mutates the suggestion in place. Dimensions and column_mappings are
+    deliberately not editable — those are best handled by writing the plan
+    file via ``--out``, editing it, and re-running with ``--from``.
+    """
+    while True:
+        click.echo("  Edit which field?")
+        click.echo(f"    1) target_object_name ({suggestion.target_object_name})")
+        click.echo(f"    2) value_column ({suggestion.value_column})")
+        click.echo(f"    3) id_columns ({', '.join(suggestion.id_columns) or '<none>'})")
+        click.echo("    [b]ack")
+        choice = click.prompt("  >", default="b", show_default=False).strip().lower()
+        if choice in ("b", "back", ""):
+            # Rebuild the SQL from the (possibly mutated) fields so it stays
+            # in sync with subsequent renders and the apply step.
+            suggestion.reshape_sql = suggestion.build_sql("table")
+            return
+        if choice == "1":
+            new = click.prompt(
+                "  New target_object_name",
+                default=suggestion.target_object_name,
+                show_default=True,
+            ).strip()
+            if new:
+                suggestion.target_object_name = new
+        elif choice == "2":
+            new = click.prompt(
+                "  New value_column",
+                default=suggestion.value_column,
+                show_default=True,
+            ).strip()
+            if new:
+                suggestion.value_column = new
+        elif choice == "3":
+            new = click.prompt(
+                "  New id_columns (comma-separated)",
+                default=", ".join(suggestion.id_columns),
+                show_default=True,
+            ).strip()
+            suggestion.id_columns = [c.strip() for c in new.split(",") if c.strip()]
+        else:
+            click.echo("  Unknown choice; pick 1, 2, 3, or b.")
 
 
 def _apply_review_proposals(
