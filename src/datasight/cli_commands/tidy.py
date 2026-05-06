@@ -340,6 +340,286 @@ def tidy_table(project_dir, source_table, dry_run):
     _apply_reshapes(suggestions_by_table, "table", dry_run, resolved_db_path)
 
 
+@click.command(
+    name="review",
+    epilog=format_epilog(
+        """
+        Examples:
+
+            datasight tidy review --from plan.json --apply-all
+            datasight tidy review --from plan.json --dry-run
+            datasight tidy review --out detector.json
+            datasight tidy review --from plan.json --apply-all --drop-source
+            datasight tidy review --from plan.json --apply-all --rename-source sales_wide_raw
+        """
+    ),
+)
+@_project_scope_options
+@click.option(
+    "--from",
+    "plan_path",
+    type=click.Path(exists=True),
+    default=None,
+    help="Load proposals from a JSON plan file (no LLM call).",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(),
+    default=None,
+    help=(
+        "Write proposals to a JSON plan file instead of applying. "
+        "Without --from, writes the deterministic detector's hits."
+    ),
+)
+@click.option(
+    "--apply-all",
+    "apply_all",
+    is_flag=True,
+    default=False,
+    help="Apply every proposal without prompting. Required for non-interactive use.",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Print DDL and proposed dispositions without changing the database.",
+)
+@click.option(
+    "--as",
+    "as_mode",
+    type=click.Choice(["table", "view"]),
+    default="view",
+    help="Materialize the long form as a table or view (default: view).",
+)
+@click.option(
+    "--keep-source",
+    "keep_source",
+    is_flag=True,
+    default=False,
+    help="Leave the source table unchanged after the reshape (default).",
+)
+@click.option(
+    "--rename-source",
+    "rename_source",
+    default=None,
+    metavar="NAME",
+    help="Rename the source table to NAME after a successful reshape.",
+)
+@click.option(
+    "--drop-source",
+    "drop_source",
+    is_flag=True,
+    default=False,
+    help="Drop the source table after a successful reshape.",
+)
+@click.option(
+    "--sample",
+    "sample_rows",
+    type=int,
+    default=0,
+    help=(
+        "Send N sample rows per candidate to the configured LLM provider "
+        "(default 0). Sample values get sent over the network — opt in only "
+        "when the LLM seeing the values is acceptable."
+    ),
+)
+def tidy_review(
+    project_dir,
+    source_table,
+    plan_path,
+    out_path,
+    apply_all,
+    dry_run,
+    as_mode,
+    keep_source,
+    rename_source,
+    drop_source,
+    sample_rows,
+):
+    """LLM-augmented advisor that proposes reshapes for the developer to review.
+
+    Runs the deterministic detector first, then asks the configured LLM
+    provider for additional candidates the regex misses (fuel-type-as-column,
+    geography-as-column, scenario-as-column, multi-axis pivots). The
+    developer approves each candidate before it is applied.
+
+    Use ``--from PLAN`` to skip the LLM call and apply a pre-built plan.
+    Use ``--out PLAN`` to write proposals to a file instead of applying;
+    without ``--from`` this writes the deterministic detector's hits, giving
+    a starting point that can be hand-edited and fed back via ``--from``.
+
+    Calls the configured LLM provider whenever ``--from`` is not set.
+    """
+    from datasight.tidy_review import (
+        dump_plan,
+        load_plan,
+        resolve_source_disposition,
+        validate_against_schema,
+    )
+
+    try:
+        disposition = resolve_source_disposition(keep_source, rename_source, drop_source)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    settings, project_dir, resolved_db_path = _resolve_tidy_settings(project_dir)
+    if settings.database.mode != "duckdb":
+        raise click.UsageError(
+            "tidy review requires DuckDB; the apply path opens a writable DuckDB connection."
+        )
+
+    # Load suggestions. Three sources, in priority order:
+    #   1. --from PLAN  : load that plan and skip the LLM entirely.
+    #   2. --out PLAN   : when paired with no --from, this is the bootstrap
+    #                     case — dump the deterministic detector's hits so
+    #                     the developer can hand-edit and feed back later.
+    #   3. (default)    : call the configured LLM provider for proposals.
+    #                     Stubbed until the prompt loop lands.
+    if plan_path is not None:
+        plan = load_plan(Path(plan_path))
+        suggestions = list(plan.proposals)
+    elif out_path is not None:
+        _, suggestions_by_table = asyncio.run(
+            _gather_tidy_data(project_dir, source_table, settings)
+        )
+        suggestions = [s for sugs in suggestions_by_table.values() for s in sugs]
+    else:
+        suggestions = _propose_via_llm(project_dir, settings, source_table, sample_rows)
+
+    if source_table:
+        suggestions = [s for s in suggestions if s.table == source_table]
+
+    # --out: write proposals to disk and exit, no apply.
+    if out_path:
+        dump_plan(suggestions, Path(out_path))
+        click.echo(f"Wrote {len(suggestions)} proposal(s) to {out_path}")
+        return
+
+    if not suggestions:
+        click.echo("No proposals to apply.")
+        return
+
+    # Cross-check every suggestion against the live schema before touching
+    # anything. Stale plans (renamed tables, dropped columns) get caught
+    # here with a clear error rather than mid-apply. Close the read
+    # connection before the apply step opens a writable one — DuckDB
+    # rejects multiple connections to the same file with conflicting
+    # configurations.
+    async def _load_schema():
+        sql_runner, schema_info = await cli.load_schema_info_for_project(project_dir, settings)
+        try:
+            return list(schema_info)
+        finally:
+            sql_runner.close()
+
+    schema_info = asyncio.run(_load_schema())
+    invalid: list[tuple[str, list[str]]] = []
+    valid: list = []
+    for s in suggestions:
+        problems = validate_against_schema(s, schema_info)
+        if problems:
+            invalid.append((s.table, problems))
+        else:
+            valid.append(s)
+    if invalid:
+        for table_name, problems in invalid:
+            click.echo(f"Skipping proposal for {table_name}:", err=True)
+            for problem in problems:
+                click.echo(f"  - {problem}", err=True)
+
+    if not valid:
+        raise click.ClickException("No valid proposals after schema cross-check.")
+
+    if not apply_all:
+        # Interactive walk-through lands in task 4. For now require --apply-all
+        # so the plan-file pipeline is fully exercisable from CI.
+        raise click.UsageError(
+            "Interactive review is not available yet; pass --apply-all to "
+            "apply every valid proposal, or --dry-run to preview."
+        )
+
+    _apply_review_proposals(valid, disposition, as_mode, dry_run, resolved_db_path)
+
+
+def _propose_via_llm(
+    project_dir: str, settings: Any, source_table: str | None, sample_rows: int
+) -> list:
+    """LLM-driven suggestion path. Stubbed until the prompt loop lands.
+
+    Once implemented, this will: load the schema, call the configured LLM
+    with the deterministic hits as already-known candidates, parse the
+    structured ``propose_reshapes`` tool call, validate the proposals, and
+    return them as TidySuggestion objects ready for the interactive review.
+    """
+    raise click.UsageError(
+        "LLM-based proposal generation is not implemented yet. "
+        "Use --from PLAN to apply a pre-built plan, or --out PLAN to "
+        "dump the deterministic detector's hits as a starting point."
+    )
+
+
+def _apply_review_proposals(
+    suggestions: list,
+    disposition: Any,
+    mode: str,
+    dry_run: bool,
+    resolved_db_path: str,
+) -> None:
+    """Walk a validated list of suggestions through the apply pipeline.
+
+    One DuckDB connection is opened for the whole batch. Each proposal runs
+    inside its own transaction (``apply_proposal`` handles BEGIN/COMMIT) so
+    a mid-batch failure leaves prior successes intact and rolls back only
+    the failing one.
+    """
+    import duckdb
+
+    from datasight.tidy_review import apply_proposal
+
+    audit: list[dict[str, Any]] = []
+    conn = duckdb.connect(resolved_db_path)
+    try:
+        for suggestion in suggestions:
+            if dry_run:
+                click.echo(f"-- Would apply for {suggestion.table}:")
+                click.echo(suggestion.build_sql(mode))
+                click.echo(
+                    f"-- Source disposition: {disposition.mode}"
+                    + (f" -> {disposition.new_name}" if disposition.mode == "rename" else "")
+                )
+            try:
+                result = apply_proposal(
+                    conn,
+                    suggestion,
+                    mode=mode,
+                    source_disposition=disposition,
+                    dry_run=dry_run,
+                )
+            except Exception as exc:
+                click.echo(f"Failed to apply {suggestion.target_object_name}: {exc}", err=True)
+                continue
+            if not dry_run:
+                disp_suffix = ""
+                if result.source_disposition == "rename":
+                    disp_suffix = f"; renamed source to {result.source_renamed_to}"
+                elif result.source_disposition == "drop":
+                    disp_suffix = "; dropped source"
+                click.echo(
+                    f"Created {mode} {result.target_object_name!r} from "
+                    f"{result.table} ({len(result.affected_columns)} columns, "
+                    f"{result.row_count_target} rows){disp_suffix}"
+                )
+            audit.append(result.to_dict())
+    finally:
+        conn.close()
+
+    if not dry_run:
+        click.echo(f"\nApplied {len(audit)} proposal(s).")
+
+
 tidy.add_command(tidy_suggest)
 tidy.add_command(tidy_view)
 tidy.add_command(tidy_table)
+tidy.add_command(tidy_review)
