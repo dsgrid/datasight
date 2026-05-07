@@ -67,6 +67,11 @@ Use it to spot:
 
 ## Detect untidy column shapes
 
+!!! warning "Experimental"
+    The `datasight tidy` commands are experimental and have not been fully
+    tested. `tidy suggest` is read-only and safe to run. `tidy table` and
+    `tidy view` write to your database — use `--dry-run` first.
+
 `datasight quality` also flags tables whose **column names encode dimension
 values** — a common spreadsheet shape that confuses both DuckDB and the LLM
 agent. To list, preview, or apply reshapes, use the dedicated

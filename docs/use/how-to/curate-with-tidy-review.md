@@ -1,5 +1,11 @@
 # Curate datasets with `tidy review`
 
+!!! warning "Experimental"
+    `tidy review` is experimental and has not been fully tested. Review
+    every proposal carefully before applying, and use `--dry-run` to
+    preview changes. Back up your database before running `--apply-all`
+    for the first time.
+
 `datasight tidy review` is an LLM-augmented advisor for the project
 developer. It proposes reshapes that the regex-based detector
 (`tidy suggest`) cannot see — fuel-type-as-column, geography-as-column,

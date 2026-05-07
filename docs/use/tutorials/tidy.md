@@ -20,6 +20,12 @@ This tutorial walks through detecting the first shape and reshaping it into
 the second. Allow about five minutes. **No API key required** — none of the
 steps call the AI.
 
+!!! warning "Experimental"
+    The `datasight tidy` commands are experimental and have not been fully
+    tested. `tidy suggest` is read-only and safe to run. `tidy table` and
+    `tidy view` write to your database — use `--dry-run` first to preview
+    the DDL before applying.
+
 !!! note "Background reading"
     The tidy-data concept comes from Hadley Wickham's
     [Tidy Data](https://www.jstatsoft.org/article/view/v059i10) (J. Stat. Softw., 2014).
