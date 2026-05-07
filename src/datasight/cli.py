@@ -42,9 +42,22 @@ def configure_logging(level: str = "INFO") -> None:
     Call from commands that log progress so every command uses the same
     format regardless of which module emitted the log. Safe to call
     multiple times.
+
+    The sink is bound to ``sys.__stderr__`` (the *original* process
+    stderr) rather than the current ``sys.stderr``. CLI logs are user-
+    facing diagnostics that should land on the terminal regardless of
+    in-process stderr redirects — most importantly, Click's ``CliRunner``
+    swaps ``sys.stderr`` to capture output, and binding to that captured
+    stream would mix log lines into ``result.output`` and corrupt
+    machine-readable JSON / CSV in tests. Loguru's default sink uses the
+    same trick (it captures the import-time stderr) which is why test
+    suites worked before INFO was wired through this group callback.
+    Fall back to ``sys.stderr`` on the rare platforms where the original
+    is unavailable (e.g. ``pythonw`` on Windows).
     """
     logger.remove()
-    logger.add(sys.stderr, level=level, format=_LOG_FORMAT)
+    sink = sys.__stderr__ if sys.__stderr__ is not None else sys.stderr
+    logger.add(sink, level=level, format=_LOG_FORMAT)
 
 
 def current_db_settings_or_none():
@@ -1336,8 +1349,6 @@ def prepare_web_runtime(
     port: int | None,
     model: str | None,
     project_dir: str | None,
-    verbose: bool,
-    setup_logging: bool = True,
 ) -> tuple[Settings, str, int]:
     from dotenv import load_dotenv
 
@@ -1360,8 +1371,8 @@ def prepare_web_runtime(
 
     load_global_env(override=False)
 
-    if setup_logging:
-        configure_logging("DEBUG" if verbose else "INFO")
+    # Logging is configured once by the top-level ``cli`` group callback
+    # (``datasight --verbose ...``); web mode inherits the same level.
 
     settings = Settings.from_env()
     resolved_model = model if model else settings.llm.model
@@ -1385,8 +1396,22 @@ def prepare_web_runtime(
 
 @click.group()
 @click.version_option(__version__, prog_name="datasight")
-def cli():
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    help="Enable debug logging for the invoked command.",
+)
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool) -> None:
     """datasight — AI-powered data exploration with natural language."""
+    # Configure logging once for the entire process. Default INFO keeps the
+    # output skim-friendly; ``datasight --verbose <cmd>`` opts into DEBUG.
+    # Subcommands no longer carry their own ``--verbose`` flag, so this is
+    # the single switch that controls log noise across the CLI.
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    configure_logging("DEBUG" if verbose else "INFO")
 
 
 def _register_commands() -> None:

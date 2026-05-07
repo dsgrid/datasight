@@ -5,7 +5,6 @@ from pathlib import Path
 import rich_click as click
 
 
-from datasight import cli
 from datasight.cli_helpers import format_epilog
 
 
@@ -47,8 +46,6 @@ def demo_eia_generation(project_dir: str, min_year: int):
 
     PROJECT_DIR defaults to the current directory.
     """
-    cli.configure_logging("INFO")
-
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -98,8 +95,6 @@ def demo_dsgrid_tempo(project_dir: str):
 
     PROJECT_DIR defaults to the current directory.
     """
-    cli.configure_logging("INFO")
-
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -152,8 +147,6 @@ def demo_time_validation(project_dir: str):
 
     PROJECT_DIR defaults to the current directory.
     """
-    cli.configure_logging("INFO")
-
     dest = Path(project_dir).resolve()
     dest.mkdir(parents=True, exist_ok=True)
 

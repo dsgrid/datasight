@@ -35,6 +35,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import yaml
+from loguru import logger
+
 from datasight.schema import _quote_identifier
 from datasight.tidy import (
     CONFIDENCE_LEVELS,
@@ -79,6 +82,11 @@ class ApplyResult:
     target objects, how many rows moved, what happened to the source, and
     whether this was a dry run. Serialized into the audit log surfaced by
     ``tidy review`` at the end of a run.
+
+    ``final_target_name`` is the name the long-form object goes by *after*
+    the disposition step. It differs from ``target_object_name`` only when
+    ``source_disposition == "drop"``, in which case the long form takes
+    over the source's old name (the source is dropped first).
     """
 
     table: str
@@ -89,6 +97,7 @@ class ApplyResult:
     row_count_target: int
     source_disposition: str
     source_renamed_to: str | None
+    final_target_name: str
     dry_run: bool
     ddl: str = ""
 
@@ -96,6 +105,7 @@ class ApplyResult:
         return {
             "table": self.table,
             "target_object_name": self.target_object_name,
+            "final_target_name": self.final_target_name,
             "object_type": self.object_type,
             "affected_columns": list(self.affected_columns),
             "row_count_source": self.row_count_source,
@@ -376,8 +386,17 @@ def apply_proposal(
     2. Verify ``count(target) == count(source) × len(column_mappings)``.
        This catches id-column omissions and dropped-row bugs *before* the
        source is touched.
-    3. Apply source disposition (``keep`` is a no-op; ``rename`` runs an
-       ``ALTER TABLE``; ``drop`` runs a ``DROP TABLE``).
+    3. Apply source disposition:
+
+       - ``keep`` — no-op.
+       - ``rename`` — ``ALTER TABLE/VIEW … RENAME TO`` the source.
+       - ``drop`` — drop the source, then rename the long-form target to
+         the source's old name. The long form replaces the source so
+         downstream consumers (and any ``schema.yaml`` allowlist) keep
+         working without manual edits.
+
+    Source / target may be either tables or views (e.g. a view backed by a
+    CSV). The DDL keyword is chosen per object via ``information_schema``.
 
     Any failure rolls the transaction back, leaving the database unchanged.
     Dry-run skips the transaction entirely and returns a preview audit
@@ -386,7 +405,28 @@ def apply_proposal(
     """
     if mode not in ("table", "view"):
         raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
+    # A view's body references its source by name. Renaming or dropping the
+    # source while the long form is a view leaves a dangling reference (or,
+    # for ``drop`` after the long form is renamed into the source's slot, an
+    # *infinite recursion* on bind). Force ``--as table`` so the long form
+    # is a self-contained materialization before we touch the source.
+    if mode == "view" and source_disposition.mode in ("rename", "drop"):
+        action = "drop" if source_disposition.mode == "drop" else "rename"
+        consequence = (
+            "recursively self-referencing"
+            if source_disposition.mode == "drop"
+            else "pointing at a missing object"
+        )
+        raise ValueError(
+            f"--{action}-source requires --as table: a view references its "
+            f"source by name, so {action}ing the source would leave the view "
+            f"{consequence}."
+        )
     ddl = suggestion.build_sql(mode)
+
+    final_target_name = (
+        suggestion.table if source_disposition.mode == "drop" else suggestion.target_object_name
+    )
 
     if dry_run:
         source_rows = _query_count(conn, suggestion.table)
@@ -401,6 +441,7 @@ def apply_proposal(
             source_renamed_to=(
                 source_disposition.new_name if source_disposition.mode == "rename" else None
             ),
+            final_target_name=final_target_name,
             dry_run=True,
             ddl=ddl,
         )
@@ -422,13 +463,22 @@ def apply_proposal(
         source_renamed_to: str | None = None
         if source_disposition.mode == "rename":
             assert source_disposition.new_name is not None
+            source_kw = _alter_keyword(conn, suggestion.table)
             conn.execute(
-                f"ALTER TABLE {_quote_identifier(suggestion.table)} "
+                f"ALTER {source_kw} {_quote_identifier(suggestion.table)} "
                 f"RENAME TO {_quote_identifier(source_disposition.new_name)}"
             )
             source_renamed_to = source_disposition.new_name
         elif source_disposition.mode == "drop":
-            conn.execute(f"DROP TABLE {_quote_identifier(suggestion.table)}")
+            source_kw = _drop_keyword(conn, suggestion.table)
+            conn.execute(f"DROP {source_kw} {_quote_identifier(suggestion.table)}")
+            # The long form takes over the source's name so downstream
+            # consumers (and any schema.yaml allowlist) keep working.
+            target_kw = _alter_keyword(conn, suggestion.target_object_name)
+            conn.execute(
+                f"ALTER {target_kw} {_quote_identifier(suggestion.target_object_name)} "
+                f"RENAME TO {_quote_identifier(suggestion.table)}"
+            )
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -443,6 +493,7 @@ def apply_proposal(
         row_count_target=target_rows,
         source_disposition=source_disposition.mode,
         source_renamed_to=source_renamed_to,
+        final_target_name=final_target_name,
         dry_run=False,
         ddl=ddl,
     )
@@ -453,6 +504,110 @@ def _query_count(conn: Any, object_name: str) -> int:
     if row is None:
         return 0
     return int(row[0])
+
+
+def _object_kind(conn: Any, name: str) -> str:
+    """Return ``'view'`` or ``'table'`` for ``name`` in DuckDB.
+
+    Falls back to ``'table'`` when the object cannot be classified — the
+    caller already verified the object exists (the apply flow either just
+    queried its row count or just created it), so an unknown classification
+    almost always means a base table the introspection query missed.
+    """
+    quoted = name.replace("'", "''")
+    row = conn.execute(
+        f"SELECT table_type FROM information_schema.tables WHERE table_name = '{quoted}'"
+    ).fetchone()
+    if row is None:
+        return "table"
+    return "view" if str(row[0]).upper() == "VIEW" else "table"
+
+
+def _drop_keyword(conn: Any, name: str) -> str:
+    """``'VIEW'`` if ``name`` is a view, otherwise ``'TABLE'``."""
+    return "VIEW" if _object_kind(conn, name) == "view" else "TABLE"
+
+
+def _alter_keyword(conn: Any, name: str) -> str:
+    """``'VIEW'`` if ``name`` is a view, otherwise ``'TABLE'`` — for ``ALTER``."""
+    return "VIEW" if _object_kind(conn, name) == "view" else "TABLE"
+
+
+def update_schema_yaml_for_apply(
+    project_dir: str,
+    *,
+    source_table: str,
+    target_table: str,
+    disposition_mode: str,
+    rename_to: str | None = None,
+) -> bool:
+    """Sync ``schema.yaml`` with what just changed in the database.
+
+    No-op when ``schema.yaml`` is absent — the project doesn't maintain an
+    allowlist, so live introspection already exposes whatever's there. When
+    it is present, the goal is to keep the file aligned with the database
+    so introspected tables don't silently disappear from the UI:
+
+    - ``keep`` — append a new entry for ``target_table`` so the long form
+      shows up alongside the source.
+    - ``rename`` — rename the existing source entry to ``rename_to`` and
+      append a new entry for ``target_table``.
+    - ``drop`` — leave the source entry's *name* in place (the long form
+      took it over), but clear any ``columns`` / ``excluded_columns``
+      filter on it, since the long form has a different shape and an old
+      filter would hide the new columns.
+
+    Returns ``True`` when the file was rewritten. Comments and original
+    formatting in the YAML are not preserved — the file is round-tripped
+    through ``yaml.safe_dump``.
+    """
+    path = Path(project_dir) / "schema.yaml"
+    if not path.exists():
+        return False
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        logger.warning(f"schema.yaml: not updated (parse error: {exc})")
+        return False
+    if not isinstance(data, dict):
+        logger.warning(f"schema.yaml: not updated (expected mapping, got {type(data).__name__})")
+        return False
+    raw_tables = data.get("tables")
+    tables: list[Any] = list(raw_tables) if isinstance(raw_tables, list) else []
+
+    source_entry: dict[str, Any] | None = None
+    for entry in tables:
+        if isinstance(entry, dict) and entry.get("name") == source_table:
+            source_entry = cast(dict[str, Any], entry)
+            break
+
+    if disposition_mode == "drop":
+        if source_entry is not None:
+            # Long form replaces source: same name, different columns. Drop
+            # any old column filter so the new columns surface.
+            source_entry.pop("columns", None)
+            source_entry.pop("excluded_columns", None)
+        else:
+            tables.append({"name": source_table})
+    elif disposition_mode == "rename":
+        if source_entry is not None and rename_to:
+            source_entry["name"] = rename_to
+        if not _has_table_entry(tables, target_table):
+            tables.append({"name": target_table})
+    else:  # keep
+        if not _has_table_entry(tables, target_table):
+            tables.append({"name": target_table})
+
+    data["tables"] = tables
+    path.write_text(
+        yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+    return True
+
+
+def _has_table_entry(tables: list[Any], name: str) -> bool:
+    return any(isinstance(e, dict) and e.get("name") == name for e in tables)
 
 
 def resolve_source_disposition(keep: bool, rename_to: str | None, drop: bool) -> SourceDisposition:
@@ -483,5 +638,6 @@ __all__ = [
     "dump_plan",
     "load_plan",
     "resolve_source_disposition",
+    "update_schema_yaml_for_apply",
     "validate_against_schema",
 ]

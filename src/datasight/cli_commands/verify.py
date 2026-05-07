@@ -50,8 +50,7 @@ from datasight.cli_helpers import format_epilog
     default=None,
     help="Path to queries YAML file (default: queries.yaml in project dir).",
 )
-@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def verify(project_dir, model, queries_path, verbose):
+def verify(project_dir, model, queries_path):
     """Verify LLM-generated SQL against expected results.
 
     Runs each question from queries.yaml through the full LLM pipeline,
@@ -60,10 +59,6 @@ def verify(project_dir, model, queries_path, verbose):
     """
 
     project_dir = str(Path(project_dir).resolve())
-
-    # Logging
-    level = "DEBUG" if verbose else "WARNING"
-    cli.configure_logging(level)
 
     # Load queries
     from datasight.config import load_example_queries

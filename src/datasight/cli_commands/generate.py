@@ -99,7 +99,6 @@ from datasight.cli_helpers import format_epilog
         "glob patterns for columns to hide."
     ),
 )
-@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def generate(
     files,
     project_dir,
@@ -109,7 +108,6 @@ def generate(
     db_path,
     import_mode,
     compact_schema,
-    verbose,
 ):
     """Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 
@@ -120,11 +118,9 @@ def generate(
 
     project_dir = str(Path(project_dir).resolve())
 
-    # Configure logging and resolve settings early so the db_target
-    # preflight can respect a pre-existing DB_MODE (e.g. spark) and
-    # avoid clobbering the user's backend config.
-    level = "DEBUG" if verbose else "WARNING"
-    cli.configure_logging(level)
+    # Resolve settings early so the db_target preflight can respect a
+    # pre-existing DB_MODE (e.g. spark) and avoid clobbering the user's
+    # backend config.
     settings, resolved_model = cli.resolve_settings(project_dir, model)
     cli.validate_settings_for_llm(settings)
     normalized_import_mode = import_mode.lower()

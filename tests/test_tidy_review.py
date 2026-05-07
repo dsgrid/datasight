@@ -33,6 +33,7 @@ from datasight.tidy_review import (
     dump_plan,
     load_plan,
     resolve_source_disposition,
+    update_schema_yaml_for_apply,
     validate_against_schema,
 )
 
@@ -62,6 +63,24 @@ def _build_single_pivot_db(db_path: Path) -> None:
     conn.execute(
         "INSERT INTO sales_wide VALUES ('north', 10, 20, 30, 40), ('south', 5, 15, 25, 35)"
     )
+    conn.close()
+
+
+def _build_single_pivot_view_db(db_path: Path, csv_path: Path) -> None:
+    """Like ``_build_single_pivot_db`` but ``sales_wide`` is a view over a CSV.
+
+    Mirrors the real-world setup the user reported: ``datasight init`` /
+    ``generate`` may register a CSV-backed view, and ``tidy review
+    --drop-source`` then has to drop a view rather than a table.
+    """
+    csv_path.write_text(
+        "region,sales_2020,sales_2021,sales_2022,sales_2023\n"
+        "north,10,20,30,40\n"
+        "south,5,15,25,35\n",
+        encoding="utf-8",
+    )
+    conn = duckdb.connect(str(db_path))
+    conn.execute(f"CREATE VIEW sales_wide AS SELECT * FROM read_csv_auto('{csv_path.as_posix()}')")
     conn.close()
 
 
@@ -475,12 +494,15 @@ def test_apply_proposal_rename_source(tmp_path):
 
 
 def test_apply_proposal_drop_source(tmp_path):
+    """`--drop-source` drops the original wide table and renames the long
+    form into its place. Downstream consumers continue to query the same
+    table name; only the shape (and the data) has changed."""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
     plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
     conn = duckdb.connect(str(db_path))
     try:
-        apply_proposal(
+        result = apply_proposal(
             conn,
             plan.proposals[0],
             mode="table",
@@ -488,10 +510,17 @@ def test_apply_proposal_drop_source(tmp_path):
             dry_run=False,
         )
         names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+        # The long form must answer queries by the source's old name.
+        rows = conn.execute(
+            "SELECT region, year, sales FROM sales_wide ORDER BY region, year"
+        ).fetchall()
     finally:
         conn.close()
-    assert "sales_wide" not in names
-    assert "sales_long" in names
+    assert "sales_wide" in names
+    assert "sales_long" not in names  # renamed away
+    assert result.final_target_name == "sales_wide"
+    assert len(rows) == 8
+    assert rows[0] == ("north", "2020", 10.0)
 
 
 def test_apply_proposal_verification_failure_rolls_back(tmp_path):
@@ -636,6 +665,7 @@ def test_cli_review_from_plan_apply_all_keep_source(tmp_path):
 
 
 def test_cli_review_from_plan_drop_source(tmp_path):
+    """End-to-end --drop-source: source dropped, long form renamed to source's name."""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
     project_dir = _project_with_db(tmp_path, db_path)
@@ -660,10 +690,15 @@ def test_cli_review_from_plan_drop_source(tmp_path):
     conn = duckdb.connect(str(db_path))
     try:
         names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+        kind = conn.execute(
+            "SELECT table_type FROM information_schema.tables WHERE table_name = 'sales_wide'"
+        ).fetchone()
     finally:
         conn.close()
-    assert "sales_wide" not in names
-    assert "sales_long" in names
+    assert "sales_wide" in names  # the long form took the source's name
+    assert "sales_long" not in names
+    # And the surviving "sales_wide" really is the new long-form table.
+    assert kind is not None and kind[0] == "BASE TABLE"
 
 
 def test_cli_review_from_plan_rename_source(tmp_path):
@@ -1127,7 +1162,7 @@ def test_parse_llm_proposals_handles_non_dict_entry():
     """Defensive: the model could in theory return something not dict-shaped."""
     from datasight.tidy_llm import parse_llm_proposals
 
-    raw: list = ["not a dict", _llm_proposal()]  # ty: ignore[invalid-assignment]
+    raw: list = ["not a dict", _llm_proposal()]
     result = parse_llm_proposals(raw)
     assert len(result.suggestions) == 1
     assert len(result.parse_warnings) == 1
@@ -1388,3 +1423,417 @@ async def test_propose_reshapes_live_llm_proposes_fuel_pivot():
     proposed_columns = {m.column for s in result.suggestions for m in s.column_mappings}
     # The LLM should propose pivoting at least three of the five fuel columns.
     assert len(fuel_columns & proposed_columns) >= 3
+
+
+# ---------------------------------------------------------------------------
+# View sources — DROP / ALTER must use the right keyword (DuckDB rejects
+# `DROP TABLE <view>` / `ALTER TABLE <view>` with a binder error).
+# ---------------------------------------------------------------------------
+
+
+def test_apply_proposal_drop_source_when_source_is_view(tmp_path):
+    """`--drop-source` must succeed when the source is a CSV-backed view.
+
+    Reproduces the user-reported failure: a view (typical when a project is
+    set up by registering CSV files) cannot be dropped with `DROP TABLE`.
+    The apply flow must detect the kind and emit `DROP VIEW` / `ALTER VIEW`.
+    """
+    db_path = tmp_path / "wide.duckdb"
+    csv_path = tmp_path / "sales.csv"
+    _build_single_pivot_view_db(db_path, csv_path)
+    plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
+    conn = duckdb.connect(str(db_path))
+    try:
+        result = apply_proposal(
+            conn,
+            plan.proposals[0],
+            mode="table",
+            source_disposition=SourceDisposition(mode="drop"),
+            dry_run=False,
+        )
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+        kind = conn.execute(
+            "SELECT table_type FROM information_schema.tables WHERE table_name = 'sales_wide'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert "sales_wide" in names
+    assert result.final_target_name == "sales_wide"
+    # The original view is gone; the surviving `sales_wide` is the new long
+    # form (a base table created by the reshape DDL).
+    assert kind is not None and kind[0] == "BASE TABLE"
+
+
+def test_apply_proposal_rename_source_when_source_is_view(tmp_path):
+    """`--rename-source` on a view-backed source must use `ALTER VIEW`."""
+    db_path = tmp_path / "wide.duckdb"
+    csv_path = tmp_path / "sales.csv"
+    _build_single_pivot_view_db(db_path, csv_path)
+    plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
+    conn = duckdb.connect(str(db_path))
+    try:
+        result = apply_proposal(
+            conn,
+            plan.proposals[0],
+            mode="table",
+            source_disposition=SourceDisposition(mode="rename", new_name="sales_wide_raw"),
+            dry_run=False,
+        )
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+        kinds = dict(
+            conn.execute(
+                "SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_name IN ('sales_wide_raw', 'sales_long')"
+            ).fetchall()
+        )
+    finally:
+        conn.close()
+    assert result.source_renamed_to == "sales_wide_raw"
+    assert "sales_wide_raw" in names  # the renamed view
+    assert "sales_long" in names  # the new long-form table
+    assert "sales_wide" not in names
+    assert kinds.get("sales_wide_raw") == "VIEW"
+    assert kinds.get("sales_long") == "BASE TABLE"
+
+
+# ---------------------------------------------------------------------------
+# schema.yaml is kept in sync after apply
+# ---------------------------------------------------------------------------
+
+
+def _read_schema_yaml(project_dir: Path) -> dict:
+    import yaml
+
+    return yaml.safe_load((project_dir / "schema.yaml").read_text(encoding="utf-8"))
+
+
+def test_update_schema_yaml_for_apply_keep_appends_target(tmp_path):
+    """`keep` disposition: source entry stays, target appended."""
+    (tmp_path / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n    columns: [region, sales_2020]\n",
+        encoding="utf-8",
+    )
+    rewrote = update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="keep",
+    )
+    assert rewrote is True
+    data = _read_schema_yaml(tmp_path)
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide", "sales_long"]
+    # Source filter is left intact under `keep`.
+    sales = next(t for t in data["tables"] if t["name"] == "sales_wide")
+    assert sales.get("columns") == ["region", "sales_2020"]
+
+
+def test_update_schema_yaml_for_apply_drop_clears_filter(tmp_path):
+    """`drop` disposition: entry name kept (long form took it over);
+    column / excluded_columns filters cleared because the shape changed."""
+    (tmp_path / "schema.yaml").write_text(
+        "tables:\n"
+        "  - name: sales_wide\n"
+        "    columns: [region, sales_2020, sales_2021]\n"
+        "  - name: customers\n",
+        encoding="utf-8",
+    )
+    rewrote = update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="drop",
+    )
+    assert rewrote is True
+    data = _read_schema_yaml(tmp_path)
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide", "customers"]  # no `sales_long` entry
+    sales = next(t for t in data["tables"] if t["name"] == "sales_wide")
+    assert "columns" not in sales
+    assert "excluded_columns" not in sales
+
+
+def test_update_schema_yaml_for_apply_rename_renames_and_appends(tmp_path):
+    """`rename` disposition: source entry renamed, target appended."""
+    (tmp_path / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n    columns: [region, sales_2020]\n",
+        encoding="utf-8",
+    )
+    rewrote = update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="rename",
+        rename_to="sales_wide_raw",
+    )
+    assert rewrote is True
+    data = _read_schema_yaml(tmp_path)
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide_raw", "sales_long"]
+    # The source's column filter rides along with the renamed entry — the
+    # raw wide table's columns haven't changed.
+    raw = next(t for t in data["tables"] if t["name"] == "sales_wide_raw")
+    assert raw.get("columns") == ["region", "sales_2020"]
+
+
+def test_update_schema_yaml_for_apply_no_file_is_noop(tmp_path):
+    """If the project has no schema.yaml, the helper does nothing."""
+    rewrote = update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="keep",
+    )
+    assert rewrote is False
+    assert not (tmp_path / "schema.yaml").exists()
+
+
+def test_update_schema_yaml_for_apply_keep_skips_duplicate_target(tmp_path):
+    """If the target is already listed, don't add it twice."""
+    (tmp_path / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n  - name: sales_long\n",
+        encoding="utf-8",
+    )
+    update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="keep",
+    )
+    data = _read_schema_yaml(tmp_path)
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide", "sales_long"]
+
+
+def test_cli_review_drop_source_updates_schema_yaml(tmp_path):
+    """End-to-end: tidy review --drop-source rewrites schema.yaml so the
+    long form (now under the source's old name) stays visible."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    (Path(project_dir) / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n    columns: [region, sales_2020]\n",
+        encoding="utf-8",
+    )
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            "--as",
+            "table",
+            "--drop-source",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = _read_schema_yaml(Path(project_dir))
+    names = [t["name"] for t in data["tables"]]
+    assert "sales_wide" in names
+    sales = next(t for t in data["tables"] if t["name"] == "sales_wide")
+    # Old column filter is cleared so the new long-form columns are visible.
+    assert "columns" not in sales
+
+
+def test_cli_review_keep_source_appends_target_to_schema_yaml(tmp_path):
+    """Default disposition: schema.yaml gains a new entry for the long form."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    (Path(project_dir) / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n", encoding="utf-8"
+    )
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            "--as",
+            "table",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = _read_schema_yaml(Path(project_dir))
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide", "sales_long"]
+
+
+def test_apply_proposal_rejects_view_mode_with_drop_source(tmp_path):
+    """``--as view`` + ``--drop-source`` is unsafe: dropping the source and
+    renaming the view into its slot leaves the view recursively
+    self-referencing (DuckDB raises "infinite recursion detected" on the
+    next bind). The apply path must reject the combo before any DDL runs.
+    """
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
+    conn = duckdb.connect(str(db_path))
+    try:
+        with pytest.raises(ValueError, match="--drop-source requires --as table"):
+            apply_proposal(
+                conn,
+                plan.proposals[0],
+                mode="view",
+                source_disposition=SourceDisposition(mode="drop"),
+                dry_run=False,
+            )
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    # Database is untouched: the wide source survives, no view leaked through.
+    assert names == {"sales_wide"}
+
+
+def test_apply_proposal_rejects_view_mode_with_rename_source(tmp_path):
+    """``--as view`` + ``--rename-source`` would leave the view pointing at
+    a missing object — reject the combo."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
+    conn = duckdb.connect(str(db_path))
+    try:
+        with pytest.raises(ValueError, match="--rename-source requires --as table"):
+            apply_proposal(
+                conn,
+                plan.proposals[0],
+                mode="view",
+                source_disposition=SourceDisposition(mode="rename", new_name="sales_raw"),
+                dry_run=False,
+            )
+    finally:
+        conn.close()
+
+
+def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
+    """``datasight tidy review --drop-source`` (default ``--as view``) must
+    fail fast with a UsageError, not silently produce a recursive view."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            # No --as flag → defaults to view, which is incompatible with drop.
+            "--drop-source",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--drop-source requires '--as table'" in result.output
+    # No DDL ran.
+    conn = duckdb.connect(str(db_path))
+    try:
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    assert names == {"sales_wide"}
+
+
+def test_cli_review_view_mode_rename_source_is_a_usage_error(tmp_path):
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            "--rename-source",
+            "sales_raw",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--rename-source requires '--as table'" in result.output
+
+
+def test_cli_review_drop_source_view_end_to_end(tmp_path):
+    """The original user-reported flow: source is a CSV-backed view,
+    --drop-source must succeed AND schema.yaml must keep the entry under
+    the original name."""
+    db_path = tmp_path / "wide.duckdb"
+    csv_path = tmp_path / "sales.csv"
+    _build_single_pivot_view_db(db_path, csv_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    (Path(project_dir) / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n", encoding="utf-8"
+    )
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            "--as",
+            "table",
+            "--drop-source",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    conn = duckdb.connect(str(db_path))
+    try:
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+        rows = conn.execute("SELECT COUNT(*) FROM sales_wide").fetchone()
+    finally:
+        conn.close()
+    assert "sales_wide" in names
+    assert rows is not None and rows[0] == 8
+    data = _read_schema_yaml(Path(project_dir))
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide"]
+
+
+# ---------------------------------------------------------------------------
+# `datasight --verbose` toggles DEBUG logging across all commands
+# ---------------------------------------------------------------------------
+
+
+def test_cli_verbose_flag_enables_debug_logging(monkeypatch):
+    """`datasight --verbose <cmd>` configures Loguru at DEBUG; the default
+    is INFO. Verified by intercepting the call to ``configure_logging``
+    that the group callback makes."""
+    captured: list[str] = []
+
+    def _capture(level: str = "INFO") -> None:
+        captured.append(level)
+
+    monkeypatch.setattr("datasight.cli.configure_logging", _capture)
+    runner = CliRunner()
+    # The group callback runs even when the subcommand fails to find work,
+    # which is fine — we only care about the level it picks.
+    runner.invoke(cli, ["--verbose", "doctor", "--help"])
+    runner.invoke(cli, ["doctor", "--help"])
+    assert captured == ["DEBUG", "INFO"]

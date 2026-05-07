@@ -98,7 +98,8 @@ the same names so the script overwrites in place.
 | `--sql-script` | -- | Write executed queries to a re-runnable SQL script |
 | `--model` | from `.env` | Override the model for this query |
 | `--project-dir` | `.` | Project directory containing `.env` |
-| `-v` / `--verbose` | off | Show debug logging (LLM requests, SQL, timing) |
+
+For debug logging, pass `-v` / `--verbose` at the top level: `datasight --verbose ask "…"`.
 
 ## Scripting examples
 

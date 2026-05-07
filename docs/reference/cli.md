@@ -50,6 +50,7 @@ datasight [OPTIONS] COMMAND [ARGS]...
 | Name | Details |
 | --- | --- |
 | `--version` | Show the version and exit. |
+| `-v`, `--verbose` | Enable debug logging for the invoked command. |
 
 **Subcommands**
 
@@ -321,7 +322,6 @@ datasight generate [OPTIONS] [FILES]...
 | `--db-path` | Output DuckDB path to create from CSV/Parquet/Excel or mixed file inputs (default: database.duckdb). Do not use this with a single existing DuckDB or SQLite database; those are referenced directly. |
 | `--import-mode` | When FILES are CSV/Parquet inputs, choose whether datasight creates source-backed views or materialized DuckDB tables. 'auto' preserves the existing cheap behavior and keeps CSV/Parquet source-backed; use 'table' to opt into materialization. Excel workbooks are always materialized as tables. Default: `auto`. |
 | `--compact-schema` | Write schema.yaml with table names only. Default adds an empty 'excluded_columns: []' placeholder per table so you can fill in glob patterns for columns to hide. |
-| `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight run`
 
@@ -353,7 +353,6 @@ datasight run [OPTIONS]
 | `--unix-socket` | Listen on this UNIX domain socket instead of TCP. |
 | `--model` | LLM model name (overrides .env). |
 | `--project-dir` | Auto-load this project on startup (optional). |
-| `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight session`
 
@@ -470,7 +469,6 @@ datasight verify [OPTIONS]
 | `--project-dir` | Project directory containing .env and queries.yaml. Default: `.`. |
 | `--model` | Model name (overrides .env). |
 | `--queries` | Path to queries YAML file (default: queries.yaml in project dir). |
-| `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight ask`
 
@@ -510,7 +508,6 @@ datasight ask [OPTIONS] [QUESTION]
 | `--print-sql` | Print the SQL queries executed by the agent to the console. |
 | `--provenance` | Print run provenance as JSON to stdout (suppresses human-readable answer). |
 | `--sql-script` | Write executed queries to a SQL script that materializes results into auto-named tables (CREATE OR REPLACE). |
-| `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight profile`
 
@@ -769,8 +766,8 @@ datasight tidy review [OPTIONS]
 | `--dry-run` | Print DDL and proposed dispositions without changing the database. |
 | `--as` | Materialize the long form as a table or view (default: view). Default: `view`. |
 | `--keep-source` | Leave the source table unchanged after the reshape (default). |
-| `--rename-source` | Rename the source table to NAME after a successful reshape. |
-| `--drop-source` | Drop the source table after a successful reshape. |
+| `--rename-source` | Rename the source table to NAME after a successful reshape. Requires '--as table' — a view's body references its source by name. |
+| `--drop-source` | Drop the source after a successful reshape and rename the long-form table to take the source's old name. The long form replaces the source. Requires '--as table' — a view's body references its source by name. |
 | `--sample` | Send N sample rows per candidate to the configured LLM provider (default 0). Sample values get sent over the network — opt in only when the LLM seeing the values is acceptable. |
 
 ### `datasight integrity`
@@ -1061,7 +1058,6 @@ datasight recipes run [OPTIONS] RECIPE_ID
 | `--format` | Output format for query results (default: table). Default: `table`. |
 | `--chart-format` | Save chart output in this format (requires --output). |
 | `--output`, `-o` | Output file path for chart or data export. |
-| `-v`, `--verbose` | Enable debug logging. |
 
 ### `datasight doctor`
 

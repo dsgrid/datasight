@@ -88,7 +88,6 @@ from datasight.cli_helpers import format_epilog
         "into auto-named tables (CREATE OR REPLACE)."
     ),
 )
-@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def ask(
     question,
     project_dir,
@@ -101,7 +100,6 @@ def ask(
     print_sql,
     provenance,
     sql_script_path,
-    verbose,
 ):
     """Ask a question about your data from the command line.
 
@@ -134,10 +132,6 @@ def ask(
             err=True,
         )
         sys.exit(1)
-
-    # Logging
-    level = "DEBUG" if verbose else "WARNING"
-    cli.configure_logging(level)
 
     # Load settings and validate
     settings, resolved_model = cli.resolve_settings(project_dir, model)

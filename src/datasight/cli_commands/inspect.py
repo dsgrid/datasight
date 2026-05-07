@@ -64,7 +64,6 @@ def inspect(files, output_format, output_path):
     from datasight.explore import create_files_session_for_settings
     from datasight.schema import introspect_schema
 
-    cli.configure_logging("INFO")
     db_settings = cli.current_db_settings_or_none()
 
     async def _run_phase(name: str, coro):

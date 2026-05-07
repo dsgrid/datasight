@@ -23,6 +23,7 @@ from datasight.tidy_review import (
     dump_plan,
     load_plan,
     resolve_source_disposition,
+    update_schema_yaml_for_apply,
     validate_against_schema,
 )
 
@@ -425,14 +426,21 @@ def tidy_table(project_dir, source_table, dry_run):
     "rename_source",
     default=None,
     metavar="NAME",
-    help="Rename the source table to NAME after a successful reshape.",
+    help=(
+        "Rename the source table to NAME after a successful reshape. "
+        "Requires '--as table' — a view's body references its source by name."
+    ),
 )
 @click.option(
     "--drop-source",
     "drop_source",
     is_flag=True,
     default=False,
-    help="Drop the source table after a successful reshape.",
+    help=(
+        "Drop the source after a successful reshape and rename the long-form "
+        "table to take the source's old name. The long form replaces the source. "
+        "Requires '--as table' — a view's body references its source by name."
+    ),
 )
 @click.option(
     "--sample",
@@ -476,6 +484,25 @@ def tidy_review(
         disposition = resolve_source_disposition(keep_source, rename_source, drop_source)
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
+
+    # ``--as view`` is only safe with ``--keep-source``: a view's body
+    # references its source by name, so renaming or dropping the source
+    # leaves the view dangling — and for ``drop`` (which also renames the
+    # long form into the source's slot), DuckDB rejects subsequent SELECTs
+    # with "infinite recursion detected". Catch the bad combo before any
+    # work runs, including before the LLM call when ``--from`` is omitted.
+    if as_mode == "view" and disposition.mode in ("rename", "drop"):
+        action = "drop" if disposition.mode == "drop" else "rename"
+        consequence = (
+            "recursively self-referencing."
+            if disposition.mode == "drop"
+            else "pointing at a missing object."
+        )
+        raise click.UsageError(
+            f"--{action}-source requires '--as table'. A view references "
+            f"its source by name, so {action}ing the source would leave "
+            f"the long-form view {consequence}"
+        )
 
     settings, project_dir, resolved_db_path = _resolve_tidy_settings(project_dir)
     if settings.database.mode != "duckdb":
@@ -556,7 +583,7 @@ def tidy_review(
             click.echo("No proposals approved.")
             return
 
-    _apply_review_proposals(approved, disposition, as_mode, dry_run, resolved_db_path)
+    _apply_review_proposals(approved, disposition, as_mode, dry_run, resolved_db_path, project_dir)
 
 
 def _propose_via_llm(
@@ -687,7 +714,7 @@ def _render_proposal_summary(
     if disposition.mode == "rename":
         disp_text = f"rename source -> {disposition.new_name}"
     elif disposition.mode == "drop":
-        disp_text = "drop source"
+        disp_text = f"drop source; long form takes the name {suggestion.table!r}"
     else:
         disp_text = "keep source"
     click.echo(
@@ -757,13 +784,16 @@ def _apply_review_proposals(
     mode: str,
     dry_run: bool,
     resolved_db_path: str,
+    project_dir: str,
 ) -> None:
     """Walk a validated list of suggestions through the apply pipeline.
 
     One DuckDB connection is opened for the whole batch. Each proposal runs
     inside its own transaction (``apply_proposal`` handles BEGIN/COMMIT) so
     a mid-batch failure leaves prior successes intact and rolls back only
-    the failing one.
+    the failing one. After each successful apply, ``schema.yaml`` is synced
+    so the long-form table stays visible (or, with ``--drop-source``, the
+    existing entry's column filter is cleared since the shape changed).
     """
     audit: list[dict[str, Any]] = []
     conn = duckdb.connect(resolved_db_path)
@@ -792,12 +822,28 @@ def _apply_review_proposals(
                 if result.source_disposition == "rename":
                     disp_suffix = f"; renamed source to {result.source_renamed_to}"
                 elif result.source_disposition == "drop":
-                    disp_suffix = "; dropped source"
+                    disp_suffix = (
+                        f"; dropped source and renamed long form to {result.final_target_name!r}"
+                    )
                 click.echo(
-                    f"Created {mode} {result.target_object_name!r} from "
+                    f"Created {mode} {result.final_target_name!r} from "
                     f"{result.table} ({len(result.affected_columns)} columns, "
                     f"{result.row_count_target} rows){disp_suffix}"
                 )
+                # Keep schema.yaml in sync so the long form remains visible
+                # in `datasight run` and `datasight ask` after this run.
+                try:
+                    rewrote = update_schema_yaml_for_apply(
+                        project_dir,
+                        source_table=suggestion.table,
+                        target_table=suggestion.target_object_name,
+                        disposition_mode=result.source_disposition,
+                        rename_to=result.source_renamed_to,
+                    )
+                    if rewrote:
+                        click.echo(f"Updated {Path(project_dir) / 'schema.yaml'}")
+                except OSError as exc:
+                    click.echo(f"warn: schema.yaml not updated: {exc}", err=True)
             audit.append(result.to_dict())
     finally:
         conn.close()

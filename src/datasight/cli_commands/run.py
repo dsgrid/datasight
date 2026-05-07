@@ -36,14 +36,12 @@ from datasight.cli_helpers import format_epilog
     default=None,
     help="Auto-load this project on startup (optional).",
 )
-@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 def run(
     port,
     host,
     unix_socket,
     model,
     project_dir,
-    verbose,
 ):
     """Start the datasight web UI.
 
@@ -55,7 +53,6 @@ def run(
         port=port,
         model=model,
         project_dir=project_dir,
-        verbose=verbose,
     )
 
     if project_dir:

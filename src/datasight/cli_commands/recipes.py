@@ -150,10 +150,7 @@ def recipes_list(project_dir, table, output_format, output_path):
     default=None,
     help="Output file path for chart or data export.",
 )
-@click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
-def recipes_run(
-    recipe_id, project_dir, table, model, output_format, chart_format, output_path, verbose
-):
+def recipes_run(recipe_id, project_dir, table, model, output_format, chart_format, output_path):
     """Run a generated recipe by ID through the normal ask pipeline.
 
     RECIPE_ID is the numeric ID shown by datasight recipes list.
@@ -164,9 +161,6 @@ def recipes_run(
     project_dir = str(Path(project_dir).resolve())
     settings, resolved_model = cli.resolve_settings(project_dir, model)
     cli.validate_settings_for_llm(settings)
-
-    if verbose:
-        cli.configure_logging("DEBUG")
 
     recipe_data = cli.load_recipe_entries(project_dir, settings, table)
     recipe = next((item for item in recipe_data if item["id"] == recipe_id), None)

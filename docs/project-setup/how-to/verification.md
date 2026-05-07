@@ -101,7 +101,8 @@ for CI pipelines.
 | `--model` | from `.env` | Override the model for this run |
 | `--queries` | `queries.yaml` | Path to queries file |
 | `--project-dir` | `.` | Project directory |
-| `-v` / `--verbose` | off | Enable debug logging |
+
+For debug logging, pass `-v` / `--verbose` at the top level: `datasight --verbose verify`.
 
 ### Test across models
 

@@ -62,7 +62,6 @@ def audit_report(project_dir, table, output_path, output_format):
     Combines profile, measures, quality, integrity, distribution, and
     validation results into one HTML, Markdown, or JSON artifact.
     """
-    cli.configure_logging("INFO")
     project_dir = str(Path(project_dir).resolve())
     settings, _ = cli.resolve_settings(project_dir)
     resolved_db_path = cli.resolve_db_path(settings, project_dir)
