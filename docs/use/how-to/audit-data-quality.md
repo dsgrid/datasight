@@ -68,8 +68,8 @@ Use it to spot:
 ## Detect untidy column shapes
 
 !!! warning "Experimental"
-    The `datasight tidy` commands are experimental and have not been fully
-    tested. `tidy suggest` is read-only and safe to run. `tidy table` and
+    The `datasight tidy` commands are experimental and subject to change.
+    `tidy suggest` is read-only and safe to run. `tidy table` and
     `tidy view` write to your database — use `--dry-run` first.
 
 `datasight quality` also flags tables whose **column names encode dimension

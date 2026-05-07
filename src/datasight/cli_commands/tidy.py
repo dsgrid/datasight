@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-import pandas as pd  # noqa: F401  — used implicitly via sql_runner.run_sql DataFrame return
 import rich_click as click
 from rich.console import Console
 

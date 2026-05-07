@@ -21,10 +21,10 @@ the second. Allow about five minutes. **No API key required** — none of the
 steps call the AI.
 
 !!! warning "Experimental"
-    The `datasight tidy` commands are experimental and have not been fully
-    tested. `tidy suggest` is read-only and safe to run. `tidy table` and
-    `tidy view` write to your database — use `--dry-run` first to preview
-    the DDL before applying.
+    The `datasight tidy` commands are experimental and their interface is
+    subject to change. `tidy suggest` is read-only and safe to run.
+    `tidy table` and `tidy view` write to your database — use `--dry-run`
+    first to preview the DDL before applying.
 
 !!! note "Background reading"
     The tidy-data concept comes from Hadley Wickham's

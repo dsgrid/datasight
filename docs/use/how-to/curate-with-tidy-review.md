@@ -1,9 +1,9 @@
 # Curate datasets with `tidy review`
 
 !!! warning "Experimental"
-    `tidy review` is experimental and has not been fully tested. Review
-    every proposal carefully before applying, and use `--dry-run` to
-    preview changes. Back up your database before running `--apply-all`
+    `tidy review` is experimental and its interface is subject to change.
+    Review every proposal carefully before applying, and use `--dry-run`
+    to preview changes. Back up your database before running `--apply-all`
     for the first time.
 
 `datasight tidy review` is an LLM-augmented advisor for the project
