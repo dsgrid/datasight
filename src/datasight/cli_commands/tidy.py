@@ -710,7 +710,6 @@ def _render_proposal_summary(
     mapped_label = ", ".join(m.column for m in suggestion.column_mappings)
     if len(mapped_label) > 80:
         mapped_label = mapped_label[:77] + "..."
-    disp_text = disposition.mode
     if disposition.mode == "rename":
         disp_text = f"rename source -> {disposition.new_name}"
     elif disposition.mode == "drop":
