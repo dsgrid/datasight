@@ -7,12 +7,25 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import duckdb
+import pandas as pd  # noqa: F401  — used implicitly via sql_runner.run_sql DataFrame return
 import rich_click as click
-
-from datasight.data_profile import find_table_info
+from rich.console import Console
 
 from datasight import cli
 from datasight.cli_helpers import format_epilog
+from datasight.data_profile import find_table_info
+from datasight.explore import create_files_session_for_settings
+from datasight.schema import introspect_schema
+from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
+from datasight.tidy_llm import propose_reshapes
+from datasight.tidy_review import (
+    apply_proposal,
+    dump_plan,
+    load_plan,
+    resolve_source_disposition,
+    validate_against_schema,
+)
 
 
 def _project_scope_options(func):
@@ -33,8 +46,6 @@ def _project_scope_options(func):
 
 
 async def _gather_tidy_data(project_dir: str, source_table: str | None, settings):
-    from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
-
     sql_runner, schema_info = await cli.load_schema_info_for_project(project_dir, settings)
     try:
         if source_table:
@@ -57,10 +68,6 @@ async def _gather_tidy_data_for_files(files: tuple[str, ...]):
     on this path because ephemeral file sessions can't usefully persist a
     reshape — callers should treat file mode as suggest-only.
     """
-    from datasight.explore import create_files_session_for_settings
-    from datasight.schema import introspect_schema
-    from datasight.tidy import analyze_tidy_patterns
-
     runner, _tables_info = create_files_session_for_settings(list(files), None)
     try:
         tables = await introspect_schema(runner.run_sql, runner=runner)
@@ -111,8 +118,6 @@ def _apply_reshapes(
             click.echo(f"-- Would apply for {source_table}:")
             click.echo(suggestion.build_sql(mode))
     else:
-        import duckdb
-
         conn = duckdb.connect(resolved_db_path)
         try:
             for source_table, suggestion in ddl_statements:
@@ -206,8 +211,6 @@ def tidy_suggest(files, project_dir, source_table, output_format, output_path):
     Detection is deterministic: column names plus dtypes plus row counts.
     No LLM is involved. For pivots the regex misses, see 'tidy review'.
     """
-    from rich.console import Console
-
     if files:
         if source_table:
             raise click.UsageError(
@@ -470,13 +473,6 @@ def tidy_review(
 
     Calls the configured LLM provider whenever ``--from`` is not set.
     """
-    from datasight.tidy_review import (
-        dump_plan,
-        load_plan,
-        resolve_source_disposition,
-        validate_against_schema,
-    )
-
     try:
         disposition = resolve_source_disposition(keep_source, rename_source, drop_source)
     except ValueError as exc:
@@ -577,10 +573,6 @@ def _propose_via_llm(
     and the LLM's survivors (``source='llm'``) so the developer reviews
     both in one loop.
     """
-    import pandas as pd  # noqa: F401  — used implicitly via sql_runner.run_sql DataFrame return
-
-    from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
-    from datasight.tidy_llm import propose_reshapes
 
     async def _gather():
         sql_runner, schema_info = await cli.load_schema_info_for_project(project_dir, settings)
@@ -774,10 +766,6 @@ def _apply_review_proposals(
     a mid-batch failure leaves prior successes intact and rolls back only
     the failing one.
     """
-    import duckdb
-
-    from datasight.tidy_review import apply_proposal
-
     audit: list[dict[str, Any]] = []
     conn = duckdb.connect(resolved_db_path)
     try:
