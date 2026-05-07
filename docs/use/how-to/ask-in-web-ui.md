@@ -19,8 +19,9 @@ From the landing page you have three entry points:
 - **Open Project** — click a recent project or enter a project directory
   path. A project directory must contain `schema_description.md`.
 
-If no LLM provider is detected, you'll be prompted to enter an API key
-before going further.
+If no LLM provider is detected (i.e., you haven't configured an API key),
+you'll be prompted to enter one before going further. See
+[Install datasight](install.md) for how to get a key.
 
 ## Explore the schema
 
@@ -57,10 +58,11 @@ recipe to load it into the chat input, then edit or send it.
 
 ### Inspect tools
 
-The **Inspect** sidebar section gives direct access to the deterministic
-inspection flows that power the guided starters: **Profile dataset**,
+The **Inspect** sidebar section gives direct access to the built-in
+inspection tools that power the guided starters: **Profile dataset**,
 **Key measures**, **Find dimensions**, **Quality audit**, **Trend ideas**.
-These are useful after a project is already loaded — you can rerun them
+These run without calling the AI, so they're fast and have no token cost.
+They're useful after a project is already loaded — you can rerun them
 without going back to the landing page.
 
 If a table is selected, the section also offers table-scoped actions

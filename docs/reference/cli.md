@@ -606,10 +606,14 @@ datasight quality [OPTIONS]
 
 Detect untidy column shapes and reshape into long form.
 
-Use 'tidy suggest' to inspect candidates, 'tidy view' to create
-long-form views, or 'tidy table' to materialize long-form tables.
-Detection is deterministic — column names plus dtypes plus row counts —
-so no LLM is involved.
+Two paths:
+
+- Deterministic: 'tidy suggest' lists candidates, 'tidy view' creates
+  long-form views, 'tidy table' materializes long-form tables. These
+  run on column-name pattern matching and never call an LLM.
+- LLM-augmented: 'tidy review' adds an advisor that proposes pivots
+  the regex misses (fuel-type-as-column, geography-as-column,
+  multi-axis pivots) for the developer to approve before applying.
 
 Examples:
 
@@ -619,6 +623,7 @@ datasight tidy suggest --table sales_wide
 datasight tidy view --dry-run
 datasight tidy view
 datasight tidy table --table sales_wide
+datasight tidy review --from plan.json --apply-all
 ```
 
 ```bash
@@ -630,6 +635,7 @@ datasight tidy [OPTIONS] COMMAND [ARGS]...
 - `suggest`: List detected untidy column shapes without changing the database.
 - `view`: Create CREATE OR REPLACE VIEW <table>_long for each detected pattern.
 - `table`: Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern.
+- `review`: LLM-augmented advisor that proposes reshapes for the developer to review.
 
 #### `datasight tidy suggest`
 
@@ -638,6 +644,8 @@ List detected untidy column shapes without changing the database.
 Pass one or more CSV / Parquet / Excel / DuckDB files as positional
 arguments to inspect them in an ephemeral session — no project setup
 required. With no files, runs against the current project's database.
+Detection is deterministic: column names plus dtypes plus row counts.
+No LLM is involved. For pivots the regex misses, see 'tidy review'.
 
 Examples:
 
@@ -667,6 +675,10 @@ datasight tidy suggest [OPTIONS] [FILES]...
 
 Create CREATE OR REPLACE VIEW <table>_long for each detected pattern.
 
+Deterministic — applies the regex detector's hits without consulting
+an LLM. For LLM-augmented proposals (fuel-type-as-column, multi-axis
+pivots), use 'tidy review'.
+
 Examples:
 
 ```
@@ -691,6 +703,10 @@ datasight tidy view [OPTIONS]
 
 Materialize CREATE OR REPLACE TABLE <table>_long for each detected pattern.
 
+Deterministic — applies the regex detector's hits without consulting
+an LLM. For LLM-augmented proposals (fuel-type-as-column, multi-axis
+pivots), use 'tidy review'.
+
 Examples:
 
 ```
@@ -710,6 +726,52 @@ datasight tidy table [OPTIONS]
 | `--project-dir` | Project directory containing .env and config files. Default: `.`. |
 | `--table` | Scope tidy detection to a specific source table. |
 | `--dry-run` | Print the DDL without executing it. |
+
+#### `datasight tidy review`
+
+LLM-augmented advisor that proposes reshapes for the developer to review.
+
+Runs the deterministic detector first, then asks the configured LLM
+provider for additional candidates the regex misses (fuel-type-as-column,
+geography-as-column, scenario-as-column, multi-axis pivots). The
+developer approves each candidate before it is applied.
+
+Use ``--from PLAN`` to skip the LLM call and apply a pre-built plan.
+Use ``--out PLAN`` to write proposals to a file instead of applying;
+without ``--from`` this writes the deterministic detector's hits, giving
+a starting point that can be hand-edited and fed back via ``--from``.
+
+Calls the configured LLM provider whenever ``--from`` is not set.
+
+Examples:
+
+```
+datasight tidy review --from plan.json --apply-all
+datasight tidy review --from plan.json --dry-run
+datasight tidy review --out detector.json
+datasight tidy review --from plan.json --apply-all --drop-source
+datasight tidy review --from plan.json --apply-all --rename-source sales_wide_raw
+```
+
+```bash
+datasight tidy review [OPTIONS]
+```
+
+**Parameters**
+
+| Name | Details |
+| --- | --- |
+| `--project-dir` | Project directory containing .env and config files. Default: `.`. |
+| `--table` | Scope tidy detection to a specific source table. |
+| `--from` | Load proposals from a JSON plan file (no LLM call). |
+| `--out` | Write proposals to a JSON plan file instead of applying. Without --from, writes the deterministic detector's hits. |
+| `--apply-all` | Apply every proposal without prompting. Required for non-interactive use. |
+| `--dry-run` | Print DDL and proposed dispositions without changing the database. |
+| `--as` | Materialize the long form as a table or view (default: view). Default: `view`. |
+| `--keep-source` | Leave the source table unchanged after the reshape (default). |
+| `--rename-source` | Rename the source table to NAME after a successful reshape. |
+| `--drop-source` | Drop the source table after a successful reshape. |
+| `--sample` | Send N sample rows per candidate to the configured LLM provider (default 0). Sample values get sent over the network — opt in only when the LLM seeing the values is acceptable. |
 
 ### `datasight integrity`
 

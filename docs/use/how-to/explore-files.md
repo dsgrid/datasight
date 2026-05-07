@@ -1,13 +1,18 @@
-# Inspect files
+# Explore files without a project
 
 You have CSV, Parquet, Excel, or DuckDB files and want to understand what's
 in them. datasight can profile the data, surface measures and dimensions,
-suggest trends, and generate starter prompts — all without setting up a
-project or calling an LLM.
+suggest trends, and generate starter prompts.
+
+**Choose your entry point:**
+
+- **One-shot text report** (no AI needed) → `datasight inspect` below
+- **Interactive chat UI** → [Explore in the web UI](#explore-files-in-the-web-ui)
+- **Save as a permanent project** → [Set up a project](../../project-setup/tutorials/set-up-project.md)
 
 ## One command: `datasight inspect`
 
-`datasight inspect` runs every deterministic analysis in one shot:
+`datasight inspect` runs every built-in analysis in one shot (no AI call needed):
 
 ```bash
 datasight inspect generation.parquet

@@ -39,6 +39,10 @@ Edit `.env` in the project directory and add your Anthropic key:
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+**Don't have a key yet?** Go to [console.anthropic.com](https://console.anthropic.com)
+→ **API Keys** → **Create Key**. Copy the value (it starts with `sk-ant-`) and paste it
+into `.env` on the line above. No quotes, no spaces around the `=`.
+
 Using GitHub Models or a local Ollama instance instead? See
 [Set up a project](../../project-setup/tutorials/set-up-project.md#configure) for the alternative
 `.env` configurations.
@@ -50,7 +54,7 @@ datasight run
 ```
 
 Open <http://localhost:8084>. The sidebar shows the loaded tables, example
-queries, and deterministic inspection tools.
+queries, and built-in inspection tools.
 
 ![Landing page with starter workflows](../../assets/screenshots/01-landing.png)
 

@@ -459,9 +459,10 @@ def render_quality_markdown(quality_data: dict[str, Any]) -> str:
     if quality_data.get("tidy_suggestions"):
         lines.extend(["", "## Tidy Reshape Suggestions"])
         for item in quality_data["tidy_suggestions"]:
+            dim_label = ", ".join(d["name"] for d in item["dimensions"])
             lines.append(
-                f"- `{item['table']}` ({item['pattern']}, {item['period_kind']}, "
-                f"{len(item['affected_columns'])} columns): {item['rationale']}"
+                f"- `{item['table']}` ({item['pattern']}, {dim_label}, "
+                f"{len(item['column_mappings'])} columns): {item['rationale']}"
             )
             lines.append("")
             lines.append("  ```sql")
@@ -690,14 +691,15 @@ def render_tidy_markdown(data: dict[str, Any]) -> str:
         "",
         f"- Tables scanned: {data['table_count']}",
     ]
-    suggestions = data.get("period_suggestions") or []
+    suggestions = data.get("suggestions") or []
     wide_tables = data.get("wide_tables") or []
     if suggestions:
         lines.extend(["", "## Suggestions"])
         for item in suggestions:
+            dim_label = ", ".join(d["name"] for d in item["dimensions"])
             lines.append(
-                f"- `{item['table']}` ({item['pattern']}, {item['period_kind']}, "
-                f"{len(item['affected_columns'])} columns): {item['rationale']}"
+                f"- `{item['table']}` ({item['pattern']}, {dim_label}, "
+                f"{len(item['column_mappings'])} columns): {item['rationale']}"
             )
             lines.append("")
             lines.append("  ```sql")
@@ -712,7 +714,7 @@ def render_tidy_markdown(data: dict[str, Any]) -> str:
         lines.extend(["", "## Applied"])
         for item in data["applied"]:
             lines.append(
-                f"- Created {item['object_type']} `{item['suggested_view']}` "
+                f"- Created {item['object_type']} `{item['target_object_name']}` "
                 f"from `{item['table']}` ({len(item['affected_columns'])} columns)"
             )
     if not suggestions and not wide_tables:

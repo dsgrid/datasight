@@ -70,17 +70,15 @@ works but is slower on large tables.
 
 ## How it works
 
-When you ask for a visualization, the AI:
+When you ask for a visualization, the AI writes a SQL query, fetches the
+data, and builds an interactive chart specification. The result renders
+directly in the browser — no extra software needed.
 
-1. Writes a SQL query to fetch the relevant data
-2. Constructs a [Plotly.js specification](https://plotly.com/javascript/) with
-   trace objects and layout configuration
-3. The backend executes the SQL, maps column names in the spec to actual data
-   arrays, and renders the chart in an interactive iframe
-
-Because the AI builds the Plotly spec directly, it has access to the full
-Plotly.js API -- any trace type, layout option, or configuration that Plotly
-supports.
+Under the hood it uses [Plotly.js](https://plotly.com/javascript/), which
+means datasight supports every trace type and layout option Plotly offers —
+not just the common ones. This is why you can request unusual chart types
+like treemaps, Sankey diagrams, and parallel coordinates alongside the
+everyday bar and line charts.
 
 ## Customize charts in the UI
 

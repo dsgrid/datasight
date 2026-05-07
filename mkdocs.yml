@@ -80,12 +80,14 @@ nav:
           - Save a dashboard as a template: use/how-to/save-dashboard-template.md
           - Save and rerun results: use/how-to/save-and-rerun.md
           - Audit data quality: use/how-to/audit-data-quality.md
+          - Curate datasets with tidy review: use/how-to/curate-with-tidy-review.md
           - Review the SQL query log: use/how-to/review-query-log.md
           - Run on an HPC compute node: use/how-to/run-on-hpc.md
           - Connect to a remote Flight SQL backend: use/how-to/connect-flight-sql.md
           - Connect to an Apache Spark backend: use/how-to/connect-spark.md
       - Concepts:
           - Choosing an LLM: use/concepts/choosing-an-llm.md
+          - What the AI sees: use/concepts/what-the-ai-sees.md
           - Why clarifying questions appear: use/concepts/query-confidence.md
           - Trusting AI-generated results: use/concepts/trusting-ai-results.md
   - Project Setup:
@@ -111,6 +113,7 @@ nav:
       - Web UI: reference/web-ui.md
       - Keyboard shortcuts: reference/keyboard-shortcuts.md
       - Query confidence toggles: reference/query-confidence-toggles.md
+  - Glossary: glossary.md
   - Design:
       - Architecture: design/architecture.md
       - How the agent works: design/how-the-agent-works.md

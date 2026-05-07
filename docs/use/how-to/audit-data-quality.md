@@ -1,9 +1,11 @@
 # Audit data quality
 
-datasight provides deterministic commands that inspect your data directly —
-no LLM needed. Use them to find nulls, suspicious ranges, date gaps,
-dimension breakdowns, and trend candidates before asking AI-powered
-questions.
+datasight provides built-in inspection commands that run directly against
+your data — no AI call needed. Throughout this guide these are called
+*[deterministic](../../glossary.md#deterministic)* commands, meaning they
+produce consistent results every run and don't consume any AI tokens. Use
+them to find nulls, suspicious ranges, date gaps, dimension breakdowns, and
+trend candidates before asking AI-powered questions.
 
 These commands work with both configured projects and files passed directly
 to `datasight inspect`.
@@ -64,6 +66,11 @@ Use it to spot:
 - temporal completeness issues when [`time_series.yaml`](../../project-setup/how-to/declare-time-series.md) is present
 
 ## Detect untidy column shapes
+
+!!! warning "Experimental"
+    The `datasight tidy` commands are experimental and subject to change.
+    `tidy suggest` is read-only and safe to run. `tidy table` and
+    `tidy view` write to your database — use `--dry-run` first.
 
 `datasight quality` also flags tables whose **column names encode dimension
 values** — a common spreadsheet shape that confuses both DuckDB and the LLM
@@ -187,6 +194,35 @@ arithmetic.
     in-datasight consumer. Materialized tables don't re-bind, so they
     keep the cleaner form. Prefer `tidy table` unless you specifically
     need the view's auto-update semantics.
+
+### LLM-augmented review: `datasight tidy review`
+
+The regex detector recognizes period pivots (year, month, quarter, hour,
+day) but not domain-shaped ones — fuel-type-as-column, region-as-column,
+scenario-as-column, or multi-axis pivots like `coal_2020, coal_2021,
+gas_2020, gas_2021`. For those, `datasight tidy review` adds an
+LLM-augmented advisor that proposes reshapes from the schema and lets
+you approve each one before it changes the database.
+
+```bash
+# Walk through proposals interactively (default).
+datasight tidy review
+
+# Or apply every valid proposal without prompting.
+datasight tidy review --apply-all --as table
+
+# Replay a hand-curated plan in CI.
+datasight tidy review --from reshape_plan.json --apply-all
+```
+
+`tidy review` requires a configured LLM provider (an API key for
+Anthropic / GitHub Models, or a running local Ollama). The deterministic
+`tidy {suggest,view,table}` commands above do not.
+
+See [Curate datasets with `tidy review`](curate-with-tidy-review.md) for
+the full curation workflow, plan-file format, source-disposition flags
+(`--keep-source` / `--rename-source` / `--drop-source`), and the
+verify-before-dispose transaction model.
 
 ## Find measures
 

@@ -1,15 +1,36 @@
 # Tidy a wide-month spreadsheet
 
-This tutorial walks through detecting and reshaping an "untidy" CSV — the
-kind of spreadsheet that arrives with one column per month, quarter, or
-year — into a tidy long-form view that the LLM agent (and DuckDB) can
-query naturally. Allow about five minutes. No API key required: every
-step in this tutorial is deterministic.
+Many spreadsheets arrive in this shape:
 
-For background on what "tidy" means, see Hadley Wickham's
-[Tidy Data](https://www.jstatsoft.org/article/view/v059i10) (J. Stat.
-Softw., 2014) or the [R for Data Science chapter on data
-tidying](https://r4ds.hadley.nz/data-tidy).
+| plant_id | fuel_type | jan | feb | mar | … | dec |
+|---|---|---|---|---|---|---|
+| 1 | coal | 180 | 165 | 140 | … | 200 |
+
+Each month is its own column. That makes "average generation by month" an
+awkward sum across twelve columns. The *tidy* shape datasight prefers looks like:
+
+| plant_id | fuel_type | month | value |
+|---|---|---|---|
+| 1 | coal | jan | 180 |
+| 1 | coal | feb | 165 |
+
+Each row is one observation. Aggregations become simple `GROUP BY` queries.
+
+This tutorial walks through detecting the first shape and reshaping it into
+the second. Allow about five minutes. **No API key required** — none of the
+steps call the AI.
+
+!!! warning "Experimental"
+    The `datasight tidy` commands are experimental and their interface is
+    subject to change. `tidy suggest` is read-only and safe to run.
+    `tidy table` and `tidy view` write to your database — use `--dry-run`
+    first to preview the DDL before applying.
+
+!!! note "Background reading"
+    The tidy-data concept comes from Hadley Wickham's
+    [Tidy Data](https://www.jstatsoft.org/article/view/v059i10) (J. Stat. Softw., 2014).
+    The [R for Data Science chapter on data tidying](https://r4ds.hadley.nz/data-tidy)
+    has more worked examples if you want the full picture.
 
 ## 1. Install datasight
 
@@ -94,9 +115,8 @@ EOF
 ```
 
 `uv run --with duckdb` runs Python with DuckDB available without
-installing it system-wide. The `tidy` command is fully deterministic and
-doesn't call the LLM, so the `ANTHROPIC_API_KEY` value is a placeholder
-here — replace it with a real key only when you're ready to start asking
+installing it system-wide. The `tidy` command doesn't call the AI,
+so the `ANTHROPIC_API_KEY` value is a placeholder here — replace it with a real key only when you're ready to start asking
 questions.
 
 ## 5. Preview the reshape SQL
@@ -161,5 +181,11 @@ plain `GROUP BY`.
 - **Audit the rest of your data.** [Audit data quality](../how-to/audit-data-quality.md)
   covers `datasight quality`, which surfaces tidy suggestions alongside
   null/range/date-coverage checks during routine audits.
+- **Reshape pivots the regex misses.** This tutorial covered period
+  pivots (`jan` … `dec`). For category pivots like `coal_mwh`,
+  `gas_mwh`, `nuclear_mwh`, or multi-axis pivots like `coal_2020`,
+  `gas_2020`, `coal_2021`, `gas_2021`, see
+  [Curate datasets with `tidy review`](../how-to/curate-with-tidy-review.md).
+  That command asks an LLM for proposals and lets you approve each one.
 - **Try a real dataset.** [Explore US electricity generation (EIA)](getting-started.md)
   walks through the same loop on the PUDL EIA dataset.
