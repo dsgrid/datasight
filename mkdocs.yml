@@ -24,7 +24,6 @@ theme:
     - navigation.instant
     - navigation.tabs
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - search.suggest
     - search.highlight
@@ -71,20 +70,25 @@ nav:
           - Explore EV charging demand (TEMPO): use/tutorials/tempo.md
           - Tidy a wide-month spreadsheet: use/tutorials/tidy.md
       - How-to guides:
-          - Install datasight: use/how-to/install.md
-          - Explore files without a project: use/how-to/explore-files.md
-          - Ask questions in the web UI: use/how-to/ask-in-web-ui.md
-          - Ask questions from the CLI: use/how-to/ask-from-cli.md
-          - Create visualizations: use/how-to/create-visualizations.md
-          - Build a dashboard: use/how-to/build-a-dashboard.md
-          - Save a dashboard as a template: use/how-to/save-dashboard-template.md
-          - Save and rerun results: use/how-to/save-and-rerun.md
-          - Audit data quality: use/how-to/audit-data-quality.md
-          - Curate datasets with tidy review: use/how-to/curate-with-tidy-review.md
-          - Review the SQL query log: use/how-to/review-query-log.md
-          - Run on an HPC compute node: use/how-to/run-on-hpc.md
-          - Connect to a remote Flight SQL backend: use/how-to/connect-flight-sql.md
-          - Connect to an Apache Spark backend: use/how-to/connect-spark.md
+          - Get started:
+              - Install datasight: use/how-to/install.md
+              - Explore files without a project: use/how-to/explore-files.md
+          - Ask questions:
+              - Ask questions in the web UI: use/how-to/ask-in-web-ui.md
+              - Ask questions from the CLI: use/how-to/ask-from-cli.md
+              - Create visualizations: use/how-to/create-visualizations.md
+          - Save and share:
+              - Build a dashboard: use/how-to/build-a-dashboard.md
+              - Save a dashboard as a template: use/how-to/save-dashboard-template.md
+              - Save and rerun results: use/how-to/save-and-rerun.md
+          - Audit and curate:
+              - Audit data quality: use/how-to/audit-data-quality.md
+              - Curate datasets with tidy review: use/how-to/curate-with-tidy-review.md
+              - Review the SQL query log: use/how-to/review-query-log.md
+          - Advanced deployments:
+              - Run on an HPC compute node: use/how-to/run-on-hpc.md
+              - Connect to a remote Flight SQL backend: use/how-to/connect-flight-sql.md
+              - Connect to an Apache Spark backend: use/how-to/connect-spark.md
       - Concepts:
           - Choosing an AI provider: use/concepts/choosing-an-llm.md
           - What the AI sees: use/concepts/what-the-ai-sees.md
@@ -95,16 +99,20 @@ nav:
           - Set up your first project: project-setup/tutorials/set-up-project.md
           - Time validation demo: project-setup/tutorials/time-validation.md
       - How-to guides:
-          - Database connections: project-setup/how-to/database-connections.md
-          - Query files directly: project-setup/how-to/querying-files.md
-          - Write a schema description: project-setup/how-to/schema-description.md
-          - Limit schema sent to the LLM: project-setup/how-to/schema-config.md
-          - Create example queries: project-setup/how-to/example-queries.md
-          - Configure semantic measures: project-setup/how-to/configure-measures.md
-          - Declare time series: project-setup/how-to/declare-time-series.md
-          - Declare table joins: project-setup/how-to/declare-joins.md
-          - Define validation rules: project-setup/how-to/validation-rules.md
-          - Verify queries across models: project-setup/how-to/verification.md
+          - Connect to your data:
+              - Database connections: project-setup/how-to/database-connections.md
+              - Query files directly: project-setup/how-to/querying-files.md
+          - Describe the schema for the AI:
+              - Write a schema description: project-setup/how-to/schema-description.md
+              - Create example queries: project-setup/how-to/example-queries.md
+              - Limit schema sent to the LLM: project-setup/how-to/schema-config.md
+          - Declare data semantics:
+              - Configure semantic measures: project-setup/how-to/configure-measures.md
+              - Declare time series: project-setup/how-to/declare-time-series.md
+              - Declare table joins: project-setup/how-to/declare-joins.md
+          - Validate and verify:
+              - Define validation rules: project-setup/how-to/validation-rules.md
+              - Verify queries across models: project-setup/how-to/verification.md
       - Concepts:
           - What semantic measures are: project-setup/concepts/semantic-measures.md
   - Reference:

@@ -61,7 +61,7 @@ these move):
   with many tables or wide tables. If you hit context-length errors, see
   [Limit schema sent to the LLM](../../project-setup/how-to/schema-config.md).
 - **Cheap hosted tier** (Anthropic Haiku, OpenAI GPT-4o-mini / GPT-4.1-mini)
-  — typical datasight sessions cost pennies to single-digit cents.
+  — typical datasight sessions cost a fraction of a penny.
 - **Mid hosted tier** (Anthropic Sonnet, OpenAI GPT-4o) — roughly 5× the
   cheap tier. Noticeably better at ambiguous questions and multi-step
   reasoning.

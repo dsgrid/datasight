@@ -83,6 +83,15 @@ datasight has spotted that twelve column names look like month tokens —
 `jan`, `feb`, … `dec` — and proposes to reshape the table into a long
 form named `monthly_generation_mwh_long`.
 
+!!! tip "Need AI help to fix the schema?"
+    The detector here is regex-based: it recognizes time-period pivots
+    like `jan`/`feb`/`dec` or `2020`/`2021`/`2022` from the column names
+    alone. For category pivots like `coal_mwh`/`gas_mwh`/`nuclear_mwh`,
+    geography pivots like `ca_capacity`/`tx_capacity`, or multi-axis
+    pivots like `coal_2020`/`gas_2020`/`coal_2021`, see
+    [Curate datasets with `tidy review`](../how-to/curate-with-tidy-review.md) —
+    it asks an LLM to propose reshapes and lets you approve each one.
+
 You can also pass several files at once, or `parquet` / `xlsx` / `duckdb`
 sources:
 
@@ -181,11 +190,5 @@ plain `GROUP BY`.
 - **Audit the rest of your data.** [Audit data quality](../how-to/audit-data-quality.md)
   covers `datasight quality`, which surfaces tidy suggestions alongside
   null/range/date-coverage checks during routine audits.
-- **Reshape pivots the regex misses.** This tutorial covered period
-  pivots (`jan` … `dec`). For category pivots like `coal_mwh`,
-  `gas_mwh`, `nuclear_mwh`, or multi-axis pivots like `coal_2020`,
-  `gas_2020`, `coal_2021`, `gas_2021`, see
-  [Curate datasets with `tidy review`](../how-to/curate-with-tidy-review.md).
-  That command asks an LLM for proposals and lets you approve each one.
 - **Try a real dataset.** [Explore US electricity generation (EIA)](getting-started.md)
   walks through the same loop on the PUDL EIA dataset.

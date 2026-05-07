@@ -97,11 +97,10 @@
   color: var(--md-primary-fg-color--light);
 }
 
-/* ── Nested sidebar sections ──
- * Differentiate sub-sections (How-to guides, Reference, Explanation) from
- * the top-level role labels (End user, Project developer, Tool developer). */
-.md-sidebar--primary .md-nav .md-nav .md-nav__item--section > .md-nav__link,
-.md-sidebar--primary .md-nav[data-md-level="2"] > .md-nav__list > .md-nav__item--nested > .md-nav__link {
+/* ── Sidebar section labels ──
+ * Top-level section labels under each tab (TUTORIALS, HOW-TO GUIDES, CONCEPTS,
+ * REFERENCE). These get the all-caps treatment to anchor the sidebar. */
+.md-sidebar--primary .md-nav .md-nav .md-nav__item--section > .md-nav__link {
   font-size: .68rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -111,10 +110,27 @@
   color: var(--md-primary-fg-color--dark);
 }
 
-[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav .md-nav .md-nav__item--section > .md-nav__link,
-[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav[data-md-level="2"] > .md-nav__list > .md-nav__item--nested > .md-nav__link {
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav .md-nav .md-nav__item--section > .md-nav__link {
   color: var(--ds-orange);
   opacity: .85;
+}
+
+/* ── Sub-group labels inside a section ──
+ * E.g., "Get started" / "Ask questions" / "Save and share" inside HOW-TO GUIDES.
+ * Visibly smaller and lighter than their parent section label. */
+.md-sidebar--primary .md-nav[data-md-level="2"] > .md-nav__list > .md-nav__item--nested:not(.md-nav__item--section) > .md-nav__link {
+  font-size: .6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: .55;
+  margin-top: .4rem;
+  color: var(--md-primary-fg-color--dark);
+}
+
+[data-md-color-scheme="slate"] .md-sidebar--primary .md-nav[data-md-level="2"] > .md-nav__list > .md-nav__item--nested:not(.md-nav__item--section) > .md-nav__link {
+  color: var(--ds-orange);
+  opacity: .65;
 }
 
 /* ── Code blocks ── */
