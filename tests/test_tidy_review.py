@@ -18,6 +18,7 @@ A live LLM integration test against Ollama lives at the bottom under the
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import duckdb
@@ -1717,6 +1718,18 @@ def test_apply_proposal_rejects_view_mode_with_rename_source(tmp_path):
         conn.close()
 
 
+def _normalize_cli_output(output: str) -> str:
+    """Strip ANSI codes and collapse whitespace from CliRunner output.
+
+    Click 8.3 + rich-click wraps usage errors in a Rich panel whose line
+    breaks depend on the runner's terminal width. CI tends to wrap long
+    error messages mid-phrase, so a literal ``in result.output`` check
+    fails there even when it passes locally. Normalize before asserting.
+    """
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    return re.sub(r"\s+", " ", plain)
+
+
 def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
     """``datasight tidy review --drop-source`` (default ``--as view``) must
     fail fast with a UsageError, not silently produce a recursive view."""
@@ -1740,7 +1753,7 @@ def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
         ],
     )
     assert result.exit_code != 0
-    assert "--drop-source requires '--as table'" in result.output
+    assert "--drop-source requires '--as table'" in _normalize_cli_output(result.output)
     # No DDL ran.
     conn = duckdb.connect(str(db_path))
     try:
@@ -1771,7 +1784,7 @@ def test_cli_review_view_mode_rename_source_is_a_usage_error(tmp_path):
         ],
     )
     assert result.exit_code != 0
-    assert "--rename-source requires '--as table'" in result.output
+    assert "--rename-source requires '--as table'" in _normalize_cli_output(result.output)
 
 
 def test_cli_review_drop_source_view_end_to_end(tmp_path):
