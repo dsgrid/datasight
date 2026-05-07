@@ -71,6 +71,8 @@ into the project `.env` — both work. For guidance on picking a provider —
 data sensitivity, cost tiers, local vs hosted — see
 [Choosing an LLM](../../use/concepts/choosing-an-llm.md).
 
+**Not sure which option to pick? Start with Option A (Anthropic + DuckDB).**
+
 **Option A — Anthropic (cloud API):**
 
 ```bash
@@ -240,7 +242,7 @@ datasight run
 
 Open <http://localhost:8084> in your browser. The sidebar shows your database
 tables, recipes, example queries, and saved artifacts. The landing page also
-lets you start with guided deterministic workflows such as:
+lets you start with guided built-in workflows (no AI call needed) such as:
 
 - profiling the dataset
 - surfacing key dimensions

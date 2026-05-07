@@ -13,8 +13,8 @@ Shown when you open datasight with no project loaded.
 
 Four starter workflows that run immediately after data loads:
 
-- **Profile this dataset** — deterministic overview of table sizes, date
-  coverage, measure candidates, and likely dimensions
+- **Profile this dataset** — instant overview of table sizes, date
+  coverage, measure candidates, and likely dimensions (no AI call needed)
 - **Find key dimensions** — likely grouping columns, suggested
   breakdowns, and join hints
 - **Build a trend chart** — candidate date/measure pairs plus starter

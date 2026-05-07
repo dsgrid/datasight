@@ -1,9 +1,11 @@
 # Audit data quality
 
-datasight provides deterministic commands that inspect your data directly —
-no LLM needed. Use them to find nulls, suspicious ranges, date gaps,
-dimension breakdowns, and trend candidates before asking AI-powered
-questions.
+datasight provides built-in inspection commands that run directly against
+your data — no AI call needed. Throughout this guide these are called
+*[deterministic](../../glossary.md#deterministic)* commands, meaning they
+produce consistent results every run and don't consume any AI tokens. Use
+them to find nulls, suspicious ranges, date gaps, dimension breakdowns, and
+trend candidates before asking AI-powered questions.
 
 These commands work with both configured projects and files passed directly
 to `datasight inspect`.

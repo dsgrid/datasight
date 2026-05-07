@@ -20,6 +20,12 @@ When in doubt, start with Haiku. datasight's main job — turning a question
 into SQL against a documented schema — is not a frontier-model task, and
 Haiku handles it well for most projects.
 
+!!! tip "Most users can stop reading here"
+    Pick the option that matches your row in the table above, then head to
+    [Install datasight](../how-to/install.md). The sections below cover advanced
+    tradeoffs — data sensitivity policy, cost modeling, local GPU sizing, and network
+    configuration — and are only worth reading if the table left you uncertain.
+
 ## Factor 1: data sensitivity
 
 This is the first question to answer, because it rules some options out.
