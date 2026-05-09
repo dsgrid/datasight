@@ -24,6 +24,7 @@
     projectName?: string | null;
     tableCount?: number;
     sqlPanelOpen?: boolean;
+    onExitExplore?: () => void;
   }
 
   let {
@@ -43,6 +44,7 @@
     projectName = null,
     tableCount = 0,
     sqlPanelOpen = false,
+    onExitExplore,
   }: Props = $props();
 
   let showCost = $derived(
@@ -122,6 +124,21 @@
               onclick={onSaveProject}
             >
               Save
+            </button>
+          {/if}
+          {#if onExitExplore}
+            <button
+              class="cursor-pointer transition-opacity hover:opacity-90 flex items-center justify-center"
+              title="Exit explore session and return to the start screen"
+              aria-label="Exit explore session"
+              style="margin-left: 2px; padding: 2px 6px; border-radius: 4px;
+                     border: none; background: transparent;
+                     color: var(--orange); line-height: 1;"
+              onclick={onExitExplore}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
             </button>
           {/if}
         </div>

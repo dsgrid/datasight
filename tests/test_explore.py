@@ -3,6 +3,7 @@
 import pytest
 
 from datasight.explore import (
+    browse_directory,
     create_ephemeral_session,
     create_view_sql,
     detect_file_type,
@@ -226,6 +227,102 @@ class TestCreateViewSql:
         """Raise ValueError for unknown file type."""
         with pytest.raises(ValueError, match="Unknown file type"):
             create_view_sql("x", "/path", "unknown")
+
+
+class TestBrowseDirectory:
+    """Backing for the file-browser modal in the Explore card."""
+
+    def test_lists_dirs_and_supported_files(self, tmp_path):
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "data.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        (tmp_path / "table.parquet").write_bytes(b"")
+        (tmp_path / "book.xlsx").write_bytes(b"")
+        (tmp_path / "ignored.txt").write_text("skip", encoding="utf-8")
+
+        result = browse_directory(tmp_path)
+        assert "error" not in result
+        assert {d["name"] for d in result["dirs"]} == {"subdir"}
+        names = {f["name"] for f in result["files"]}
+        assert names == {"data.csv", "table.parquet", "book.xlsx"}
+
+    def test_skips_hidden_entries(self, tmp_path):
+        (tmp_path / ".hidden_dir").mkdir()
+        (tmp_path / ".hidden.csv").write_text("a\n1\n", encoding="utf-8")
+        (tmp_path / "visible.csv").write_text("a\n1\n", encoding="utf-8")
+
+        result = browse_directory(tmp_path)
+        assert {f["name"] for f in result["files"]} == {"visible.csv"}
+        assert result["dirs"] == []
+
+    def test_returns_parent_for_navigation(self, tmp_path):
+        sub = tmp_path / "child"
+        sub.mkdir()
+        result = browse_directory(sub)
+        assert result["parent"] == str(tmp_path.resolve())
+
+    def test_root_has_no_parent(self):
+        from pathlib import Path
+
+        result = browse_directory(Path("/"))
+        assert result["parent"] is None
+
+    def test_default_path_uses_cwd(self, tmp_path, monkeypatch):
+        from pathlib import Path
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "x.csv").write_text("a\n1\n", encoding="utf-8")
+        result = browse_directory(None)
+        assert result["path"] == str(Path(tmp_path).resolve())
+        assert any(f["name"] == "x.csv" for f in result["files"])
+
+    def test_nonexistent_path_returns_error(self, tmp_path):
+        result = browse_directory(tmp_path / "does_not_exist")
+        assert "error" in result
+        assert "exist" in result["error"].lower()
+
+    def test_file_path_returns_error(self, tmp_path):
+        f = tmp_path / "x.csv"
+        f.write_text("a\n1\n", encoding="utf-8")
+        result = browse_directory(f)
+        assert "error" in result
+        assert "directory" in result["error"].lower()
+
+    def test_database_file_types_listed(self, tmp_path):
+        """sqlite/duckdb files should appear so users can pick a DB to
+        explore directly."""
+        (tmp_path / "users.duckdb").write_bytes(b"")
+        (tmp_path / "logs.sqlite").write_bytes(b"")
+        result = browse_directory(tmp_path)
+        types = {f["name"]: f["type"] for f in result["files"]}
+        assert types == {"users.duckdb": "duckdb", "logs.sqlite": "sqlite"}
+
+    def test_db_extension_detects_sqlite_via_header(self, tmp_path):
+        """A ``.db`` file with a SQLite header should be labeled
+        ``sqlite``, not ``duckdb`` — the importer sniffs the header, so
+        the browser label has to match or the user picks a file the
+        backend then refuses."""
+        (tmp_path / "sqlite_db.db").write_bytes(b"SQLite format 3\x00rest")
+        (tmp_path / "duck_db.db").write_bytes(b"not-a-sqlite-header")
+        result = browse_directory(tmp_path)
+        types = {f["name"]: f["type"] for f in result["files"]}
+        assert types == {"sqlite_db.db": "sqlite", "duck_db.db": "duckdb"}
+
+    def test_error_result_has_full_shape(self, tmp_path):
+        """Error responses must include the same keys as success
+        responses so frontend types can rely on a stable contract."""
+        result = browse_directory(tmp_path / "missing")
+        assert "error" in result
+        assert result["dirs"] == []
+        assert result["files"] == []
+        assert result["parent"] is None
+        assert result["truncated"] is False
+
+    def test_truncated_flag_set_when_capped(self, tmp_path):
+        for i in range(15):
+            (tmp_path / f"file_{i:02d}.csv").write_text("a\n1\n", encoding="utf-8")
+        result = browse_directory(tmp_path, max_entries=10)
+        assert len(result["files"]) == 10
+        assert result["truncated"] is True
 
 
 class TestCsvSnifferFallback:

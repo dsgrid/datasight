@@ -184,15 +184,20 @@ async def test_execute_tool_visualize_empty_result(test_duckdb_path):
 
 @pytest.mark.asyncio
 async def test_execute_tool_visualize_chart_build_error(test_duckdb_path):
-    """Malformed plotly spec should surface a chart-building error."""
+    """Malformed plotly spec should surface a chart-building error.
+
+    `data` must be a list of trace dicts; passing a scalar makes
+    split_traces_by_group's iteration raise, which the visualize path
+    is supposed to convert into a user-visible chart error rather than
+    crashing the request.
+    """
     runner = DuckDBRunner(test_duckdb_path)
-    # Passing a non-dict spec triggers exception in resolve_plotly_spec
     result = await execute_tool(
         "visualize_data",
         {
             "sql": "SELECT name FROM products LIMIT 1",
             "title": "X",
-            "plotly_spec": "not a dict",  # type: ignore[arg-type]
+            "plotly_spec": {"data": 42},  # type: ignore[arg-type]
         },
         run_sql=runner.run_sql,
     )

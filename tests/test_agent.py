@@ -282,6 +282,30 @@ async def test_execute_tool_visualize(test_duckdb_path):
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_visualize_plotly_spec_as_json_string(test_duckdb_path):
+    """Some OpenAI-compat backends (Ollama) hand back the nested
+    plotly_spec object as a JSON-encoded string inside tool arguments
+    despite the schema declaring it as type=object. The visualize path
+    must decode the string instead of crashing with AttributeError."""
+    import json as _json
+
+    runner = DuckDBRunner(test_duckdb_path)
+    result = await execute_tool(
+        "visualize_data",
+        {
+            "sql": "SELECT category, SUM(price) AS total FROM products GROUP BY category",
+            "title": "Price by Category",
+            "plotly_spec": _json.dumps({"data": [{"type": "bar", "x": "category", "y": "total"}]}),
+        },
+        run_sql=runner.run_sql,
+    )
+    runner.close()
+    assert result.plotly_spec is not None
+    assert result.result_html is not None
+    assert "Price by Category" in result.result_text
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_unknown_tool(test_duckdb_path):
     runner = DuckDBRunner(test_duckdb_path)
     result = await execute_tool("bogus_tool", {}, run_sql=runner.run_sql)

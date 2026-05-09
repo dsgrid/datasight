@@ -372,8 +372,7 @@ async def analyze_ambiguity(
     text = "".join(b.text for b in response.content if isinstance(b, TextBlock)).strip()
 
     # Parse JSON from response
-    match = _re.search(r"\{.*\}", text, _re.DOTALL)
-    if not match:
+    if not (match := _re.search(r"\{.*\}", text, _re.DOTALL)):
         return AmbiguityResult(question=question, is_ambiguous=False)
     try:
         data = _json.loads(match.group())

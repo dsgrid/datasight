@@ -24,7 +24,7 @@
   import { queriesStore } from "$lib/stores/queries.svelte";
   import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
   import { paletteStore } from "$lib/stores/palette.svelte";
-  import { getProjectStatus } from "$lib/api/projects";
+  import { exitExploreSession, getProjectStatus } from "$lib/api/projects";
   import { loadSettings, loadLlmConfig } from "$lib/api/settings";
   import { loadSchema, loadQueries, loadRecipes } from "$lib/api/schema";
   import {
@@ -169,6 +169,28 @@
     } catch {
       // No saved conversation — that's fine
     }
+  }
+
+  /** Tear down an ephemeral session and return to the landing page so the
+   * user can pick a different file or starter. Without this, picking a
+   * starter on the landing page latches `projectLoaded=true` and the
+   * UI offers no way back. */
+  async function onExitExplore() {
+    try {
+      await exitExploreSession();
+    } catch {
+      // If the server call fails we still want to reset client state so
+      // the user isn't stuck. The next page load will reconcile.
+    }
+    chatStore.clear();
+    queriesStore.clear();
+    dashboardStore.clear();
+    sqlEditorStore.clearAll();
+    sessionStore.reset();
+    dashboardStore.currentView = "chat";
+    exportMode = false;
+    exportExcludeIndices = new Set();
+    fromLanding = false;
   }
 
   /** Called when explore files succeeds. */
@@ -506,6 +528,7 @@
   projectName={sessionStore.currentProjectPath?.split("/").pop() ?? null}
   tableCount={sessionStore.ephemeralTablesInfo.length}
   {sqlPanelOpen}
+  {onExitExplore}
 />
 
 <main class="flex flex-1 overflow-hidden min-h-0"

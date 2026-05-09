@@ -67,6 +67,38 @@ export async function explore(paths: string[]): Promise<ExploreResult> {
   return result;
 }
 
+export async function exitExploreSession(): Promise<{ success: boolean }> {
+  return postJson<{ success: boolean }>("/api/explore/exit", {});
+}
+
+export interface BrowseEntryFile {
+  name: string;
+  path: string;
+  type: "csv" | "parquet" | "xlsx" | "duckdb" | "sqlite";
+  size_bytes: number;
+}
+
+export interface BrowseEntryDir {
+  name: string;
+  path: string;
+}
+
+export interface BrowseDirectoryResult {
+  path: string;
+  parent: string | null;
+  dirs: BrowseEntryDir[];
+  files: BrowseEntryFile[];
+  truncated: boolean;
+  error?: string;
+}
+
+export async function browseDirectory(
+  path?: string,
+): Promise<BrowseDirectoryResult> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : "";
+  return fetchJson<BrowseDirectoryResult>(`/api/explore/browse${qs}`);
+}
+
 export async function getExploreStatus(): Promise<{
   is_ephemeral: boolean;
   tables: { name: string; source: string; row_count: number }[];

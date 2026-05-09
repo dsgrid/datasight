@@ -319,6 +319,49 @@ def test_timeseries_overview_with_config(isolated_web_state: None, project_dir: 
     assert payload["overview"]["time_series_summaries"][0]["table"] == "orders"
 
 
+def test_explore_exit_refuses_when_not_ephemeral(isolated_web_state: None) -> None:
+    """``POST /api/explore/exit`` must not wipe project state outside an
+    ephemeral session — a stray request would otherwise unload a real
+    loaded project."""
+    web_app._state.project_loaded = True
+    web_app._state.is_ephemeral = False
+    try:
+        with TestClient(web_app.app) as client:
+            response = client.post("/api/explore/exit")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is False
+        assert "ephemeral" in body["error"].lower()
+        # State must still be loaded.
+        assert web_app._state.project_loaded is True
+    finally:
+        web_app._state.project_loaded = False
+
+
+def test_explore_browse_blocks_non_loopback_clients() -> None:
+    """The browse endpoint enumerates the server filesystem, so it must
+    refuse non-loopback callers — otherwise ``--host 0.0.0.0`` exposes
+    directory listings to the network."""
+    from unittest.mock import Mock
+
+    from datasight.web.app import _is_local_client
+
+    def make_request(host: str | None) -> Mock:
+        request = Mock()
+        request.client = None if host is None else Mock(host=host)
+        return request
+
+    assert _is_local_client(make_request("127.0.0.1")) is True
+    assert _is_local_client(make_request("127.0.0.5")) is True
+    assert _is_local_client(make_request("::1")) is True
+    assert _is_local_client(make_request("localhost")) is True
+    assert _is_local_client(make_request(None)) is True  # unix socket
+    assert _is_local_client(make_request("")) is True  # unix socket
+    assert _is_local_client(make_request("10.0.0.5")) is False
+    assert _is_local_client(make_request("192.168.1.1")) is False
+    assert _is_local_client(make_request("testclient")) is False
+
+
 def test_timeseries_overview_table_filter(isolated_web_state: None, project_dir: str) -> None:
     """Timeseries overview should filter by table when ?table= is provided."""
     project_path = str(Path(project_dir).resolve())

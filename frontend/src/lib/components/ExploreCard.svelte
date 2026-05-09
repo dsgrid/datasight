@@ -1,5 +1,6 @@
 <script lang="ts">
   import { explore } from "$lib/api/projects";
+  import FileBrowserModal from "./FileBrowserModal.svelte";
 
   interface Props {
     onExplored: () => void;
@@ -11,6 +12,7 @@
   let path = $state("");
   let loading = $state(false);
   let error = $state("");
+  let browserOpen = $state(false);
 
   async function handleExplore() {
     error = "";
@@ -39,6 +41,10 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") handleExplore();
+  }
+
+  function handleBrowseSelect(picked: string) {
+    path = picked;
   }
 </script>
 
@@ -73,6 +79,15 @@
              font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;"
     />
     <button
+      onclick={() => (browserOpen = true)}
+      class="border border-border bg-surface text-text-primary font-medium cursor-pointer
+        hover:bg-bg transition-colors whitespace-nowrap"
+      style="padding: 10px 14px; border-radius: 8px; font-family: inherit; font-size: 0.85rem;"
+      title="Open the file browser"
+    >
+      Browse…
+    </button>
+    <button
       onclick={handleExplore}
       disabled={loading}
       class="bg-teal text-white font-medium cursor-pointer
@@ -86,3 +101,10 @@
     <p style="font-size: 0.75rem; color: #e55; margin-top: 8px;">{error}</p>
   {/if}
 </div>
+
+<FileBrowserModal
+  open={browserOpen}
+  onClose={() => (browserOpen = false)}
+  onSelect={handleBrowseSelect}
+  initialPath={path.trim() || null}
+/>
