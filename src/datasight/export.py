@@ -323,44 +323,45 @@ def _group_events_into_turns(
         if current is None:
             continue
 
-        if etype == EventType.ASSISTANT_MESSAGE:
-            text = data.get("text", "")
-            if not text:
-                continue
-            # Bucket by phase: text emitted before any tool call is intro
-            # narrative; text emitted after is the final answer.
-            if not current["tool_calls"]:
-                current["intro_texts"].append(text)
-            else:
-                current["final_texts"].append(text)
-        elif etype == EventType.TOOL_START:
-            pending_start = data
-            pending_result = None
-        elif etype == EventType.TOOL_RESULT:
-            pending_result = data
-        elif etype == EventType.TOOL_DONE:
-            tool_name = (pending_start or {}).get("tool") or data.get("tool") or "tool"
-            sql = (
-                data.get("formatted_sql")
-                or data.get("sql")
-                or ((pending_start or {}).get("input") or {}).get("sql")
-            )
-            spec = None
-            chart_title = None
-            if pending_result:
-                spec = pending_result.get("plotly_spec") or pending_result.get("plotlySpec")
-                chart_title = pending_result.get("title")
-            current["tool_calls"].append(
-                {
-                    "tool_name": tool_name,
-                    "sql": sql,
-                    "plotly_spec": spec,
-                    "chart_title": chart_title,
-                    "error": data.get("error"),
-                }
-            )
-            pending_start = None
-            pending_result = None
+        match etype:
+            case EventType.ASSISTANT_MESSAGE:
+                text = data.get("text", "")
+                if not text:
+                    continue
+                # Bucket by phase: text emitted before any tool call is intro
+                # narrative; text emitted after is the final answer.
+                if not current["tool_calls"]:
+                    current["intro_texts"].append(text)
+                else:
+                    current["final_texts"].append(text)
+            case EventType.TOOL_START:
+                pending_start = data
+                pending_result = None
+            case EventType.TOOL_RESULT:
+                pending_result = data
+            case EventType.TOOL_DONE:
+                tool_name = (pending_start or {}).get("tool") or data.get("tool") or "tool"
+                sql = (
+                    data.get("formatted_sql")
+                    or data.get("sql")
+                    or ((pending_start or {}).get("input") or {}).get("sql")
+                )
+                spec = None
+                chart_title = None
+                if pending_result:
+                    spec = pending_result.get("plotly_spec") or pending_result.get("plotlySpec")
+                    chart_title = pending_result.get("title")
+                current["tool_calls"].append(
+                    {
+                        "tool_name": tool_name,
+                        "sql": sql,
+                        "plotly_spec": spec,
+                        "chart_title": chart_title,
+                        "error": data.get("error"),
+                    }
+                )
+                pending_start = None
+                pending_result = None
 
     if current is not None:
         turns.append(current)
@@ -423,33 +424,33 @@ def _group_events_for_bundle(
         if current is None:
             continue
 
-        if etype == EventType.ASSISTANT_MESSAGE:
-            text = data.get("text", "")
-            if text:
-                current["assistant_messages"].append(text)
-        elif etype == EventType.TOOL_START:
-            flush_pending()
-            pending_call = new_tool_call(data.get("tool") or "tool")
-            pending_call["sql"] = ((data.get("input") or {}).get("sql")) or None
-        elif etype == EventType.TOOL_RESULT:
-            if pending_call is None:
-                pending_call = new_tool_call()
-            result_type = data.get("type")
-            if result_type == "chart":
-                pending_call["plotly_spec"] = data.get("plotly_spec") or data.get("plotlySpec")
-                pending_call["chart_title"] = data.get("title")
-            else:
-                pending_call["table_html"] = data.get("html") or None
-        elif etype == EventType.TOOL_DONE:
-            if pending_call is None:
+        match etype:
+            case EventType.ASSISTANT_MESSAGE:
+                text = data.get("text", "")
+                if text:
+                    current["assistant_messages"].append(text)
+            case EventType.TOOL_START:
+                flush_pending()
                 pending_call = new_tool_call(data.get("tool") or "tool")
-            pending_call["tool_name"] = data.get("tool") or pending_call["tool_name"]
-            pending_call["formatted_sql"] = data.get("formatted_sql") or data.get("sql")
-            pending_call["sql"] = pending_call["formatted_sql"] or pending_call["sql"]
-            pending_call["error"] = data.get("error")
-            flush_pending()
-        elif etype == EventType.PROVENANCE:
-            current["provenance"] = data
+                pending_call["sql"] = ((data.get("input") or {}).get("sql")) or None
+            case EventType.TOOL_RESULT:
+                if pending_call is None:
+                    pending_call = new_tool_call()
+                if data.get("type") == "chart":
+                    pending_call["plotly_spec"] = data.get("plotly_spec") or data.get("plotlySpec")
+                    pending_call["chart_title"] = data.get("title")
+                else:
+                    pending_call["table_html"] = data.get("html") or None
+            case EventType.TOOL_DONE:
+                if pending_call is None:
+                    pending_call = new_tool_call(data.get("tool") or "tool")
+                pending_call["tool_name"] = data.get("tool") or pending_call["tool_name"]
+                pending_call["formatted_sql"] = data.get("formatted_sql") or data.get("sql")
+                pending_call["sql"] = pending_call["formatted_sql"] or pending_call["sql"]
+                pending_call["error"] = data.get("error")
+                flush_pending()
+            case EventType.PROVENANCE:
+                current["provenance"] = data
 
     flush_pending()
     if current is not None:
@@ -784,8 +785,7 @@ def export_session_bundle(
 
 def _extract_plotly_spec(srcdoc: str) -> dict[str, Any] | None:
     """Extract the Plotly spec JSON from a chart iframe's srcdoc."""
-    match = re.search(r"var spec = ({.*?});", srcdoc, re.DOTALL)
-    if match:
+    if match := re.search(r"var spec = ({.*?});", srcdoc, re.DOTALL):
         try:
             return json.loads(match.group(1))
         except json.JSONDecodeError:

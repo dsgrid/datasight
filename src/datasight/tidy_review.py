@@ -590,24 +590,27 @@ def update_schema_yaml_for_apply(
             source_entry = cast(dict[str, Any], entry)
             break
 
-    if disposition_mode == "drop":
-        if source_entry is not None:
-            # Long form replaces source: same name, different columns. Drop
-            # any old column filter so the new columns surface.
-            source_entry.pop("columns", None)
-            source_entry.pop("excluded_columns", None)
-        else:
-            tables.append({"name": source_table})
-        # Remove stale target_table entries from a prior keep/rename.
-        tables = [e for e in tables if not (isinstance(e, dict) and e.get("name") == target_table)]
-    elif disposition_mode == "rename":
-        if source_entry is not None and rename_to:
-            source_entry["name"] = rename_to
-        if not _has_table_entry(tables, target_table):
-            tables.append({"name": target_table})
-    else:  # keep
-        if not _has_table_entry(tables, target_table):
-            tables.append({"name": target_table})
+    match disposition_mode:
+        case "drop":
+            if source_entry is not None:
+                # Long form replaces source: same name, different columns. Drop
+                # any old column filter so the new columns surface.
+                source_entry.pop("columns", None)
+                source_entry.pop("excluded_columns", None)
+            else:
+                tables.append({"name": source_table})
+            # Remove stale target_table entries from a prior keep/rename.
+            tables = [
+                e for e in tables if not (isinstance(e, dict) and e.get("name") == target_table)
+            ]
+        case "rename":
+            if source_entry is not None and rename_to:
+                source_entry["name"] = rename_to
+            if not _has_table_entry(tables, target_table):
+                tables.append({"name": target_table})
+        case _:  # keep
+            if not _has_table_entry(tables, target_table):
+                tables.append({"name": target_table})
 
     data["tables"] = tables
     path.write_text(

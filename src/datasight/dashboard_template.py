@@ -159,14 +159,12 @@ def resolve_variables(
         if name in overrides:
             resolved[name] = str(overrides[name])
             continue
-        regex = var.get("from_filename")
-        if regex:
+        if regex := var.get("from_filename"):
             if file_str is None:
                 raise TemplateError(
                     f"Variable {name!r} extracts from filename but no input filename is available."
                 )
-            match = re.search(regex, file_str)
-            if not match:
+            if not (match := re.search(regex, file_str)):
                 raise TemplateError(
                     f"Filename {file_str!r} does not match regex {regex!r} for variable {name!r}."
                 )
