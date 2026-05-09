@@ -296,6 +296,27 @@ class TestBrowseDirectory:
         types = {f["name"]: f["type"] for f in result["files"]}
         assert types == {"users.duckdb": "duckdb", "logs.sqlite": "sqlite"}
 
+    def test_db_extension_detects_sqlite_via_header(self, tmp_path):
+        """A ``.db`` file with a SQLite header should be labeled
+        ``sqlite``, not ``duckdb`` — the importer sniffs the header, so
+        the browser label has to match or the user picks a file the
+        backend then refuses."""
+        (tmp_path / "sqlite_db.db").write_bytes(b"SQLite format 3\x00rest")
+        (tmp_path / "duck_db.db").write_bytes(b"not-a-sqlite-header")
+        result = browse_directory(tmp_path)
+        types = {f["name"]: f["type"] for f in result["files"]}
+        assert types == {"sqlite_db.db": "sqlite", "duck_db.db": "duckdb"}
+
+    def test_error_result_has_full_shape(self, tmp_path):
+        """Error responses must include the same keys as success
+        responses so frontend types can rely on a stable contract."""
+        result = browse_directory(tmp_path / "missing")
+        assert "error" in result
+        assert result["dirs"] == []
+        assert result["files"] == []
+        assert result["parent"] is None
+        assert result["truncated"] is False
+
     def test_truncated_flag_set_when_capped(self, tmp_path):
         for i in range(15):
             (tmp_path / f"file_{i:02d}.csv").write_text("a\n1\n", encoding="utf-8")

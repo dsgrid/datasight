@@ -23,7 +23,7 @@ from typing import Any, AsyncIterator
 import pandas as pd
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -2302,8 +2302,13 @@ async def exit_explore_session(state: AppState = Depends(get_state)):
     can't get back to pick a different file or starter without
     restarting the server — the projectLoaded flag latches on with no
     affordance to clear it.
+
+    Refuses to clear non-ephemeral state so a stray request can't wipe
+    a real loaded project.
     """
     async with state.state_lock:
+        if not state.is_ephemeral:
+            return {"success": False, "error": "Not in an ephemeral explore session"}
         state.clear_project()
         restore_original_env()
     return {"success": True}
@@ -2631,8 +2636,24 @@ async def explore_scan_cwd(state: AppState = Depends(get_state)):
     }
 
 
+def _is_local_client(request: Request) -> bool:
+    """Treat unix-socket and 127.x / ::1 loopback callers as local.
+
+    ``datasight run`` defaults to ``127.0.0.1`` but exposes ``--host``,
+    so a user could bind to ``0.0.0.0`` and inadvertently let remote
+    callers enumerate the server's filesystem via the browse endpoint.
+    """
+    client = request.client
+    if client is None:
+        return True
+    host = client.host or ""
+    if not host:
+        return True
+    return host == "::1" or host == "localhost" or host.startswith("127.")
+
+
 @app.get("/api/explore/browse")
-async def explore_browse(path: str | None = None):
+async def explore_browse(request: Request, path: str | None = None):
     """List subdirectories and openable data files for the file-browser
     modal.
 
@@ -2640,7 +2661,16 @@ async def explore_browse(path: str | None = None):
     picker, but DuckDB's ``read_csv_auto`` needs one. Since
     ``datasight run`` is local-first the server can walk the filesystem
     and return the path string the user picked back to the client.
+
+    Restricted to loopback / unix-socket callers so a non-default
+    ``--host 0.0.0.0`` deployment doesn't leak server filesystem
+    contents to the network.
     """
+    if not _is_local_client(request):
+        raise HTTPException(
+            status_code=403,
+            detail="File browsing is restricted to local clients",
+        )
     return browse_directory(path)
 
 

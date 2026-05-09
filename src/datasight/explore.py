@@ -173,6 +173,20 @@ def scan_directory_for_data_files(
     return files, truncated
 
 
+def _browse_error(path_str: str, error: str) -> dict[str, Any]:
+    """Error result with the same shape as a successful ``browse_directory``
+    response so callers can rely on a consistent contract.
+    """
+    return {
+        "path": path_str,
+        "parent": None,
+        "dirs": [],
+        "files": [],
+        "truncated": False,
+        "error": error,
+    }
+
+
 def browse_directory(
     path: str | Path | None = None,
     *,
@@ -206,17 +220,17 @@ def browse_directory(
         try:
             root = Path(path).expanduser().resolve()
         except (OSError, RuntimeError) as e:
-            return {"error": f"Invalid path: {e}", "path": str(path)}
+            return _browse_error(str(path), f"Invalid path: {e}")
 
     if not root.exists():
-        return {"error": "Directory does not exist", "path": str(root)}
+        return _browse_error(str(root), "Directory does not exist")
     if not root.is_dir():
-        return {"error": "Not a directory", "path": str(root)}
+        return _browse_error(str(root), "Not a directory")
 
     try:
         entries = sorted(root.iterdir(), key=lambda p: p.name.lower())
     except OSError as e:
-        return {"error": f"Unable to list directory: {e}", "path": str(root)}
+        return _browse_error(str(root), f"Unable to list directory: {e}")
 
     dirs: list[dict[str, Any]] = []
     files: list[dict[str, Any]] = []
@@ -246,11 +260,19 @@ def browse_directory(
         if len(files) >= max_entries:
             files_truncated = True
             continue
+        # ``.db`` is ambiguous: SQLite and DuckDB both use it. Reuse the
+        # same header sniff that the importer does so the UI label
+        # matches what the backend will actually open.
+        file_type = _BROWSE_SUFFIX_TYPES[suffix]
+        if suffix == ".db":
+            detected = detect_file_type(str(entry))
+            if detected is not None:
+                file_type = detected
         files.append(
             {
                 "name": entry.name,
                 "path": str(entry),
-                "type": _BROWSE_SUFFIX_TYPES[suffix],
+                "type": file_type,
                 "size_bytes": size,
             }
         )

@@ -22,11 +22,27 @@
     }
   });
 
+  function parentDir(p: string): string | null {
+    const idx = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+    if (idx <= 0) return null;
+    return p.slice(0, idx);
+  }
+
   async function load(path: string | null | undefined) {
     loading = true;
     errorMsg = "";
     try {
-      const result = await browseDirectory(path ?? undefined);
+      let result = await browseDirectory(path ?? undefined);
+      // ExploreCard passes whatever's in the path field, which is usually
+      // a file path. Retry with the parent so the modal opens at the
+      // containing directory rather than dropping to CWD.
+      if (result.error && listing === null && path) {
+        const parent = parentDir(path);
+        if (parent) {
+          const retry = await browseDirectory(parent);
+          if (!retry.error) result = retry;
+        }
+      }
       if (result.error) {
         errorMsg = result.error;
         if (listing === null) {
