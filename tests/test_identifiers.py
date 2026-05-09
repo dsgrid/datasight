@@ -1,9 +1,11 @@
-"""Tests for Postgres mixed-case identifier quoting."""
+"""Tests for SQL identifier quoting (mixed case + whitespace)."""
 
 from datasight.identifiers import (
     build_identifier_case_map,
+    build_special_identifier_list,
     configure_runner_identifier_quoting,
     quote_mixed_case_identifiers,
+    quote_special_identifiers,
 )
 
 
@@ -120,6 +122,12 @@ class TestQuoteMixedCaseIdentifiers:
 class _FakePostgresRunner:
     def __init__(self):
         self.mixed_case_identifiers: dict[str, str] | None = None
+        self.special_identifiers: list[str] | None = None
+
+
+class _FakeDuckDBRunner:
+    def __init__(self):
+        self.special_identifiers: list[str] | None = None
 
 
 class _FakeCachingRunner:
@@ -155,3 +163,155 @@ class TestConfigureRunnerIdentifierQuoting:
         d = Dummy()
         configure_runner_identifier_quoting(d, [{"name": "Battery", "columns": [{"name": "id"}]}])
         assert not hasattr(d, "mixed_case_identifiers")
+
+    def test_sets_special_identifiers_on_duckdb_runner(self):
+        r = _FakeDuckDBRunner()
+        configure_runner_identifier_quoting(
+            r,
+            [
+                {
+                    "name": "hosts",
+                    "columns": [{"name": "Host Name"}, {"name": "id"}],
+                }
+            ],
+        )
+        assert r.special_identifiers == ["Host Name"]
+
+    def test_special_identifiers_unset_when_no_spaces(self):
+        r = _FakeDuckDBRunner()
+        configure_runner_identifier_quoting(r, [{"name": "orders", "columns": [{"name": "id"}]}])
+        assert r.special_identifiers is None
+
+    def test_postgres_runner_gets_both_lists(self):
+        r = _FakePostgresRunner()
+        configure_runner_identifier_quoting(
+            r,
+            [
+                {
+                    "name": "Battery",
+                    "columns": [{"name": "Host Name"}],
+                }
+            ],
+        )
+        assert r.mixed_case_identifiers == {"battery": "Battery", "host name": "Host Name"}
+        assert r.special_identifiers == ["Host Name"]
+
+
+class TestBuildSpecialIdentifierList:
+    def test_picks_columns_with_spaces(self):
+        info = [{"name": "t", "columns": [{"name": "Host Name"}, {"name": "id"}]}]
+        assert build_special_identifier_list(info) == ["Host Name"]
+
+    def test_picks_table_with_space(self):
+        info = [{"name": "Power Plant", "columns": [{"name": "id"}]}]
+        assert build_special_identifier_list(info) == ["Power Plant"]
+
+    def test_orders_longest_words_first(self):
+        info = [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "Net Generation MWh"},
+                    {"name": "Net Generation"},
+                ],
+            }
+        ]
+        assert build_special_identifier_list(info) == [
+            "Net Generation MWh",
+            "Net Generation",
+        ]
+
+    def test_no_spaces_returns_empty(self):
+        info = [{"name": "orders", "columns": [{"name": "id"}, {"name": "total"}]}]
+        assert build_special_identifier_list(info) == []
+
+    def test_dedupes_repeats_across_tables(self):
+        info = [
+            {"name": "a", "columns": [{"name": "Host Name"}]},
+            {"name": "b", "columns": [{"name": "Host Name"}]},
+        ]
+        assert build_special_identifier_list(info) == ["Host Name"]
+
+
+class TestQuoteSpecialIdentifiers:
+    def test_empty_list_returns_unchanged(self):
+        sql = "SELECT Host Name FROM hosts"
+        assert quote_special_identifiers(sql, []) == sql
+
+    def test_empty_sql_returns_unchanged(self):
+        assert quote_special_identifiers("", ["Host Name"]) == ""
+
+    def test_bare_two_word_name_quoted(self):
+        out = quote_special_identifiers("SELECT Host Name FROM hosts", ["Host Name"])
+        assert out == 'SELECT "Host Name" FROM hosts'
+
+    def test_multiple_occurrences_quoted(self):
+        out = quote_special_identifiers(
+            "SELECT Host Name FROM hosts WHERE Host Name = 'foo'", ["Host Name"]
+        )
+        assert out == 'SELECT "Host Name" FROM hosts WHERE "Host Name" = \'foo\''
+
+    def test_case_insensitive_match_uses_canonical_casing(self):
+        out = quote_special_identifiers("SELECT host name FROM hosts", ["Host Name"])
+        assert out == 'SELECT "Host Name" FROM hosts'
+
+    def test_string_literal_left_alone(self):
+        out = quote_special_identifiers("SELECT 'Host Name' AS label FROM hosts", ["Host Name"])
+        assert out == "SELECT 'Host Name' AS label FROM hosts"
+
+    def test_already_quoted_left_alone(self):
+        sql = 'SELECT "Host Name" FROM hosts'
+        assert quote_special_identifiers(sql, ["Host Name"]) == sql
+
+    def test_line_comment_left_alone(self):
+        out = quote_special_identifiers(
+            "SELECT Host Name -- pick Host Name\nFROM hosts", ["Host Name"]
+        )
+        assert "-- pick Host Name" in out
+        assert 'SELECT "Host Name"' in out
+
+    def test_block_comment_left_alone(self):
+        out = quote_special_identifiers(
+            "SELECT Host Name /* skip Host Name here */ FROM hosts", ["Host Name"]
+        )
+        assert "/* skip Host Name here */" in out
+        assert 'SELECT "Host Name"' in out
+
+    def test_three_word_name_quoted(self):
+        out = quote_special_identifiers(
+            "SELECT Net Generation MWh FROM gen", ["Net Generation MWh"]
+        )
+        assert out == 'SELECT "Net Generation MWh" FROM gen'
+
+    def test_longer_name_wins_over_prefix(self):
+        out = quote_special_identifiers(
+            "SELECT Net Generation MWh FROM gen",
+            ["Net Generation MWh", "Net Generation"],
+        )
+        assert '"Net Generation MWh"' in out
+        assert '"Net Generation" MWh' not in out
+
+    def test_qualified_column_quoted(self):
+        out = quote_special_identifiers("SELECT t.Host Name FROM hosts t", ["Host Name"])
+        # Qualified-form survives: t."Host Name" is legal.
+        assert 't."Host Name"' in out
+
+    def test_substring_inside_other_identifier_not_matched(self):
+        # `MyHost Name` should not match `Host Name` because the H is
+        # preceded by an identifier character.
+        out = quote_special_identifiers("SELECT MyHost Name FROM t", ["Host Name"])
+        assert out == "SELECT MyHost Name FROM t"
+
+    def test_no_match_returns_unchanged(self):
+        sql = "SELECT id FROM orders"
+        assert quote_special_identifiers(sql, ["Host Name"]) == sql
+
+    def test_embedded_double_quote_escaped_per_sql_standard(self):
+        """An identifier name containing a literal `"` (rare but legal in
+        a CSV header) must be emitted as `"a "" b"`, not the malformed
+        `"a " b"`. Use a single unpaired `"` so the literal-splitter
+        leaves it in code chunks where the rewriter actually sees it."""
+        out = quote_special_identifiers('SELECT a " b FROM t', ['a " b'])
+        assert '"a "" b"' in out
+        # And the broken form must not appear.
+        assert 'SELECT a " b FROM t' not in out

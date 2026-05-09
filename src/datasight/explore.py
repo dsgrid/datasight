@@ -194,12 +194,19 @@ def resolve_import_mode(file_type: str, import_mode: ImportMode) -> Literal["vie
         raise ValueError(f"Unsupported import mode for file type: {file_type}") from e
 
 
-def _select_from_file_sql(file_path: str, file_type: str) -> str:
-    """Generate a SELECT statement that reads from a supported file source."""
+def _select_from_file_sql(file_path: str, file_type: str, *, lenient: bool = False) -> str:
+    """Generate a SELECT statement that reads from a supported file source.
+
+    When ``lenient`` is true, CSV reads pass ``strict_mode=false`` so DuckDB
+    accepts files whose dialect the sniffer can't pin down — most commonly
+    CSVs with mixed line endings (e.g. CRLF throughout but LF on the final
+    line, which Windows-produced files sometimes have).
+    """
     escaped_path = file_path.replace("'", "''")
+    csv_opts = ", strict_mode=false" if lenient else ""
 
     if file_type == "csv":
-        return f"SELECT * FROM read_csv_auto('{escaped_path}')"
+        return f"SELECT * FROM read_csv_auto('{escaped_path}'{csv_opts})"
     if file_type == "parquet":
         return f"SELECT * FROM read_parquet('{escaped_path}')"
     if file_type == "hive_parquet":
@@ -207,7 +214,7 @@ def _select_from_file_sql(file_path: str, file_type: str) -> str:
         return f"SELECT * FROM read_parquet('{glob_path}', hive_partitioning=true)"
     if file_type == "csv_dir":
         glob_path = f"{escaped_path}/*.csv"
-        return f"SELECT * FROM read_csv_auto('{glob_path}')"
+        return f"SELECT * FROM read_csv_auto('{glob_path}'{csv_opts})"
     raise ValueError(f"Unknown file type: {file_type}")
 
 
@@ -217,14 +224,53 @@ def create_relation_sql(
     file_type: str,
     *,
     import_mode: ImportMode = "view",
+    lenient: bool = False,
 ) -> str:
-    """Generate SQL to create a view or table for a data file."""
+    """Generate SQL to create a view or table for a data file.
+
+    ``lenient`` is forwarded to the file-read call (CSV only) — see
+    ``_select_from_file_sql``.
+    """
     quoted_name = f'"{table_name}"'
-    select_sql = _select_from_file_sql(file_path, file_type)
+    select_sql = _select_from_file_sql(file_path, file_type, lenient=lenient)
     resolved_mode = resolve_import_mode(file_type, import_mode)
     if resolved_mode == "table":
         return f"CREATE TABLE {quoted_name} AS {select_sql}"
     return f"CREATE VIEW {quoted_name} AS {select_sql}"
+
+
+def _execute_relation_with_csv_fallback(
+    conn: duckdb.DuckDBPyConnection,
+    table_name: str,
+    file_path: str,
+    file_type: str,
+    *,
+    import_mode: ImportMode = "view",
+) -> None:
+    """Run ``create_relation_sql`` then ``conn.execute``, retrying CSV files
+    with ``strict_mode=false`` when DuckDB's sniffer fails on inconsistent
+    files (mixed line endings, ragged rows, etc.).
+
+    The retry only fires when the failing file is ``csv``/``csv_dir`` and
+    the error message indicates a sniffer dialect-detection failure — any
+    other DuckDB error (missing file, permission denied, etc.) propagates
+    unchanged.
+    """
+    sql = create_relation_sql(table_name, file_path, file_type, import_mode=import_mode)
+    try:
+        conn.execute(sql)
+        return
+    except duckdb.Error as e:
+        if file_type not in ("csv", "csv_dir") or "sniff" not in str(e).lower():
+            raise
+        logger.warning(
+            f"CSV sniffer failed on {file_path}; "
+            f"retrying with strict_mode=false (likely mixed line endings)"
+        )
+    sql = create_relation_sql(
+        table_name, file_path, file_type, import_mode=import_mode, lenient=True
+    )
+    conn.execute(sql)
 
 
 def create_view_sql(table_name: str, file_path: str, file_type: str) -> str:
@@ -501,8 +547,9 @@ def create_ephemeral_session(
 
         try:
             resolved_mode = resolve_import_mode(file_type, import_mode)
-            sql = create_relation_sql(table_name, path, file_type, import_mode=resolved_mode)
-            conn.execute(sql)
+            _execute_relation_with_csv_fallback(
+                conn, table_name, path, file_type, import_mode=resolved_mode
+            )
             existing_names.add(table_name)
             tables_info.append(
                 {
@@ -757,8 +804,9 @@ def add_files_to_connection(
 
         try:
             resolved_mode = resolve_import_mode(file_type, import_mode)
-            sql = create_relation_sql(table_name, path, file_type, import_mode=resolved_mode)
-            conn.execute(sql)
+            _execute_relation_with_csv_fallback(
+                conn, table_name, path, file_type, import_mode=resolved_mode
+            )
             names.add(table_name)
             tables_info.append(
                 {
@@ -840,13 +888,12 @@ def build_persistent_duckdb(
                 object_type = "table"
             else:
                 relation_mode = table.get("import_mode", "view")
-                conn.execute(
-                    create_relation_sql(
-                        table["name"],
-                        table["path"],
-                        table["type"],
-                        import_mode=relation_mode,
-                    )
+                _execute_relation_with_csv_fallback(
+                    conn,
+                    table["name"],
+                    table["path"],
+                    table["type"],
+                    import_mode=relation_mode,
                 )
                 object_type = str(relation_mode)
             logger.info(f"Created {object_type} '{table['name']}' in {db_path}")
@@ -948,13 +995,13 @@ def save_ephemeral_as_project(
                 object_type = "table"
             else:
                 relation_mode = table.get("import_mode", "view")
-                sql = create_relation_sql(
+                _execute_relation_with_csv_fallback(
+                    db_conn,
                     table["name"],
                     table["path"],
                     table["type"],
                     import_mode=relation_mode,
                 )
-                db_conn.execute(sql)
                 object_type = str(relation_mode)
             logger.info(f"Created persistent {object_type} '{table['name']}' in {db_path}")
 

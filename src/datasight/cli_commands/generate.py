@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import rich_click as click
+from loguru import logger
 
 from datasight.config import create_sql_runner_from_settings
 from datasight.data_profile import (
@@ -99,6 +100,17 @@ from datasight.cli_helpers import format_epilog
         "glob patterns for columns to hide."
     ),
 )
+@click.option(
+    "--max-tokens",
+    type=int,
+    default=None,
+    help=(
+        "Output token budget for the documentation LLM call. Defaults to "
+        "a per-provider safe value. Reasoning models that hide <think> "
+        "tokens may need a larger value (subject to provider limits — "
+        "GitHub Models caps output around 8K)."
+    ),
+)
 def generate(
     files,
     project_dir,
@@ -108,6 +120,7 @@ def generate(
     db_path,
     import_mode,
     compact_schema,
+    max_tokens,
 ):
     """Generate schema_description.md, queries.yaml, measures.yaml, and time_series.yaml from your database.
 
@@ -275,7 +288,15 @@ def generate(
         click.echo(f"  Database: {settings.database.mode} — {resolved_db_path or sql_dialect}")
     click.echo()
 
+    # When --import-mode=table runs, build_persistent_duckdb materializes
+    # a fresh DuckDB file *before* the LLM call. If validation later
+    # fails we need to know to delete it — otherwise the orphan-prevention
+    # claim only holds for the auto/view paths. Other branches (existing
+    # sqlite/duckdb sources) point at user-owned files we must NOT touch.
+    created_persistent_db: Path | None = None
+
     async def _run():
+        nonlocal created_persistent_db
         from datasight.generate import (
             build_generation_context,
             sample_enum_columns,
@@ -330,6 +351,7 @@ def generate(
                     err=True,
                 )
                 sys.exit(1)
+            created_persistent_db = db_target
             sql_runner = DuckDBRunner(str(db_target))
             tables_info = persistent_tables_info
         elif use_files:
@@ -378,33 +400,60 @@ def generate(
             tables, sql_dialect, samples_text, timestamps_text=timestamps_text
         )
 
-        from datasight.llm import TextBlock
+        from datasight.llm import TextBlock, default_max_output_tokens
 
+        budget = (
+            max_tokens
+            if max_tokens is not None
+            else default_max_output_tokens(settings.llm.provider)
+        )
         response = await llm_client.create_message(
             model=resolved_model,
             system=system_prompt,
             messages=[{"role": "user", "content": user_msg}],
             tools=[],
-            max_tokens=4096,
+            max_tokens=budget,
         )
 
         parts = [block.text for block in response.content if isinstance(block, TextBlock)]
-        return "".join(parts), sql_runner, tables_info, tables
+        return "".join(parts), response.stop_reason, sql_runner, tables_info, tables
 
-    text, sql_runner, tables_info, generated_tables = asyncio.run(_run())
+    text, stop_reason, sql_runner, tables_info, generated_tables = asyncio.run(_run())
 
-    # Parse response into two files
-    from datasight.generate import parse_generation_response
+    # Validate response BEFORE writing any project files. A silent partial
+    # write (schema.yaml + measures.yaml + .env without
+    # schema_description.md / queries.yaml) leaves the project unusable,
+    # so abort here instead.
+    from datasight.generate import (
+        GenerationResponseError,
+        parse_and_validate_response,
+    )
 
-    schema_content, queries_content = parse_generation_response(text)
-    if schema_content is None:
-        click.echo("Warning: Could not parse LLM response.", err=True)
+    try:
+        schema_content, queries_content = parse_and_validate_response(text, stop_reason)
+    except GenerationResponseError as e:
+        click.echo(f"Error: {e}", err=True)
+        if created_persistent_db is not None:
+            # --import-mode=table built this file before the LLM call;
+            # leaving it behind contradicts the no-orphan-files contract.
+            try:
+                sql_runner.close()
+            except Exception:
+                # Swallow close errors so they don't mask the LLM-failure
+                # message we're already surfacing to the user.
+                pass
+            try:
+                created_persistent_db.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    f"Could not remove partial DuckDB file {created_persistent_db}: {exc}"
+                )
+        sys.exit(1)
 
     # Write files
     written = []
-    if schema_content:
-        schema_path.write_text(schema_content + "\n", encoding="utf-8")
-        written.append("schema_description.md")
+    schema_path.write_text(schema_content + "\n", encoding="utf-8")
+    written.append("schema_description.md")
 
     schema_yaml_lines = ["tables:"]
     for t in generated_tables:

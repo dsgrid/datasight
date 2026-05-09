@@ -3,7 +3,9 @@
 import pytest
 
 from datasight.generate import (
+    GenerationResponseError,
     build_generation_context,
+    parse_and_validate_response,
     parse_generation_response,
     sample_enum_columns,
     sample_timestamp_columns,
@@ -53,6 +55,51 @@ class TestParseGenerationResponse:
         # Falls through to raw text path since queries marker missing
         assert schema is not None
         assert queries is None
+
+
+class TestParseAndValidateResponse:
+    """Tests for parse_and_validate_response — the gate that prevents
+    silent partial-project writes when the LLM output is unusable."""
+
+    def test_valid_response_returns_both(self):
+        text = (
+            "--- schema_description.md ---\n# Schema\n\n"
+            "--- queries.yaml ---\n- question: q\n  sql: SELECT 1\n"
+        )
+        schema, queries = parse_and_validate_response(text, stop_reason="end_turn")
+        assert "Schema" in schema
+        assert queries is not None and "question" in queries
+
+    def test_raw_text_treated_as_schema(self):
+        """When markers are missing but the LLM produced text, accept it
+        as the schema description (queries=None)."""
+        schema, queries = parse_and_validate_response(
+            "Just a description, no markers", stop_reason="end_turn"
+        )
+        assert schema == "Just a description, no markers"
+        assert queries is None
+
+    def test_empty_response_with_max_tokens_raises_with_hint(self):
+        """The exact failure mode the user reported: reasoning model
+        burned all tokens on <think> output, schema is empty."""
+        with pytest.raises(GenerationResponseError) as exc_info:
+            parse_and_validate_response("", stop_reason="max_tokens")
+        msg = str(exc_info.value)
+        assert "token budget" in msg
+        assert "--max-tokens" in msg
+
+    def test_empty_response_without_truncation_raises_generic(self):
+        """Empty response with stop_reason=end_turn — different cause
+        (model returned nothing, not truncation), different message."""
+        with pytest.raises(GenerationResponseError) as exc_info:
+            parse_and_validate_response("", stop_reason="end_turn")
+        msg = str(exc_info.value)
+        assert "empty" in msg.lower() or "parseable" in msg.lower()
+        assert "token budget" not in msg
+
+    def test_whitespace_only_response_raises(self):
+        with pytest.raises(GenerationResponseError):
+            parse_and_validate_response("   \n  \n", stop_reason="max_tokens")
 
 
 class TestBuildGenerationContext:

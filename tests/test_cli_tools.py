@@ -1375,7 +1375,8 @@ def test_generate_seeds_measure_overrides(project_dir, monkeypatch):
                         "- question: Example\n"
                         "  sql: SELECT 1\n"
                     )
-                ]
+                ],
+                stop_reason="end_turn",
             )
 
     monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: StubClient())
@@ -2644,7 +2645,8 @@ def test_generate_seeds_time_series(project_dir, monkeypatch):
                         "- question: Example\n"
                         "  sql: SELECT 1\n"
                     )
-                ]
+                ],
+                stop_reason="end_turn",
             )
 
     monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: StubClient())

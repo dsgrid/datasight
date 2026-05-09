@@ -868,6 +868,29 @@ _PROVIDERS: dict[str, _ProviderSpec] = {
 SUPPORTED_PROVIDERS: frozenset[str] = frozenset(_PROVIDERS)
 
 
+# Per-provider default for the documentation-generation path. Reasoning
+# models (qwen3, etc. via Ollama; Anthropic extended-thinking models) burn
+# thousands of tokens on hidden ``<think>`` content before emitting any
+# visible output, so a 4K budget is too tight in practice. GitHub Models
+# caps output around 8K across most hosted models, so its budget stays
+# below that ceiling. Other providers get more headroom. The unknown-
+# provider fallback matches GitHub's lower limit so we don't blow up on
+# providers we haven't characterized yet.
+_DEFAULT_OUTPUT_TOKENS_BY_PROVIDER: dict[str, int] = {
+    "anthropic": 16384,
+    "openai": 16384,
+    "github": 8000,
+    "ollama": 16384,
+}
+_FALLBACK_DEFAULT_OUTPUT_TOKENS = 8000
+
+
+def default_max_output_tokens(provider: str) -> int:
+    """Return a sensible default ``max_tokens`` for one-shot LLM calls
+    (currently the documentation-generation path) given the provider."""
+    return _DEFAULT_OUTPUT_TOKENS_BY_PROVIDER.get(provider, _FALLBACK_DEFAULT_OUTPUT_TOKENS)
+
+
 def create_llm_client(
     provider: str,
     api_key: str = "",
