@@ -573,7 +573,7 @@ def update_schema_yaml_for_apply(
         return False
     raw_tables = data.get("tables")
     if raw_tables is not None and not isinstance(raw_tables, list):
-        logger.warning(f"schema.yaml: 'tables' must be a list, ignoring the file")
+        logger.warning("schema.yaml: 'tables' must be a list, ignoring the file")
         return False
     tables: list[Any] = list(raw_tables) if isinstance(raw_tables, list) else []
 

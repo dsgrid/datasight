@@ -766,7 +766,7 @@ datasight tidy review [OPTIONS]
 | `--dry-run` | Print DDL and proposed dispositions without changing the database. |
 | `--as` | Materialize the long form as a table or view (default: view). Default: `view`. |
 | `--keep-source` | Leave the source table unchanged after the reshape (default). |
-| `--rename-source` | Rename the source table to NAME after a successful reshape. Requires '--as table' — a view's body references its source by name. |
+| `--rename-source` | Rename the source object (table/view) to NAME after a successful reshape. Requires '--as table' — a view's body references its source by name. |
 | `--drop-source` | Drop the source after a successful reshape and rename the long-form table to take the source's old name. The long form replaces the source. Requires '--as table' — a view's body references its source by name. |
 | `--sample` | Send N sample rows per candidate to the configured LLM provider (default 0). Sample values get sent over the network — opt in only when the LLM seeing the values is acceptable. |
 
