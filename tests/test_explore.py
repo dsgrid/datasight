@@ -228,6 +228,76 @@ class TestCreateViewSql:
             create_view_sql("x", "/path", "unknown")
 
 
+class TestCsvSnifferFallback:
+    """When DuckDB's CSV sniffer fails (mixed line endings, ragged rows),
+    create_ephemeral_session should retry with strict_mode=false."""
+
+    @staticmethod
+    def _write_mixed_endings_csv(path):
+        """CRLF on every row except the last, which uses LF only — trips
+        DuckDB's sniffer."""
+        body = b"a,b,c\r\n1,2,3\r\n4,5,6\r\n7,8,9\n"
+        path.write_bytes(body)
+
+    @staticmethod
+    def _capture_loguru_warnings():
+        """Return (capture_list, cleanup) — datasight uses loguru, which
+        bypasses pytest's caplog by default."""
+        from loguru import logger as _logger
+
+        captured: list[str] = []
+        sink_id = _logger.add(lambda msg: captured.append(str(msg)), level="WARNING")
+        return captured, lambda: _logger.remove(sink_id)
+
+    def test_mixed_line_endings_csv_loads(self, tmp_path):
+        """File that fails strict sniffing should still load via the
+        lenient retry."""
+        csv_file = tmp_path / "mixed.csv"
+        self._write_mixed_endings_csv(csv_file)
+
+        runner, tables = create_ephemeral_session([str(csv_file)])
+        assert len(tables) == 1
+        assert tables[0]["name"] == "mixed"
+
+        import asyncio
+
+        df = asyncio.run(runner.run_sql("SELECT COUNT(*) AS n FROM mixed"))
+        assert df["n"].iloc[0] == 3
+        runner.close()
+
+    def test_mixed_line_endings_logs_warning(self, tmp_path):
+        """The fallback path should log a warning so the user sees that
+        we relaxed parsing."""
+        csv_file = tmp_path / "mixed.csv"
+        self._write_mixed_endings_csv(csv_file)
+
+        captured, cleanup = self._capture_loguru_warnings()
+        try:
+            runner, _ = create_ephemeral_session([str(csv_file)])
+        finally:
+            cleanup()
+        runner.close()
+
+        combined = "\n".join(captured)
+        assert "strict_mode=false" in combined
+
+    def test_clean_csv_does_not_log_fallback_warning(self, tmp_path):
+        """The strict path is preferred; no warning when sniffing
+        succeeds."""
+        csv_file = tmp_path / "clean.csv"
+        csv_file.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+
+        captured, cleanup = self._capture_loguru_warnings()
+        try:
+            runner, _ = create_ephemeral_session([str(csv_file)])
+        finally:
+            cleanup()
+        runner.close()
+
+        combined = "\n".join(captured)
+        assert "strict_mode=false" not in combined
+
+
 class TestCreateEphemeralSession:
     """Tests for create_ephemeral_session function."""
 
