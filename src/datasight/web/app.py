@@ -78,6 +78,7 @@ from datasight.recent_projects import (
 )
 from datasight.explore import (
     add_files_to_connection,
+    browse_directory,
     save_ephemeral_as_project,
     scan_directory_for_data_files,
 )
@@ -2628,6 +2629,19 @@ async def explore_scan_cwd(state: AppState = Depends(get_state)):
         "files": files,
         "truncated": truncated,
     }
+
+
+@app.get("/api/explore/browse")
+async def explore_browse(path: str | None = None):
+    """List subdirectories and openable data files for the file-browser
+    modal.
+
+    Browsers can't expose absolute filesystem paths from a native file
+    picker, but DuckDB's ``read_csv_auto`` needs one. Since
+    ``datasight run`` is local-first the server can walk the filesystem
+    and return the path string the user picked back to the client.
+    """
+    return browse_directory(path)
 
 
 @app.get("/api/explore/status")

@@ -99,6 +99,20 @@ _SCAN_SUFFIX_TYPES = {
     ".xlsx": "xlsx",
 }
 
+# Suffixes the file-browser surfaces as openable. Everything in
+# ``_SCAN_SUFFIX_TYPES`` plus the database files that ``detect_file_type``
+# also accepts. Directories are always shown so the user can drill in
+# (and pick csv_dir / hive_parquet roots).
+_BROWSE_SUFFIX_TYPES = {
+    ".csv": "csv",
+    ".parquet": "parquet",
+    ".xlsx": "xlsx",
+    ".duckdb": "duckdb",
+    ".sqlite": "sqlite",
+    ".sqlite3": "sqlite",
+    ".db": "duckdb",
+}
+
 
 def scan_directory_for_data_files(
     directory: str | Path,
@@ -157,6 +171,98 @@ def scan_directory_for_data_files(
             }
         )
     return files, truncated
+
+
+def browse_directory(
+    path: str | Path | None = None,
+    *,
+    max_entries: int = 500,
+) -> dict[str, Any]:
+    """List subdirectories and openable data files at ``path`` for the
+    file-browser UI.
+
+    Browsers can't expose absolute filesystem paths from a native
+    ``<input type="file">``, but ``read_csv_auto('<path>')`` needs one
+    on the server side. Since ``datasight run`` is local-first the
+    server already sees the same filesystem the user does, so we walk
+    it server-side and hand the path string back to the client.
+
+    Hidden entries (dot-prefixed) and unreadable items are skipped.
+    Returns directories and data files separately so the UI can render
+    folders first regardless of name sort.
+
+    Parameters
+    ----------
+    path:
+        Directory to list. ``None`` resolves to ``Path.cwd()``. Relative
+        paths resolve against CWD. Symlinks are followed.
+    max_entries:
+        Soft cap per category (dirs / files) to keep the modal snappy
+        on huge directories.
+    """
+    if path is None or str(path).strip() == "":
+        root = Path.cwd()
+    else:
+        try:
+            root = Path(path).expanduser().resolve()
+        except (OSError, RuntimeError) as e:
+            return {"error": f"Invalid path: {e}", "path": str(path)}
+
+    if not root.exists():
+        return {"error": "Directory does not exist", "path": str(root)}
+    if not root.is_dir():
+        return {"error": "Not a directory", "path": str(root)}
+
+    try:
+        entries = sorted(root.iterdir(), key=lambda p: p.name.lower())
+    except OSError as e:
+        return {"error": f"Unable to list directory: {e}", "path": str(root)}
+
+    dirs: list[dict[str, Any]] = []
+    files: list[dict[str, Any]] = []
+    dirs_truncated = False
+    files_truncated = False
+
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            continue
+        if is_dir:
+            if len(dirs) >= max_entries:
+                dirs_truncated = True
+                continue
+            dirs.append({"name": entry.name, "path": str(entry)})
+            continue
+        suffix = entry.suffix.lower()
+        if suffix not in _BROWSE_SUFFIX_TYPES:
+            continue
+        try:
+            size = entry.stat().st_size
+        except OSError:
+            continue
+        if len(files) >= max_entries:
+            files_truncated = True
+            continue
+        files.append(
+            {
+                "name": entry.name,
+                "path": str(entry),
+                "type": _BROWSE_SUFFIX_TYPES[suffix],
+                "size_bytes": size,
+            }
+        )
+
+    parent = str(root.parent) if root.parent != root else None
+    return {
+        "path": str(root),
+        "parent": parent,
+        "dirs": dirs,
+        "files": files,
+        "truncated": dirs_truncated or files_truncated,
+    }
 
 
 def sanitize_table_name(name: str) -> str:
