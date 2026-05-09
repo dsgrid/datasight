@@ -1410,7 +1410,6 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     # Subcommands no longer carry their own ``--verbose`` flag, so this is
     # the single switch that controls log noise across the CLI.
     ctx.ensure_object(dict)
-    ctx.obj["verbose"] = verbose
     configure_logging("DEBUG" if verbose else "INFO")
 
 

@@ -515,12 +515,11 @@ def _object_kind(conn: Any, name: str) -> str:
     almost always means a base table the introspection query missed.
     """
     quoted = name.replace("'", "''")
-    row = conn.execute(
-        f"SELECT table_type FROM information_schema.tables WHERE table_name = '{quoted}'"
-    ).fetchone()
-    if row is None:
-        return "table"
-    return "view" if str(row[0]).upper() == "VIEW" else "table"
+    if conn.execute(
+        f"SELECT 1 FROM duckdb_views() WHERE view_name = '{quoted}'"
+    ).fetchone():
+        return "view"
+    return "table"
 
 
 def _drop_keyword(conn: Any, name: str) -> str:
@@ -573,6 +572,9 @@ def update_schema_yaml_for_apply(
         logger.warning(f"schema.yaml: not updated (expected mapping, got {type(data).__name__})")
         return False
     raw_tables = data.get("tables")
+    if raw_tables is not None and not isinstance(raw_tables, list):
+        logger.warning(f"schema.yaml: 'tables' must be a list, ignoring the file")
+        return False
     tables: list[Any] = list(raw_tables) if isinstance(raw_tables, list) else []
 
     source_entry: dict[str, Any] | None = None
@@ -589,6 +591,8 @@ def update_schema_yaml_for_apply(
             source_entry.pop("excluded_columns", None)
         else:
             tables.append({"name": source_table})
+        # Remove stale target_table entries from a prior keep/rename.
+        tables = [e for e in tables if not (isinstance(e, dict) and e.get("name") == target_table)]
     elif disposition_mode == "rename":
         if source_entry is not None and rename_to:
             source_entry["name"] = rename_to

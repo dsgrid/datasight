@@ -427,8 +427,8 @@ def tidy_table(project_dir, source_table, dry_run):
     default=None,
     metavar="NAME",
     help=(
-        "Rename the source table to NAME after a successful reshape. "
-        "Requires '--as table' — a view's body references its source by name."
+        "Rename the source object (table/view) to NAME after a successful "
+        "reshape. Requires '--as table' — a view's body references its source by name."
     ),
 )
 @click.option(
