@@ -74,6 +74,7 @@ class DuckDBRunner:
         self._database_path = database_path
         self._conn: duckdb.DuckDBPyConnection | None = None
         self._query_timeout = query_timeout
+        self.special_identifiers: list[str] | None = None
         self._connect()
 
     def _connect(self) -> None:
@@ -109,6 +110,10 @@ class DuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("DuckDBRunner is closed")
+        if self.special_identifiers:
+            from datasight.identifiers import quote_special_identifiers
+
+            sql = quote_special_identifiers(sql, self.special_identifiers)
         # Per-query logs at DEBUG: a single inspect / generate run can fire
         # hundreds of these and they drown out genuinely interesting INFO
         # output. Run with -v (or LOG_LEVEL=DEBUG) to surface them.
@@ -160,6 +165,7 @@ class EphemeralDuckDBRunner:
         """
         self._conn = conn
         self._query_timeout = query_timeout
+        self.special_identifiers: list[str] | None = None
 
     def close(self) -> None:
         """Close the database connection."""
@@ -186,6 +192,10 @@ class EphemeralDuckDBRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("EphemeralDuckDBRunner is closed")
+        if self.special_identifiers:
+            from datasight.identifiers import quote_special_identifiers
+
+            sql = quote_special_identifiers(sql, self.special_identifiers)
         # Per-query logs at DEBUG: a single inspect / generate run can fire
         # hundreds of these and they drown out genuinely interesting INFO
         # output. Run with -v (or LOG_LEVEL=DEBUG) to surface them.
@@ -223,6 +233,7 @@ class SQLiteRunner:
         self._database_path = database_path
         self._conn: sqlite3.Connection | None = None
         self._query_timeout = query_timeout
+        self.special_identifiers: list[str] | None = None
         self._connect()
 
     def _connect(self) -> None:
@@ -259,6 +270,10 @@ class SQLiteRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("SQLiteRunner is closed")
+        if self.special_identifiers:
+            from datasight.identifiers import quote_special_identifiers
+
+            sql = quote_special_identifiers(sql, self.special_identifiers)
         try:
             cursor = self._conn.execute(sql)
             rows = cursor.fetchall()
@@ -307,6 +322,7 @@ class PostgresRunner:
         self._query_timeout = query_timeout
         self._connection_info = f"{host}:{port}/{dbname}" if not url else "via URL"
         self.mixed_case_identifiers: dict[str, str] | None = None
+        self.special_identifiers: list[str] | None = None
 
         try:
             if url:
@@ -351,6 +367,10 @@ class PostgresRunner:
         """Execute SQL synchronously."""
         if self._conn is None:
             raise ConnectionError("PostgresRunner is closed")
+        if self.special_identifiers:
+            from datasight.identifiers import quote_special_identifiers
+
+            sql = quote_special_identifiers(sql, self.special_identifiers)
         if self.mixed_case_identifiers:
             from datasight.identifiers import quote_mixed_case_identifiers
 
