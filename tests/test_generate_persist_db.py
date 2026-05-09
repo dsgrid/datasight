@@ -136,21 +136,27 @@ def test_set_env_vars_appends_missing(tmp_path):
 class _StubLLMClient:
     calls: list[dict]
 
-    def __init__(self):
+    def __init__(self, *, content_text: str | None = None, stop_reason: str = "end_turn"):
         self.calls = []
+        self._content_text = (
+            content_text
+            if content_text is not None
+            else (
+                "--- schema_description.md ---\n"
+                "# Schema\n\nGeneration fuel data.\n\n"
+                "--- queries.yaml ---\n"
+                "- question: Total MWh\n"
+                "  sql: SELECT SUM(net_generation_mwh) FROM generation_fuel\n"
+            )
+        )
+        self._stop_reason = stop_reason
 
     async def create_message(self, **kwargs):
         self.calls.append(kwargs)
-        text = (
-            "--- schema_description.md ---\n"
-            "# Schema\n\nGeneration fuel data.\n\n"
-            "--- queries.yaml ---\n"
-            "- question: Total MWh\n"
-            "  sql: SELECT SUM(net_generation_mwh) FROM generation_fuel\n"
-        )
+        content = [TextBlock(self._content_text)] if self._content_text else []
         return SimpleNamespace(
-            content=[TextBlock(text)],
-            stop_reason="end_turn",
+            content=content,
+            stop_reason=self._stop_reason,
             usage=SimpleNamespace(input_tokens=1, output_tokens=1),
         )
 
@@ -161,6 +167,80 @@ def stub_llm(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: client)
     return client
+
+
+@pytest.fixture
+def stub_llm_truncated(monkeypatch):
+    """LLM returned no content and hit max_tokens — the failure mode a
+    reasoning model triggers when its <think> output exhausts the
+    budget before any visible response."""
+    client = _StubLLMClient(content_text="", stop_reason="max_tokens")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: client)
+    return client
+
+
+def test_generate_aborts_on_truncated_llm_response(tmp_path, parquet_file, stub_llm_truncated):
+    """Reasoning model used the whole budget on hidden <think> tokens
+    and emitted no visible content. The command must exit non-zero
+    AND leave no project files behind — silently writing schema.yaml /
+    .env / database.duckdb without schema_description.md is the bug
+    this guards against."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code != 0, result.output
+    assert "token budget" in result.output
+    assert "--max-tokens" in result.output
+
+    for orphan in (
+        "schema_description.md",
+        "queries.yaml",
+        "schema.yaml",
+        "measures.yaml",
+        "time_series.yaml",
+        "database.duckdb",
+        ".env",
+    ):
+        assert not (tmp_path / orphan).exists(), (
+            f"{orphan} written despite LLM failure — partial project leak"
+        )
+
+
+def test_generate_max_tokens_flag_overrides_default(tmp_path, parquet_file, stub_llm):
+    """--max-tokens, when supplied, is forwarded to the LLM call."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(parquet_file),
+            "--project-dir",
+            str(tmp_path),
+            "--max-tokens",
+            "12345",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert stub_llm.calls, "LLM was not called"
+    assert stub_llm.calls[0]["max_tokens"] == 12345
+
+
+def test_generate_default_max_tokens_matches_provider(tmp_path, parquet_file, stub_llm):
+    """Without --max-tokens, the per-provider default is used. The
+    Anthropic stub_llm fixture configures provider=anthropic via the
+    ANTHROPIC_API_KEY env var, so we expect the anthropic default."""
+    from datasight.llm import default_max_output_tokens
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["generate", str(parquet_file), "--project-dir", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+    assert stub_llm.calls[0]["max_tokens"] == default_max_output_tokens("anthropic")
 
 
 def test_generate_creates_db_and_updates_env(tmp_path, parquet_file, stub_llm):

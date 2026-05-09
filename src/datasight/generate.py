@@ -225,6 +225,17 @@ def build_generation_context(
     return DESCRIBE_SYSTEM_PROMPT, user_msg
 
 
+class GenerationResponseError(RuntimeError):
+    """Raised when the LLM did not produce a usable documentation response.
+
+    Carried up by ``parse_and_validate_response`` so the CLI command can
+    abort *before* writing any project files — silently leaving behind a
+    half-built project (no schema_description.md but schema.yaml,
+    measures.yaml, .env, etc.) is the failure mode this exception
+    prevents.
+    """
+
+
 def parse_generation_response(text: str) -> tuple[str | None, str | None]:
     """Parse LLM response into schema_description and queries content.
 
@@ -257,6 +268,42 @@ def parse_generation_response(text: str) -> tuple[str | None, str | None]:
     logger.warning("Could not parse LLM response into separate files")
     stripped = text.strip()
     return stripped or None, None
+
+
+def parse_and_validate_response(text: str, stop_reason: str) -> tuple[str, str | None]:
+    """Parse the LLM response and raise on unusable output.
+
+    A truncated response (``stop_reason == "max_tokens"``) is the most
+    common cause of a missing ``schema_description.md`` when running
+    against a reasoning model whose hidden ``<think>`` tokens consumed
+    the whole budget. We surface that explicitly so the user can pick a
+    different model or raise ``--max-tokens`` instead of being left
+    with a partial project.
+
+    Returns ``(schema_content, queries_content)`` where ``schema_content``
+    is non-empty. ``queries_content`` may still be ``None`` if the LLM
+    omitted the queries section but produced a usable description.
+    """
+    schema_content, queries_content = parse_generation_response(text)
+
+    if schema_content:
+        return schema_content, queries_content
+
+    if stop_reason == "max_tokens":
+        raise GenerationResponseError(
+            "LLM hit its output token budget before producing the schema "
+            "description. Reasoning models (qwen3, gpt-oss, Anthropic "
+            "extended thinking, etc.) often spend thousands of tokens on "
+            "hidden <think> content before any visible output. "
+            "Try a non-reasoning model, or pass --max-tokens with a "
+            "larger value (subject to provider limits — GitHub Models "
+            "caps output around 8K)."
+        )
+    raise GenerationResponseError(
+        "LLM did not produce a parseable schema description. The "
+        "response was empty or could not be split into the required "
+        "sections."
+    )
 
 
 def _clean_yaml_content(content: str) -> str:

@@ -416,6 +416,34 @@ def test_create_llm_client_missing_api_key_raises_configuration_error():
             create_llm_client(provider, api_key="")
 
 
+class TestDefaultMaxOutputTokens:
+    """Per-provider one-shot output budget. GitHub Models has a tighter
+    cap (~8K) than the others, so we keep its default below that."""
+
+    def test_github_stays_under_cap(self):
+        from datasight.llm import default_max_output_tokens
+
+        # GitHub Models caps output around 8096; pick a default that won't
+        # collide with that limit.
+        assert default_max_output_tokens("github") <= 8096
+
+    def test_reasoning_friendly_providers_get_more_room(self):
+        """Anthropic / OpenAI / Ollama have no GitHub-style 8K cap and
+        run reasoning-heavy models, so their default is larger."""
+        from datasight.llm import default_max_output_tokens
+
+        github = default_max_output_tokens("github")
+        for p in ("anthropic", "openai", "ollama"):
+            assert default_max_output_tokens(p) > github
+
+    def test_unknown_provider_falls_back_safely(self):
+        """Unknown providers fall back to the conservative default —
+        better to fit within an unknown cap than blow through it."""
+        from datasight.llm import default_max_output_tokens
+
+        assert default_max_output_tokens("nope-not-real") <= 8096
+
+
 # NOTE: ``AsyncAnthropic.__init__`` does no network IO, so there's no
 # init-time ``APIConnectionError`` to wrap. The factory propagates any
 # ``AnthropicError`` from the constructor as-is (config problem, not

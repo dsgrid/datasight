@@ -322,6 +322,7 @@ datasight generate [OPTIONS] [FILES]...
 | `--db-path` | Output DuckDB path to create from CSV/Parquet/Excel or mixed file inputs (default: database.duckdb). Do not use this with a single existing DuckDB or SQLite database; those are referenced directly. |
 | `--import-mode` | When FILES are CSV/Parquet inputs, choose whether datasight creates source-backed views or materialized DuckDB tables. 'auto' preserves the existing cheap behavior and keeps CSV/Parquet source-backed; use 'table' to opt into materialization. Excel workbooks are always materialized as tables. Default: `auto`. |
 | `--compact-schema` | Write schema.yaml with table names only. Default adds an empty 'excluded_columns: []' placeholder per table so you can fill in glob patterns for columns to hide. |
+| `--max-tokens` | Output token budget for the documentation LLM call. Defaults to a per-provider safe value. Reasoning models that hide <think> tokens may need a larger value (subject to provider limits — GitHub Models caps output around 8K). |
 
 ### `datasight run`
 
