@@ -209,6 +209,30 @@ def test_generate_aborts_on_truncated_llm_response(tmp_path, parquet_file, stub_
         )
 
 
+def test_generate_truncated_with_import_mode_table_cleans_up_persistent_db(
+    tmp_path, parquet_file, stub_llm_truncated
+):
+    """`--import-mode=table` materializes a DuckDB file *before* the LLM
+    call. Validation failure must clean it up, otherwise the orphan-files
+    promise only holds for the auto/view paths."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "generate",
+            str(parquet_file),
+            "--project-dir",
+            str(tmp_path),
+            "--import-mode",
+            "table",
+        ],
+    )
+    assert result.exit_code != 0, result.output
+    assert not (tmp_path / "database.duckdb").exists(), (
+        "database.duckdb leaked despite LLM failure"
+    )
+
+
 def test_generate_max_tokens_flag_overrides_default(tmp_path, parquet_file, stub_llm):
     """--max-tokens, when supplied, is forwarded to the LLM call."""
     runner = CliRunner()

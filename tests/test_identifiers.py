@@ -305,3 +305,13 @@ class TestQuoteSpecialIdentifiers:
     def test_no_match_returns_unchanged(self):
         sql = "SELECT id FROM orders"
         assert quote_special_identifiers(sql, ["Host Name"]) == sql
+
+    def test_embedded_double_quote_escaped_per_sql_standard(self):
+        """An identifier name containing a literal `"` (rare but legal in
+        a CSV header) must be emitted as `"a "" b"`, not the malformed
+        `"a " b"`. Use a single unpaired `"` so the literal-splitter
+        leaves it in code chunks where the rewriter actually sees it."""
+        out = quote_special_identifiers('SELECT a " b FROM t', ['a " b'])
+        assert '"a "" b"' in out
+        # And the broken form must not appear.
+        assert 'SELECT a " b FROM t' not in out

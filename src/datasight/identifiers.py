@@ -23,6 +23,7 @@ Two related rewrites land here:
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 from loguru import logger
@@ -157,7 +158,13 @@ def quote_special_identifiers(sql: str, special_names: list[str]) -> str:
     if not special_names or not sql.strip():
         return sql
 
-    patterns = [(_build_special_pattern(name), f'"{name}"') for name in special_names]
+    # Escape any embedded `"` per SQL standard (double them) when emitting
+    # the quoted form, so a column literally named `say "hi" there` round-
+    # trips as `"say ""hi"" there"` rather than the malformed `"say "hi" there"`.
+    patterns = [
+        (_build_special_pattern(name), '"' + name.replace('"', '""') + '"')
+        for name in special_names
+    ]
 
     parts = _LITERAL_OR_COMMENT_RE.split(sql)
     # re.split with one capturing group: even indices are code, odd are
@@ -171,9 +178,15 @@ def quote_special_identifiers(sql: str, special_names: list[str]) -> str:
     return "".join(parts)
 
 
+@lru_cache(maxsize=512)
 def _build_special_pattern(name: str) -> re.Pattern[str]:
     """Pattern that matches the words of ``name`` separated by whitespace,
-    not preceded or followed by another identifier character."""
+    not preceded or followed by another identifier character.
+
+    Cached because runners call ``quote_special_identifiers`` on every
+    query — `inspect` / `generate` can fire hundreds of probes against
+    the same handful of names, and each `re.compile` is wasted work.
+    """
     words = name.split()
     body = r"\s+".join(re.escape(w) for w in words)
     return re.compile(

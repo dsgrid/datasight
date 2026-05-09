@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import rich_click as click
+from loguru import logger
 
 from datasight.config import create_sql_runner_from_settings
 from datasight.data_profile import (
@@ -287,7 +288,15 @@ def generate(
         click.echo(f"  Database: {settings.database.mode} — {resolved_db_path or sql_dialect}")
     click.echo()
 
+    # When --import-mode=table runs, build_persistent_duckdb materializes
+    # a fresh DuckDB file *before* the LLM call. If validation later
+    # fails we need to know to delete it — otherwise the orphan-prevention
+    # claim only holds for the auto/view paths. Other branches (existing
+    # sqlite/duckdb sources) point at user-owned files we must NOT touch.
+    created_persistent_db: Path | None = None
+
     async def _run():
+        nonlocal created_persistent_db
         from datasight.generate import (
             build_generation_context,
             sample_enum_columns,
@@ -342,6 +351,7 @@ def generate(
                     err=True,
                 )
                 sys.exit(1)
+            created_persistent_db = db_target
             sql_runner = DuckDBRunner(str(db_target))
             tables_info = persistent_tables_info
         elif use_files:
@@ -423,6 +433,19 @@ def generate(
         schema_content, queries_content = parse_and_validate_response(text, stop_reason)
     except GenerationResponseError as e:
         click.echo(f"Error: {e}", err=True)
+        if created_persistent_db is not None:
+            # --import-mode=table built this file before the LLM call;
+            # leaving it behind contradicts the no-orphan-files contract.
+            try:
+                sql_runner.close()
+            except Exception:
+                pass
+            try:
+                created_persistent_db.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning(
+                    f"Could not remove partial DuckDB file {created_persistent_db}: {exc}"
+                )
         sys.exit(1)
 
     # Write files
