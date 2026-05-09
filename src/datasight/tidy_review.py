@@ -515,9 +515,7 @@ def _object_kind(conn: Any, name: str) -> str:
     almost always means a base table the introspection query missed.
     """
     quoted = name.replace("'", "''")
-    if conn.execute(
-        f"SELECT 1 FROM duckdb_views() WHERE view_name = '{quoted}'"
-    ).fetchone():
+    if conn.execute(f"SELECT 1 FROM duckdb_views() WHERE view_name = '{quoted}'").fetchone():
         return "view"
     return "table"
 
