@@ -2292,6 +2292,22 @@ async def explore_files(request: Request, state: AppState = Depends(get_state)):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/explore/exit")
+async def exit_explore_session(state: AppState = Depends(get_state)):
+    """Tear down an ephemeral explore session and return to the unloaded
+    state, so the UI can render the landing page again.
+
+    Without this, a user who picks a CSV + starter on the landing page
+    can't get back to pick a different file or starter without
+    restarting the server — the projectLoaded flag latches on with no
+    affordance to clear it.
+    """
+    async with state.state_lock:
+        state.clear_project()
+        restore_original_env()
+    return {"success": True}
+
+
 @app.post("/api/explore/check-project-path")
 async def check_project_path(request: Request):
     """Check if a project directory already contains project files.

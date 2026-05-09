@@ -67,6 +67,10 @@ export async function explore(paths: string[]): Promise<ExploreResult> {
   return result;
 }
 
+export async function exitExploreSession(): Promise<{ success: boolean }> {
+  return postJson<{ success: boolean }>("/api/explore/exit", {});
+}
+
 export async function getExploreStatus(): Promise<{
   is_ephemeral: boolean;
   tables: { name: string; source: string; row_count: number }[];
