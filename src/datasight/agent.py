@@ -651,6 +651,16 @@ async def _execute_visualize_data(
     sql = input_data.get("sql", "")
     title = input_data.get("title", "Chart")
     plotly_spec = input_data.get("plotly_spec", {})
+    # Some OpenAI-compat backends (notably Ollama) hand the nested
+    # plotly_spec object back as a JSON-encoded string inside the tool
+    # arguments, even though the schema declares it as type=object.
+    # Decode defensively so resolve_plotly_spec's dict contract holds
+    # instead of raising AttributeError on `.get`.
+    if isinstance(plotly_spec, str):
+        try:
+            plotly_spec = json.loads(plotly_spec)
+        except json.JSONDecodeError:
+            plotly_spec = {}
 
     result = await execute_sql_with_validation(
         sql,
