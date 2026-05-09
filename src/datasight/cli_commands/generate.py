@@ -439,6 +439,8 @@ def generate(
             try:
                 sql_runner.close()
             except Exception:
+                # Swallow close errors so they don't mask the LLM-failure
+                # message we're already surfacing to the user.
                 pass
             try:
                 created_persistent_db.unlink(missing_ok=True)
