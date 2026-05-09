@@ -396,7 +396,7 @@ def apply_proposal(
          working without manual edits.
 
     Source / target may be either tables or views (e.g. a view backed by a
-    CSV). The DDL keyword is chosen per object via ``information_schema``.
+    CSV). The DDL keyword is chosen per object via ``duckdb_views()``.
 
     Any failure rolls the transaction back, leaving the database unchanged.
     Dry-run skips the transaction entirely and returns a preview audit
@@ -412,6 +412,7 @@ def apply_proposal(
     # is a self-contained materialization before we touch the source.
     if mode == "view" and source_disposition.mode in ("rename", "drop"):
         action = "drop" if source_disposition.mode == "drop" else "rename"
+        gerund = "dropping" if source_disposition.mode == "drop" else "renaming"
         consequence = (
             "recursively self-referencing"
             if source_disposition.mode == "drop"
@@ -419,7 +420,7 @@ def apply_proposal(
         )
         raise ValueError(
             f"--{action}-source requires --as table: a view references its "
-            f"source by name, so {action}ing the source would leave the view "
+            f"source by name, so {gerund} the source would leave the view "
             f"{consequence}."
         )
     ddl = suggestion.build_sql(mode)
@@ -515,7 +516,15 @@ def _object_kind(conn: Any, name: str) -> str:
     almost always means a base table the introspection query missed.
     """
     quoted = name.replace("'", "''")
-    if conn.execute(f"SELECT 1 FROM duckdb_views() WHERE view_name = '{quoted}'").fetchone():
+    # Scope to the current database/schema so an unqualified name resolves
+    # the same way it does in the surrounding DDL — otherwise a same-named
+    # view in another attached DB or non-default schema could pick the
+    # wrong row and flip the keyword.
+    if conn.execute(
+        f"SELECT 1 FROM duckdb_views() WHERE view_name = '{quoted}' "
+        "AND schema_name = current_schema() "
+        "AND database_name = current_database()"
+    ).fetchone():
         return "view"
     return "table"
 

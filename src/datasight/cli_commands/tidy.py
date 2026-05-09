@@ -419,7 +419,7 @@ def tidy_table(project_dir, source_table, dry_run):
     "keep_source",
     is_flag=True,
     default=False,
-    help="Leave the source table unchanged after the reshape (default).",
+    help="Leave the source object (table/view) unchanged after the reshape (default).",
 )
 @click.option(
     "--rename-source",
@@ -493,6 +493,7 @@ def tidy_review(
     # work runs, including before the LLM call when ``--from`` is omitted.
     if as_mode == "view" and disposition.mode in ("rename", "drop"):
         action = "drop" if disposition.mode == "drop" else "rename"
+        gerund = "dropping" if disposition.mode == "drop" else "renaming"
         consequence = (
             "recursively self-referencing."
             if disposition.mode == "drop"
@@ -500,7 +501,7 @@ def tidy_review(
         )
         raise click.UsageError(
             f"--{action}-source requires '--as table'. A view references "
-            f"its source by name, so {action}ing the source would leave "
+            f"its source by name, so {gerund} the source would leave "
             f"the long-form view {consequence}"
         )
 
