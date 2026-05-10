@@ -313,20 +313,16 @@ def _build_unpivot_sql(
     dimension: Dimension,
     value_column: str,
     target_object_name: str,
-    mode: str,
 ) -> str:
     """Build a single-pivot ``CREATE OR REPLACE TABLE`` using ``UNPIVOT``.
 
-    Only used by the dispatcher when ``include_nulls=False`` and ``mode==
-    'table'`` and there's a single dimension — UNPIVOT silently drops
-    rows where the value is NULL (DuckDB 1.5.2 has no ``INCLUDE NULLS``
-    clause), which lines up with the explicit drop-nulls request. View
-    mode also stays out of this path because the Python duckdb 1.5.2
-    binding has a regression where UNPIVOT inside a view fails to re-bind
-    on a fresh connection.
-
-    Multi-pivot reshapes never use this builder — UNPIVOT emits a single
-    name column, so it doesn't extend to multiple dimensions.
+    Always emits table mode — that's the only path the dispatcher routes
+    here. UNPIVOT silently drops rows where the value is NULL (DuckDB
+    1.5.2 has no ``INCLUDE NULLS`` clause), which lines up with the
+    ``include_nulls=False`` request. View mode and multi-pivot stay out
+    of this path: the Python duckdb 1.5.2 binding has a regression where
+    UNPIVOT inside a view fails to re-bind on a fresh connection, and
+    UNPIVOT emits a single name column so it can't represent multi-pivot.
 
     The ``SELECT * REPLACE`` wrapper applies the dimension's target dtype
     so the long-form column doesn't inherit VARCHAR from the literal.
@@ -418,28 +414,36 @@ def _build_union_all_sql(
             )
     body = "\n".join(branches)
 
-    # Surface the reason this builder is the default path so a reader
-    # tracing the generated DDL knows why UNION ALL appears instead of
-    # the more compact UNPIVOT form.
-    if mode == "view" and len(dimensions) == 1 and include_nulls:
+    # Surface the reason this builder ran instead of the more compact
+    # UNPIVOT form so a reader tracing the generated DDL understands
+    # what's going on. The conditions below mirror the dispatcher's
+    # routing rules: any of the three triggers UNION ALL.
+    if len(dimensions) > 1:
+        header = (
+            "-- UNPIVOT only emits one name column, so multi-pivot reshapes use\n"
+            "-- UNION ALL with one literal per dimension on each branch.\n"
+        )
+    elif mode == "view":
+        # View mode forces UNION ALL regardless of include_nulls — the
+        # Python duckdb 1.5.2 binding has a regression where UNPIVOT
+        # inside a view fails to re-bind on a fresh connection.
         header = (
             "-- Python `duckdb` 1.5.2 fails to re-bind UNPIVOT inside views on a fresh\n"
             "-- connection (Binder Error: UNPIVOT name count mismatch), so we use\n"
             "-- UNION ALL here. `tidy table` with include_nulls=false keeps the\n"
             "-- cleaner UNPIVOT form because materialized tables don't re-bind.\n"
         )
-    elif include_nulls and len(dimensions) == 1:
+    elif include_nulls:
+        # Single-pivot table mode + include_nulls=True: UNPIVOT in 1.5.2
+        # would silently drop NULLs, so UNION ALL preserves them.
         header = (
             "-- UNION ALL preserves NULL values; DuckDB 1.5.2 UNPIVOT has no\n"
             "-- INCLUDE NULLS clause, so UNPIVOT is reserved for the explicit\n"
             "-- drop-nulls case.\n"
         )
-    elif len(dimensions) > 1:
-        header = (
-            "-- UNPIVOT only emits one name column, so multi-pivot reshapes use\n"
-            "-- UNION ALL with one literal per dimension on each branch.\n"
-        )
     else:
+        # Single-pivot + table + drop-nulls would have used UNPIVOT;
+        # we shouldn't reach this branch from the dispatcher.
         header = ""
 
     return (
@@ -479,7 +483,6 @@ def _build_reshape_sql(
             dimensions[0],
             value_column,
             target_object_name,
-            mode,
         )
     return _build_union_all_sql(
         table,

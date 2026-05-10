@@ -3007,21 +3007,30 @@ async def sql_format(request: Request, state: AppState = Depends(get_state)):
 # Tidy review endpoints
 # ---------------------------------------------------------------------------
 #
-# Three endpoints back the per-table Tidy drawer in the UI. They mirror the
+# Five endpoints back the per-table Tidy drawer in the UI. They mirror the
 # pieces of ``datasight tidy review`` that map to the drawer's flow:
 #
-# - POST /api/tidy/propose  — SSE stream. Emits the deterministic detector's
-#   hits immediately, then invokes the LLM advisor. Lets the drawer render
-#   regex-derived candidates while the model is still working.
-# - POST /api/tidy/preview  — Run the proposal's reshape SQL with LIMIT 50
-#   on a read-only connection so the user can sanity-check the long form
-#   before applying. No DDL.
-# - POST /api/tidy/apply    — Materialize the long form, verify the row
+# - GET  /api/tidy/detect     — Synchronous, returns the deterministic
+#   detector's hits as JSON. Cheap and instant; the drawer fires this on
+#   open so users see something immediately without paying for a model
+#   call.
+# - POST /api/tidy/propose    — SSE stream that runs the LLM advisor.
+#   Emits ``llm_started`` → ``llm_proposals`` → ``done`` (or
+#   ``llm_error``). Caller-driven: only fires when the user clicks Run
+#   agent in the drawer.
+# - POST /api/tidy/preview    — Run the proposal's reshape SQL with
+#   LIMIT 50 on a read-only connection so the user can sanity-check the
+#   long form before applying. No DDL.
+# - POST /api/tidy/render-sql — Re-build the reshape DDL from the
+#   current edits + view/table mode, used by the Show SQL panel so the
+#   displayed DDL stays accurate as the user tweaks fields.
+# - POST /api/tidy/apply      — Materialize the long form, verify the row
 #   count, optionally reshape the source via SourceDisposition, sync
 #   schema.yaml, and re-introspect so the sidebar reflects the new objects.
 #
-# All three reject non-DuckDB modes — ``apply_proposal`` opens a writable
-# DuckDB connection, and the deterministic builders emit DuckDB-specific DDL.
+# All endpoints reject non-DuckDB modes — ``apply_proposal`` opens a
+# writable DuckDB connection, and the deterministic builders emit
+# DuckDB-specific DDL.
 
 
 def _tidy_select_body(suggestion: Any) -> str:

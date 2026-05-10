@@ -31,7 +31,7 @@
       tidyStore.proposals.some((p) => p.proposal.source === "llm"),
   );
 
-  let llmDisabledForViewMode = $derived(tidyStore.mode === "view");
+  let dispositionDisabledForViewMode = $derived(tidyStore.mode === "view");
 
   // Reload the schema sidebar after each successful apply so the new
   // long-form object shows up immediately. Wired here (not in the store)
@@ -235,8 +235,8 @@
 
           <fieldset
             class="seg"
-            class:disabled={llmDisabledForViewMode}
-            title={llmDisabledForViewMode
+            class:disabled={dispositionDisabledForViewMode}
+            title={dispositionDisabledForViewMode
               ? "Rename, Replace, and Drop require Materialize as Table — a view references its source by name."
               : ""}
           >
@@ -256,7 +256,7 @@
                 type="radio"
                 name="tidy-disp"
                 value="rename"
-                disabled={llmDisabledForViewMode}
+                disabled={dispositionDisabledForViewMode}
                 checked={tidyStore.dispositionMode === "rename"}
                 onchange={() => (tidyStore.dispositionMode = "rename")}
               />
@@ -267,7 +267,7 @@
                 type="radio"
                 name="tidy-disp"
                 value="replace"
-                disabled={llmDisabledForViewMode}
+                disabled={dispositionDisabledForViewMode}
                 checked={tidyStore.dispositionMode === "replace"}
                 onchange={() => (tidyStore.dispositionMode = "replace")}
               />
@@ -278,7 +278,7 @@
                 type="radio"
                 name="tidy-disp"
                 value="drop"
-                disabled={llmDisabledForViewMode}
+                disabled={dispositionDisabledForViewMode}
                 checked={tidyStore.dispositionMode === "drop"}
                 onchange={() => (tidyStore.dispositionMode = "drop")}
               />
