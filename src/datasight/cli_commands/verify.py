@@ -99,34 +99,39 @@ def verify(project_dir, model, queries_path):  # noqa: C901
             timeout=settings.llm.timeout,
             model=resolved_model,
         )
-        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+        # Close the SDK's httpx pool before asyncio.run tears down the
+        # event loop. See `cli.run_ask_pipeline` for the rationale.
+        try:
+            sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
-        # Build system prompt
-        tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
-        user_desc = load_schema_description(None, project_dir)
-        user_desc = await resolve_schema_description_links(user_desc)
-        schema_text = format_schema_context(tables, user_desc)
-        schema_text += format_example_queries(queries)
+            # Build system prompt
+            tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
+            user_desc = load_schema_description(None, project_dir)
+            user_desc = await resolve_schema_description_links(user_desc)
+            schema_text = format_schema_context(tables, user_desc)
+            schema_text += format_example_queries(queries)
 
-        sys_prompt = build_system_prompt(schema_text, mode="verify", dialect=sql_dialect)
+            sys_prompt = build_system_prompt(schema_text, mode="verify", dialect=sql_dialect)
 
-        # Phase 1: Ambiguity analysis
-        ambiguity_results = await run_ambiguity_analysis(
-            queries=queries,
-            schema_context=schema_text,
-            llm_client=llm_client,
-            model=resolved_model,
-        )
+            # Phase 1: Ambiguity analysis
+            ambiguity_results = await run_ambiguity_analysis(
+                queries=queries,
+                schema_context=schema_text,
+                llm_client=llm_client,
+                model=resolved_model,
+            )
 
-        # Phase 2: SQL verification
-        results = await run_verification(
-            queries=queries,
-            llm_client=llm_client,
-            model=resolved_model,
-            system_prompt=sys_prompt,
-            run_sql=sql_runner.run_sql,
-        )
-        return results, ambiguity_results
+            # Phase 2: SQL verification
+            results = await run_verification(
+                queries=queries,
+                llm_client=llm_client,
+                model=resolved_model,
+                system_prompt=sys_prompt,
+                run_sql=sql_runner.run_sql,
+            )
+            return results, ambiguity_results
+        finally:
+            await llm_client.aclose()
 
     results, ambiguity_results = asyncio.run(_run())
 
