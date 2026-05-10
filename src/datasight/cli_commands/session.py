@@ -45,8 +45,8 @@ def _load_session(project_dir: str, session_id: str) -> dict[str, Any]:
         msg = f"Session JSON is invalid: {err}"
         raise click.ClickException(msg) from err
     if not isinstance(data, dict):
-        msg_0 = "Session JSON must be an object."
-        raise click.ClickException(msg_0)
+        msg = "Session JSON must be an object."
+        raise click.ClickException(msg)
     return data
 
 

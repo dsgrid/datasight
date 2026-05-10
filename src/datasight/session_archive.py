@@ -2,10 +2,10 @@
 
 A session archive is a zip file with this layout::
 
-    manifest.json  # format/version/exported_at/session_id/title
-    session / conversation.json  # the .datasight/conversations/<id>.json file,
-    # which already embeds the per-session dashboard
-    # under conversation["dashboard"]
+    manifest.json              # format/version/exported_at/session_id/title
+    session/conversation.json  # the .datasight/conversations/<id>.json file,
+                               # which already embeds the per-session dashboard
+                               # under conversation["dashboard"]
 
 The on-disk shape of conversations and per-session dashboards is the
 authoritative source of truth (see ``ConversationStore`` and
