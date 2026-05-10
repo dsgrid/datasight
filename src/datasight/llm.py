@@ -213,6 +213,16 @@ class LLMClient(Protocol):
         """
         ...
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP connection pool.
+
+        Call this before the event loop shuts down. Without it the
+        SDK's httpx client gets garbage-collected after the loop is
+        already closed, which prints a noisy "Event loop is closed"
+        traceback from asyncio.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Anthropic implementation
@@ -389,6 +399,10 @@ class AnthropicLLMClient:
             usage=usage,
             call_stats=CallStats(retries_performed=retries),
         )
+
+    async def aclose(self) -> None:
+        """Close the SDK's httpx connection pool."""
+        await self._client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +743,10 @@ class _OpenAICompatibleClient:
             usage=usage,
             call_stats=CallStats(retries_performed=retries),
         )
+
+    async def aclose(self) -> None:
+        """Close the SDK's httpx connection pool."""
+        await self._client.close()
 
 
 class OllamaLLMClient(_OpenAICompatibleClient):

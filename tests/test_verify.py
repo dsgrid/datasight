@@ -58,6 +58,9 @@ class FakeLLMClient:
             return LLMResponse(content=[TextBlock(text="done")], stop_reason="end_turn")
         return self._responses.pop(0)
 
+    async def aclose(self) -> None:
+        return None
+
 
 def _tool_use(sql: str, name: str = "run_sql", tool_id: str = "tu_1") -> LLMResponse:
     return LLMResponse(
@@ -371,6 +374,9 @@ async def test_run_single_verification_outer_exception(monkeypatch):
         async def create_message(self, **kwargs):
             msg = "kaboom"
             raise RuntimeError(msg)
+
+        async def aclose(self) -> None:
+            return None
 
     async def _run(sql: str) -> pd.DataFrame:
         return pd.DataFrame()

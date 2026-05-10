@@ -661,13 +661,18 @@ def _propose_via_llm(
     )
 
     async def _call():
-        return await propose_reshapes(
-            llm_client,
-            model=settings.llm.model,
-            schema_info=schema_info,
-            deterministic_hits=deterministic_hits,
-            samples=samples or None,
-        )
+        # Close the SDK's httpx pool before asyncio.run tears down the
+        # event loop. See `cli.run_ask_pipeline` for the rationale.
+        try:
+            return await propose_reshapes(
+                llm_client,
+                model=settings.llm.model,
+                schema_info=schema_info,
+                deterministic_hits=deterministic_hits,
+                samples=samples or None,
+            )
+        finally:
+            await llm_client.aclose()
 
     result = asyncio.run(_call())
     for warning in result.parse_warnings:

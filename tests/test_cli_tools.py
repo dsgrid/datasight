@@ -13,6 +13,15 @@ from datasight.cli import cli
 from datasight.llm import LLMResponse, TextBlock, ToolUseBlock, Usage
 
 
+class _StubLLM:
+    """Minimal LLMClient stand-in for tests that stub out `run_agent_loop`
+    and never actually invoke the client. Only needs `aclose` so the
+    pipeline's teardown try/finally has something to await."""
+
+    async def aclose(self) -> None:
+        return None
+
+
 def test_profile_dataset(project_dir):
     runner = CliRunner()
     result = runner.invoke(cli, ["profile", "--project-dir", project_dir])
@@ -1388,6 +1397,9 @@ def test_generate_seeds_measure_overrides(project_dir, monkeypatch):
                 stop_reason="end_turn",
             )
 
+        async def aclose(self) -> None:
+            return None
+
     monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: StubClient())
 
     project_path = Path(project_dir)
@@ -1987,7 +1999,7 @@ def test_run_ask_pipeline_logs_cost_entry(monkeypatch, project_dir):
         async def run_sql(self, sql, **kwargs):  # noqa: ARG002
             return None
 
-    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: object())
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: _StubLLM())
     monkeypatch.setattr(
         cli_module,
         "create_sql_runner_from_settings",
@@ -2054,7 +2066,7 @@ def test_run_ask_pipeline_includes_measure_guidance_in_prompt(monkeypatch, proje
         async def run_sql(self, sql, **kwargs):  # noqa: ARG002
             return None
 
-    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: object())
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: _StubLLM())
     monkeypatch.setattr(
         cli_module,
         "create_sql_runner_from_settings",
@@ -2197,6 +2209,9 @@ def test_run_ask_pipeline_uses_measure_semantics_for_energy_power_weighted_and_c
                 usage=Usage(),
             )
 
+        async def aclose(self) -> None:
+            return None
+
     monkeypatch.setattr(
         cli_module, "create_llm_client", lambda **kwargs: SemanticAwareFakeClient()
     )
@@ -2331,6 +2346,9 @@ def test_run_agent_loop_regenerates_sql_after_measure_validation_failure():
                 usage=Usage(),
             )
 
+        async def aclose(self) -> None:
+            return None
+
     async def fake_run_sql(sql, **kwargs):  # noqa: ARG001
         executed_sql.append(sql)
         return pd.DataFrame([{"report_date": "2024-01-01", "wind_generation_mwh": 123.0}])
@@ -2389,7 +2407,7 @@ def test_run_ask_pipeline_session_ids_unique_within_second(monkeypatch, project_
         async def run_sql(self, sql, **kwargs):  # noqa: ARG002
             return None
 
-    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: object())
+    monkeypatch.setattr(cli_module, "create_llm_client", lambda **kwargs: _StubLLM())
     monkeypatch.setattr(
         cli_module,
         "create_sql_runner_from_settings",
@@ -2658,6 +2676,9 @@ def test_generate_seeds_time_series(project_dir, monkeypatch):
                 ],
                 stop_reason="end_turn",
             )
+
+        async def aclose(self) -> None:
+            return None
 
     monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: StubClient())
 

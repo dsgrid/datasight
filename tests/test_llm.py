@@ -760,6 +760,38 @@ def test_create_llm_client_unknown_provider():
         create_llm_client("nonexistent")
 
 
+@pytest.mark.asyncio
+async def test_anthropic_client_aclose_closes_sdk_pool():
+    """`aclose` must await the underlying SDK's `close` so httpx's
+    connection pool shuts down before the event loop exits — otherwise
+    the GC's later finalizer trips "Event loop is closed" noise on every
+    `datasight ask` call."""
+    with patch("datasight.llm.anthropic.AsyncAnthropic") as fake_ctor:
+        fake_sdk = MagicMock()
+        fake_sdk.close = AsyncMock()
+        fake_ctor.return_value = fake_sdk
+
+        client = create_llm_client("anthropic", api_key="sk-test")
+        await client.aclose()
+
+    fake_sdk.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ollama_client_aclose_closes_sdk_pool():
+    """Same contract for the OpenAI-compatible backends (Ollama / GitHub
+    Models / OpenAI all share `_OpenAICompatibleClient`)."""
+    fake_module = MagicMock()
+    fake_sdk = MagicMock()
+    fake_sdk.close = AsyncMock()
+    fake_module.AsyncOpenAI = MagicMock(return_value=fake_sdk)
+    with patch.dict("sys.modules", {"openai": fake_module}):
+        client = create_llm_client("ollama")
+        await client.aclose()
+
+    fake_sdk.close.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
