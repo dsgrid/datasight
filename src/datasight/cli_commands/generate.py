@@ -309,7 +309,7 @@ def generate(  # noqa: C901
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
             timeout=settings.llm.timeout,
-            model=settings.llm.model,
+            model=resolved_model,
         )
 
         if sqlite_source_path is not None:

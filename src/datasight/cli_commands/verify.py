@@ -97,7 +97,7 @@ def verify(project_dir, model, queries_path):  # noqa: C901
             api_key=settings.llm.api_key,
             base_url=settings.llm.base_url,
             timeout=settings.llm.timeout,
-            model=settings.llm.model,
+            model=resolved_model,
         )
         sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
