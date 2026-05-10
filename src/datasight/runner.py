@@ -144,7 +144,7 @@ class DuckDBRunner:
                 f"Query timed out after {self._query_timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
-            raise QueryTimeoutError(msg)
+            raise QueryTimeoutError(msg) from None
 
 
 class EphemeralDuckDBRunner:
@@ -228,7 +228,7 @@ class EphemeralDuckDBRunner:
                 f"Query timed out after {self._query_timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
-            raise QueryTimeoutError(msg)
+            raise QueryTimeoutError(msg) from None
 
 
 class SQLiteRunner:
@@ -305,7 +305,7 @@ class SQLiteRunner:
                 f"Query timed out after {self._query_timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
-            raise QueryTimeoutError(msg)
+            raise QueryTimeoutError(msg) from None
 
 
 class PostgresRunner:
@@ -409,7 +409,7 @@ class PostgresRunner:
                 f"Query timed out after {self._query_timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
-            raise QueryTimeoutError(msg)
+            raise QueryTimeoutError(msg) from None
 
 
 class FlightSqlRunner:
@@ -525,7 +525,7 @@ class FlightSqlRunner:
                 f"Query timed out after {self.timeout:.0f}s. "
                 "Try a simpler query or add filters to reduce the result set."
             )
-            raise QueryTimeoutError(msg)
+            raise QueryTimeoutError(msg) from None
 
 
 class SparkConnectRunner:
@@ -618,7 +618,7 @@ class SparkConnectRunner:
                 "(start-connect-server.sh on the cluster, then re-check the "
                 "URI in your .env)"
             )
-            raise ConnectionError(msg)
+            raise ConnectionError(msg) from None
         if status == "error":
             msg = f"Spark Connect server at {remote} rejected the handshake: {payload}"
             raise ConnectionError(msg)
@@ -994,7 +994,7 @@ class SparkConnectRunner:
                     f"Query timed out after {self._query_timeout:.0f}s. "
                     "Try a simpler query or add filters to reduce the result set."
                 )
-                raise QueryTimeoutError(msg)
+                raise QueryTimeoutError(msg) from None
         finally:
             # wait=False: if the worker thread is still blocked on a gRPC
             # call, do not block shutdown. The thread will exit after the

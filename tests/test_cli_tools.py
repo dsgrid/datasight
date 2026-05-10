@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -1700,7 +1701,7 @@ def test_ask_print_sql_keeps_json_stdout_parseable(monkeypatch, project_dir):
 
     class FakeFrame:
         empty = False
-        columns = ["count"]
+        columns: ClassVar[list[str]] = ["count"]
 
         def __len__(self):
             return 1
@@ -1805,7 +1806,7 @@ def test_ask_sql_script_keeps_json_stdout_parseable(monkeypatch, project_dir, tm
 
     class FakeFrame:
         empty = False
-        columns = ["count"]
+        columns: ClassVar[list[str]] = ["count"]
 
         def __len__(self):
             return 1
