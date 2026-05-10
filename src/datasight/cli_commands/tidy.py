@@ -808,7 +808,7 @@ def _edit_proposal_inline(suggestion: Any) -> None:
             click.echo("  Unknown choice; pick 1, 2, 3, or b.")
 
 
-def _apply_review_proposals(
+def _apply_review_proposals(  # noqa: C901
     suggestions: list,
     disposition: Any,
     mode: str,

@@ -760,7 +760,7 @@ _MEASURES_YAML_HEADER = (
 )
 
 
-def update_measures_yaml_for_apply(
+def update_measures_yaml_for_apply(  # noqa: C901
     project_dir: str,
     *,
     suggestion: TidySuggestion,
