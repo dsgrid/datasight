@@ -1510,8 +1510,6 @@ async def test_propose_reshapes_live_llm_proposes_fuel_pivot():
     client = create_llm_client(
         provider="ollama",
         model="qwen2.5:7b",
-        api_key="",
-        base_url="http://localhost:11434",
         timeout=120,
     )
     result = await propose_reshapes(
