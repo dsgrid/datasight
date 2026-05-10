@@ -1841,6 +1841,57 @@ def test_update_measures_yaml_for_apply_replace_drops_stale_entries(tmp_path):
     ]
 
 
+def test_update_measures_yaml_for_apply_replace_rewrites_intermediate_name(tmp_path):
+    """`replace`: a pre-existing entry pointing at the long form's
+    intermediate name (``target_object_name``) must be rewritten to the
+    final name, since the long form is renamed to take over the source's
+    name and the intermediate name no longer exists."""
+    (tmp_path / "measures.yaml").write_text(
+        "- table: sales_wide\n"
+        "  column: sales_2020\n"
+        "- table: sales_long\n"
+        "  column: sales\n"
+        "  default_aggregation: sum\n",
+        encoding="utf-8",
+    )
+    rewrote = update_measures_yaml_for_apply(
+        str(tmp_path),
+        suggestion=_measures_suggestion(),
+        result=_apply_result("replace"),
+    )
+    assert rewrote is True
+    data = _read_measures_yaml(tmp_path)
+    assert [(e["table"], e["column"]) for e in data] == [("sales_wide", "sales")]
+    # User's override on the pre-existing entry is preserved through the rewrite,
+    # and we don't double-seed the value entry.
+    assert data[0].get("default_aggregation") == "sum"
+
+
+def test_update_measures_yaml_for_apply_drop_removes_all_source_entries(tmp_path):
+    """`drop`: any entry referencing the source table is stale (the
+    table is gone), not just entries on the mapped pivot columns."""
+    (tmp_path / "measures.yaml").write_text(
+        "- table: sales_wide\n"
+        "  column: sales_2020\n"
+        "- table: sales_wide\n"
+        "  column: region_total\n"  # not a mapped column, but table is gone
+        "- table: customers\n"
+        "  column: lifetime_value\n",
+        encoding="utf-8",
+    )
+    rewrote = update_measures_yaml_for_apply(
+        str(tmp_path),
+        suggestion=_measures_suggestion(),
+        result=_apply_result("drop"),
+    )
+    assert rewrote is True
+    data = _read_measures_yaml(tmp_path)
+    assert [(e["table"], e["column"]) for e in data] == [
+        ("customers", "lifetime_value"),
+        ("sales_long", "sales"),
+    ]
+
+
 def test_update_measures_yaml_for_apply_drop_seeds_at_target_name(tmp_path):
     """`drop`: source's entries are removed; value entry seeded under the
     long form's target name (source is gone)."""

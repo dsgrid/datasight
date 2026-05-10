@@ -820,9 +820,15 @@ def update_measures_yaml_for_apply(  # noqa: C901
       every entry from ``suggestion.table`` to ``result.source_renamed_to``
       (the columns themselves haven't changed, just the table name).
       Append a fresh entry for the long form's value column.
-    - ``replace`` / ``drop`` — the mapped columns no longer exist on
-      ``suggestion.table``. Drop entries that reference them, then append
-      a fresh entry for the value column on its final table.
+    - ``replace`` — the source's wide pivot columns are gone (collapsed
+      into the value column on the long form, which then takes over the
+      source's name). Drop the mapped-column entries on ``source_table``
+      (its surviving id-columns keep theirs), and rewrite any entries
+      pointing at the intermediate ``target_object_name`` to the final
+      name. Append a fresh entry for the value column.
+    - ``drop`` — the source table is dropped entirely. Remove every
+      entry that references it, then append a fresh entry for the value
+      column on the long form (still at ``target_object_name``).
 
     The seeded entry uses the same inference path as ``datasight
     generate`` so the file remains scannable: role, default_aggregation,
@@ -871,15 +877,34 @@ def update_measures_yaml_for_apply(  # noqa: C901
                     updated.append(renamed)
                 else:
                     updated.append(entry)
-        case "replace" | "drop":
+        case "replace":
+            # Source's wide pivot columns are gone; long form is renamed
+            # from target_object_name to take over source_table's name.
+            # Pre-existing entries pointing at target_object_name now
+            # reference a name that no longer exists — rewrite them.
+            intermediate = suggestion.target_object_name
+            final_name = result.final_target_name
+            updated = []
+            for entry in existing:
+                if not isinstance(entry, dict):
+                    updated.append(entry)
+                    continue
+                entry_table = entry.get("table")
+                if entry_table == source_table and entry.get("column") in mapped_columns:
+                    continue
+                if entry_table == intermediate and intermediate != final_name:
+                    rewritten = dict(entry)
+                    rewritten["table"] = final_name
+                    updated.append(rewritten)
+                else:
+                    updated.append(entry)
+        case "drop":
+            # Source table is gone entirely — every entry referencing it
+            # is now stale, not just the mapped pivot columns.
             updated = [
                 entry
                 for entry in existing
-                if not (
-                    isinstance(entry, dict)
-                    and entry.get("table") == source_table
-                    and entry.get("column") in mapped_columns
-                )
+                if not (isinstance(entry, dict) and entry.get("table") == source_table)
             ]
         case _:  # keep
             updated = list(existing)
