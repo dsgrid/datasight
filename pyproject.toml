@@ -111,12 +111,15 @@ target-version = "py311"
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
 select = [
+    "B904",   # raise ... from err inside except
     "C901",   # McCabe complexity
     "E4",     # Subset of pycodestyle (E)
     "E7",
     "E9",
     "EM",     # string formatting in an exception message
     "F",      # Pyflakes
+    "RUF012", # mutable class default
+    "T201",   # print statements
     "W",      # pycodestyle warnings
 ]
 ignore = []

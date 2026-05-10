@@ -1174,9 +1174,9 @@ async def _startup() -> None:
     else:
         logger.info(f"datasight ready (model={_state.model}, no project loaded)")
     if socket_path:
-        print(f"\n  Ready — listening on UNIX socket {socket_path}\n")
+        print(f"\n  Ready — listening on UNIX socket {socket_path}\n")  # noqa: T201
     else:
-        print(f"\n  Ready — open http://localhost:{port} in your browser\n")
+        print(f"\n  Ready — open http://localhost:{port} in your browser\n")  # noqa: T201
 
 
 # ---------------------------------------------------------------------------
