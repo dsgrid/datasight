@@ -42,6 +42,9 @@ def load_validation_config(
         except yaml.YAMLError as e:
             logger.warning(f"Failed to parse {path}: {e}")
             return []
+    if data is None:
+        # Empty or comment-only YAML — yaml.safe_load returns None.
+        return []
     if not isinstance(data, list):
         logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
         return []

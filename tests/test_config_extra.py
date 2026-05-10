@@ -253,10 +253,39 @@ def test_load_time_series_config_invalid_yaml(tmp_path):
     assert load_time_series_config(None, str(tmp_path)) == []
 
 
+def _capture_loguru_warnings():
+    """Datasight uses loguru, which bypasses pytest's caplog by default."""
+    from loguru import logger as _logger
+
+    captured: list[str] = []
+    sink_id = _logger.add(lambda msg: captured.append(str(msg)), level="WARNING")
+    return captured, lambda: _logger.remove(sink_id)
+
+
 def test_load_time_series_config_non_list(tmp_path):
     p = tmp_path / "time_series.yaml"
     p.write_text("foo: bar\n", encoding="utf-8")
-    assert load_time_series_config(None, str(tmp_path)) == []
+    captured, cleanup = _capture_loguru_warnings()
+    try:
+        assert load_time_series_config(None, str(tmp_path)) == []
+    finally:
+        cleanup()
+    # Genuine wrong-shape input still warns.
+    assert any("Expected a list" in line for line in captured)
+
+
+def test_load_time_series_config_comment_only_is_silent(tmp_path):
+    """An all-comments scaffold (what `datasight generate` writes when it
+    finds no timestamp candidates) parses to None — treat as empty silently
+    rather than warning on every load."""
+    p = tmp_path / "time_series.yaml"
+    p.write_text("# datasight time series declarations\n# nothing detected\n", encoding="utf-8")
+    captured, cleanup = _capture_loguru_warnings()
+    try:
+        assert load_time_series_config(None, str(tmp_path)) == []
+    finally:
+        cleanup()
+    assert not any("Expected a list" in line for line in captured)
 
 
 def test_load_time_series_config_valid_and_invalid_entries(tmp_path):

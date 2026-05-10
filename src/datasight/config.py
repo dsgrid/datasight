@@ -265,6 +265,11 @@ def load_example_queries(path: str | None, project_dir: str) -> list[dict[str, A
         except yaml.YAMLError as e:
             logger.warning(f"Failed to parse {path}: {e}")
             return []
+    if data is None:
+        # Empty or comment-only YAML — yaml.safe_load returns None.
+        # `datasight generate` writes such scaffolds when nothing is detected,
+        # so treat this as an empty config rather than warning on every load.
+        return []
     if not isinstance(data, list):
         logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
         return []
@@ -300,6 +305,11 @@ def load_measure_overrides(path: str | None, project_dir: str) -> list[dict[str,
         except yaml.YAMLError as e:
             logger.warning(f"Failed to parse {path}: {e}")
             return []
+    if data is None:
+        # Empty or comment-only YAML — yaml.safe_load returns None.
+        # `datasight generate` writes such scaffolds when nothing is detected,
+        # so treat this as an empty config rather than warning on every load.
+        return []
     if not isinstance(data, list):
         logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
         return []
@@ -436,6 +446,11 @@ def load_time_series_config(path: str | None, project_dir: str) -> list[dict[str
         except yaml.YAMLError as e:
             logger.warning(f"Failed to parse {path}: {e}")
             return []
+    if data is None:
+        # Empty or comment-only YAML — yaml.safe_load returns None.
+        # `datasight generate` writes such scaffolds when nothing is detected,
+        # so treat this as an empty config rather than warning on every load.
+        return []
     if not isinstance(data, list):
         logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
         return []
@@ -490,6 +505,11 @@ def load_joins_config(path: str | None, project_dir: str) -> list[dict[str, Any]
         except yaml.YAMLError as e:
             logger.warning(f"Failed to parse {path}: {e}")
             return []
+    if data is None:
+        # Empty or comment-only YAML — yaml.safe_load returns None.
+        # `datasight generate` writes such scaffolds when nothing is detected,
+        # so treat this as an empty config rather than warning on every load.
+        return []
     if not isinstance(data, list):
         logger.warning(f"Expected a list in {path}, got {type(data).__name__}")
         return []
