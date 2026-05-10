@@ -3357,12 +3357,19 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):
                 try:
                     write_conn.close()
                 except Exception:
+                    # The apply already failed; swallow any close-time
+                    # error so it doesn't mask the original cause. The
+                    # finally block below still restores the read-only
+                    # runner.
                     pass
                 runner._connect()
                 return {"success": False, "error": str(exc)}
             try:
                 write_conn.close()
             except Exception:
+                # Best-effort close on the happy path. A close-time
+                # error here is non-fatal — the apply already committed
+                # — so we drop it rather than poison the response.
                 pass
         finally:
             # Always restore the read-only runner so subsequent requests work
