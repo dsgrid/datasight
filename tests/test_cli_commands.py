@@ -512,6 +512,9 @@ def test_generate_rewrites_project_files(monkeypatch, tv_project_isolated):
                 usage=SimpleNamespace(input_tokens=1, output_tokens=1),
             )
 
+        async def aclose(self) -> None:
+            return None
+
     monkeypatch.setattr("datasight.cli.create_llm_client", lambda **kwargs: _StubClient())
 
     runner = CliRunner()

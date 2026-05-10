@@ -311,112 +311,120 @@ def generate(  # noqa: C901
             timeout=settings.llm.timeout,
             model=resolved_model,
         )
+        # Close the SDK's httpx pool before asyncio.run tears down the
+        # event loop. See `cli.run_ask_pipeline` for the rationale.
+        try:
+            if sqlite_source_path is not None:
+                from datasight.runner import SQLiteRunner
 
-        if sqlite_source_path is not None:
-            from datasight.runner import SQLiteRunner
+                sql_runner = SQLiteRunner(str(sqlite_source_path))
+                tables_info = []
+            elif duckdb_source_path is not None:
+                from datasight.runner import DuckDBRunner
 
-            sql_runner = SQLiteRunner(str(sqlite_source_path))
-            tables_info = []
-        elif duckdb_source_path is not None:
-            from datasight.runner import DuckDBRunner
-
-            sql_runner = DuckDBRunner(str(duckdb_source_path))
-            tables_info = []
-        elif (
-            use_files and settings.database.mode == "duckdb" and normalized_import_mode == "table"
-        ):
-            from datasight.explore import (
-                build_persistent_duckdb,
-                create_files_session_for_settings,
-            )
-            from datasight.runner import DuckDBRunner
-
-            planning_runner, planning_tables_info = create_files_session_for_settings(
-                list(files), settings.database, import_mode="auto"
-            )
-            planning_runner.close()
-            persistent_tables_info = []
-            for table_info in planning_tables_info:
-                updated = dict(table_info)
-                if updated.get("type") not in {"duckdb", "xlsx"}:
-                    updated["import_mode"] = "table"
-                persistent_tables_info.append(updated)
-
-            assert db_target is not None
-            try:
-                build_persistent_duckdb(db_target, persistent_tables_info, overwrite=overwrite)
-            except FileExistsError:
-                click.echo(
-                    f"Error: Database file already exists: {db_target}.",
-                    err=True,
+                sql_runner = DuckDBRunner(str(duckdb_source_path))
+                tables_info = []
+            elif (
+                use_files
+                and settings.database.mode == "duckdb"
+                and normalized_import_mode == "table"
+            ):
+                from datasight.explore import (
+                    build_persistent_duckdb,
+                    create_files_session_for_settings,
                 )
-                sys.exit(1)
-            created_persistent_db = db_target
-            sql_runner = DuckDBRunner(str(db_target))
-            tables_info = persistent_tables_info
-        elif use_files:
-            from datasight.explore import create_files_session_for_settings
+                from datasight.runner import DuckDBRunner
 
-            sql_runner, tables_info = create_files_session_for_settings(
-                list(files), settings.database, import_mode=normalized_import_mode
-            )
-        else:
-            sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
-            tables_info = []
-
-        # Introspect schema
-        click.echo("Introspecting database schema...")
-        tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
-
-        # Filter to specified tables if --table was provided
-        if table:
-            table_set = {t.lower() for t in table}
-            found_lower = {t.name.lower() for t in tables}
-            missing = [t for t in table if t.lower() not in found_lower]
-            tables = [t for t in tables if t.name.lower() in table_set]
-            if not tables:
-                click.echo(f"Error: No matching tables found for: {', '.join(table)}", err=True)
-                sys.exit(1)
-            if missing:
-                click.echo(
-                    f"Warning: --table values not found: {', '.join(missing)}",
-                    err=True,
+                planning_runner, planning_tables_info = create_files_session_for_settings(
+                    list(files), settings.database, import_mode="auto"
                 )
+                planning_runner.close()
+                persistent_tables_info = []
+                for table_info in planning_tables_info:
+                    updated = dict(table_info)
+                    if updated.get("type") not in {"duckdb", "xlsx"}:
+                        updated["import_mode"] = "table"
+                    persistent_tables_info.append(updated)
 
-        click.echo(f"  Found {len(tables)} tables")
+                assert db_target is not None
+                try:
+                    build_persistent_duckdb(db_target, persistent_tables_info, overwrite=overwrite)
+                except FileExistsError:
+                    click.echo(
+                        f"Error: Database file already exists: {db_target}.",
+                        err=True,
+                    )
+                    sys.exit(1)
+                created_persistent_db = db_target
+                sql_runner = DuckDBRunner(str(db_target))
+                tables_info = persistent_tables_info
+            elif use_files:
+                from datasight.explore import create_files_session_for_settings
 
-        # Sample low-cardinality string columns for enum/code detection
-        click.echo("Sampling code/enum columns...")
-        samples_text = await sample_enum_columns(sql_runner.run_sql, tables)
+                sql_runner, tables_info = create_files_session_for_settings(
+                    list(files), settings.database, import_mode=normalized_import_mode
+                )
+            else:
+                sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+                tables_info = []
 
-        # Sample timestamp/date columns so the LLM can infer epoch units
-        # and actual time range
-        click.echo("Sampling timestamp columns...")
-        timestamps_text = await sample_timestamp_columns(sql_runner.run_sql, tables)
+            # Introspect schema
+            click.echo("Introspecting database schema...")
+            tables = await introspect_schema(sql_runner.run_sql, runner=sql_runner)
 
-        # Build LLM prompt and call
-        click.echo("Generating documentation (this may take a moment)...")
-        system_prompt, user_msg = build_generation_context(
-            tables, sql_dialect, samples_text, timestamps_text=timestamps_text
-        )
+            # Filter to specified tables if --table was provided
+            if table:
+                table_set = {t.lower() for t in table}
+                found_lower = {t.name.lower() for t in tables}
+                missing = [t for t in table if t.lower() not in found_lower]
+                tables = [t for t in tables if t.name.lower() in table_set]
+                if not tables:
+                    click.echo(
+                        f"Error: No matching tables found for: {', '.join(table)}", err=True
+                    )
+                    sys.exit(1)
+                if missing:
+                    click.echo(
+                        f"Warning: --table values not found: {', '.join(missing)}",
+                        err=True,
+                    )
 
-        from datasight.llm import TextBlock, default_max_output_tokens
+            click.echo(f"  Found {len(tables)} tables")
 
-        budget = (
-            max_tokens
-            if max_tokens is not None
-            else default_max_output_tokens(settings.llm.provider)
-        )
-        response = await llm_client.create_message(
-            model=resolved_model,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_msg}],
-            tools=[],
-            max_tokens=budget,
-        )
+            # Sample low-cardinality string columns for enum/code detection
+            click.echo("Sampling code/enum columns...")
+            samples_text = await sample_enum_columns(sql_runner.run_sql, tables)
 
-        parts = [block.text for block in response.content if isinstance(block, TextBlock)]
-        return "".join(parts), response.stop_reason, sql_runner, tables_info, tables
+            # Sample timestamp/date columns so the LLM can infer epoch units
+            # and actual time range
+            click.echo("Sampling timestamp columns...")
+            timestamps_text = await sample_timestamp_columns(sql_runner.run_sql, tables)
+
+            # Build LLM prompt and call
+            click.echo("Generating documentation (this may take a moment)...")
+            system_prompt, user_msg = build_generation_context(
+                tables, sql_dialect, samples_text, timestamps_text=timestamps_text
+            )
+
+            from datasight.llm import TextBlock, default_max_output_tokens
+
+            budget = (
+                max_tokens
+                if max_tokens is not None
+                else default_max_output_tokens(settings.llm.provider)
+            )
+            response = await llm_client.create_message(
+                model=resolved_model,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_msg}],
+                tools=[],
+                max_tokens=budget,
+            )
+
+            parts = [block.text for block in response.content if isinstance(block, TextBlock)]
+            return "".join(parts), response.stop_reason, sql_runner, tables_info, tables
+        finally:
+            await llm_client.aclose()
 
     text, stop_reason, sql_runner, tables_info, generated_tables = asyncio.run(_run())
 

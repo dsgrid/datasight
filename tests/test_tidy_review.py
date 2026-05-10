@@ -1289,6 +1289,9 @@ class _FakeLLMClient:
             return LLMResponse(content=[TextBlock(text="done")], stop_reason="end_turn")
         return self._responses.pop(0)
 
+    async def aclose(self) -> None:
+        return None
+
 
 def _propose_response(proposals: list[dict]):
     from datasight.llm import LLMResponse, ToolUseBlock, Usage

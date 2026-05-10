@@ -160,6 +160,9 @@ class _StubLLMClient:
             usage=SimpleNamespace(input_tokens=1, output_tokens=1),
         )
 
+    async def aclose(self) -> None:
+        return None
+
 
 @pytest.fixture
 def stub_llm(monkeypatch):

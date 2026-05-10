@@ -132,148 +132,156 @@ async def run_ask_pipeline(
         timeout=settings.llm.timeout,
         model=resolved_model,
     )
-    sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+    # Close the SDK's httpx pool before the event loop shuts down.
+    # Without this, asyncio.run closes the loop, the GC later finalizes
+    # the httpx client, and its scheduled aclose() trips
+    # "RuntimeError: Event loop is closed" — noisy, especially in
+    # `datasight ask --files` where this runs once per question.
+    try:
+        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
 
-    schema_config = load_schema_config(None, project_dir)
-    allowed_tables: set[str] | None = None
-    if schema_config is not None:
-        allowed_tables = {
-            e["name"] for e in schema_config.get("tables", []) if e.get("name")
-        } or None
-    tables = await introspect_schema(
-        sql_runner.run_sql,
-        runner=sql_runner,
-        allowed_tables=allowed_tables,
-    )
-    if schema_config is not None:
-        tables = filter_tables(tables, schema_config)
-    from datasight.identifiers import configure_runner_identifier_quoting
+        schema_config = load_schema_config(None, project_dir)
+        allowed_tables: set[str] | None = None
+        if schema_config is not None:
+            allowed_tables = {
+                e["name"] for e in schema_config.get("tables", []) if e.get("name")
+            } or None
+        tables = await introspect_schema(
+            sql_runner.run_sql,
+            runner=sql_runner,
+            allowed_tables=allowed_tables,
+        )
+        if schema_config is not None:
+            tables = filter_tables(tables, schema_config)
+        from datasight.identifiers import configure_runner_identifier_quoting
 
-    configure_runner_identifier_quoting(
-        sql_runner,
-        [
-            {
-                "name": t.name,
-                "columns": [{"name": c.name} for c in t.columns],
-            }
-            for t in tables
-        ],
-    )
-    user_desc = load_schema_description(None, project_dir)
-    user_desc = await resolve_schema_description_links(user_desc)
-    example_queries = load_example_queries(None, project_dir)
-    measure_overrides = load_measure_overrides(None, project_dir)
-    time_series_configs = load_time_series_config(None, project_dir)
-    measure_rules = build_measure_rule_map(measure_overrides)
-    schema_text = format_schema_context(tables, user_desc)
-    if example_queries:
-        schema_text += format_example_queries(example_queries)
-
-    measure_text = format_measure_prompt_context(
-        await build_measure_overview(
+        configure_runner_identifier_quoting(
+            sql_runner,
             [
                 {
                     "name": t.name,
-                    "row_count": t.row_count,
-                    "columns": [
-                        {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
-                        for c in t.columns
-                    ],
+                    "columns": [{"name": c.name} for c in t.columns],
                 }
                 for t in tables
             ],
-            sql_runner.run_sql,
-            measure_overrides,
         )
-    )
-    if measure_text:
-        schema_text += measure_text
+        user_desc = load_schema_description(None, project_dir)
+        user_desc = await resolve_schema_description_links(user_desc)
+        example_queries = load_example_queries(None, project_dir)
+        measure_overrides = load_measure_overrides(None, project_dir)
+        time_series_configs = load_time_series_config(None, project_dir)
+        measure_rules = build_measure_rule_map(measure_overrides)
+        schema_text = format_schema_context(tables, user_desc)
+        if example_queries:
+            schema_text += format_example_queries(example_queries)
 
-    ts_text = format_time_series_prompt_context(time_series_configs)
-    if ts_text:
-        schema_text += ts_text
+        measure_text = format_measure_prompt_context(
+            await build_measure_overview(
+                [
+                    {
+                        "name": t.name,
+                        "row_count": t.row_count,
+                        "columns": [
+                            {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
+                            for c in t.columns
+                        ],
+                    }
+                    for t in tables
+                ],
+                sql_runner.run_sql,
+                measure_overrides,
+            )
+        )
+        if measure_text:
+            schema_text += measure_text
 
-    schema_info = [
-        {
-            "name": t.name,
-            "columns": [{"name": c.name, "dtype": c.dtype} for c in t.columns],
-        }
-        for t in tables
-    ]
-    schema_map = build_schema_map(schema_info)
+        ts_text = format_time_series_prompt_context(time_series_configs)
+        if ts_text:
+            schema_text += ts_text
 
-    sys_prompt = build_system_prompt(
-        schema_text,
-        mode="web",
-        clarify_sql=False,
-        dialect=sql_dialect,
-        headless=True,
-    )
+        schema_info = [
+            {
+                "name": t.name,
+                "columns": [{"name": c.name, "dtype": c.dtype} for c in t.columns],
+            }
+            for t in tables
+        ]
+        schema_map = build_schema_map(schema_info)
 
-    log_path = os.environ.get(
-        "QUERY_LOG_PATH",
-        os.path.join(project_dir, ".datasight", "query_log.jsonl"),
-    )
-    query_logger = QueryLogger(path=log_path)
-    # Microseconds + a short random suffix prevent collisions when several
-    # `datasight ask` runs (e.g. a fast batch or test sweep) start within
-    # the same wall-clock second.
-    import secrets
+        sys_prompt = build_system_prompt(
+            schema_text,
+            mode="web",
+            clarify_sql=False,
+            dialect=sql_dialect,
+            headless=True,
+        )
 
-    session_id = (
-        f"cli-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}-{secrets.token_hex(3)}"
-    )
-    turn_id = str(uuid.uuid4())
+        log_path = os.environ.get(
+            "QUERY_LOG_PATH",
+            os.path.join(project_dir, ".datasight", "query_log.jsonl"),
+        )
+        query_logger = QueryLogger(path=log_path)
+        # Microseconds + a short random suffix prevent collisions when several
+        # `datasight ask` runs (e.g. a fast batch or test sweep) start within
+        # the same wall-clock second.
+        import secrets
 
-    result = await run_agent_loop(
-        question=question,
-        llm_client=llm_client,
-        model=resolved_model,
-        system_prompt=sys_prompt,
-        run_sql=sql_runner.run_sql,
-        schema_map=schema_map,
-        dialect=sql_dialect,
-        measure_rules=measure_rules,
-        query_logger=query_logger,
-        session_id=session_id,
-        turn_id=turn_id,
-        max_cost_usd=settings.app.max_cost_usd_per_turn,
-        provider=settings.llm.provider,
-        max_tokens=settings.app.max_output_tokens,
-    )
+        session_id = (
+            f"cli-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}-{secrets.token_hex(3)}"
+        )
+        turn_id = str(uuid.uuid4())
 
-    # Mirror the web app: emit a turn-level cost summary so `datasight log
-    # --cost` reflects CLI usage too.
-    log_query_cost(
-        resolved_model,
-        result.api_calls,
-        result.total_input_tokens,
-        result.total_output_tokens,
-        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
-        cache_read_input_tokens=result.total_cache_read_input_tokens,
-        provider=settings.llm.provider,
-    )
-    cost_data = build_cost_data(
-        resolved_model,
-        result.api_calls,
-        result.total_input_tokens,
-        result.total_output_tokens,
-        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
-        cache_read_input_tokens=result.total_cache_read_input_tokens,
-        provider=settings.llm.provider,
-    )
-    query_logger.log_cost(
-        session_id=session_id,
-        user_question=question,
-        api_calls=result.api_calls,
-        input_tokens=result.total_input_tokens,
-        output_tokens=result.total_output_tokens,
-        cache_creation_input_tokens=result.total_cache_creation_input_tokens,
-        cache_read_input_tokens=result.total_cache_read_input_tokens,
-        estimated_cost=cost_data.get("estimated_cost"),
-        turn_id=turn_id,
-    )
-    return result
+        result = await run_agent_loop(
+            question=question,
+            llm_client=llm_client,
+            model=resolved_model,
+            system_prompt=sys_prompt,
+            run_sql=sql_runner.run_sql,
+            schema_map=schema_map,
+            dialect=sql_dialect,
+            measure_rules=measure_rules,
+            query_logger=query_logger,
+            session_id=session_id,
+            turn_id=turn_id,
+            max_cost_usd=settings.app.max_cost_usd_per_turn,
+            provider=settings.llm.provider,
+            max_tokens=settings.app.max_output_tokens,
+        )
+
+        # Mirror the web app: emit a turn-level cost summary so `datasight log
+        # --cost` reflects CLI usage too.
+        log_query_cost(
+            resolved_model,
+            result.api_calls,
+            result.total_input_tokens,
+            result.total_output_tokens,
+            cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+            cache_read_input_tokens=result.total_cache_read_input_tokens,
+            provider=settings.llm.provider,
+        )
+        cost_data = build_cost_data(
+            resolved_model,
+            result.api_calls,
+            result.total_input_tokens,
+            result.total_output_tokens,
+            cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+            cache_read_input_tokens=result.total_cache_read_input_tokens,
+            provider=settings.llm.provider,
+        )
+        query_logger.log_cost(
+            session_id=session_id,
+            user_question=question,
+            api_calls=result.api_calls,
+            input_tokens=result.total_input_tokens,
+            output_tokens=result.total_output_tokens,
+            cache_creation_input_tokens=result.total_cache_creation_input_tokens,
+            cache_read_input_tokens=result.total_cache_read_input_tokens,
+            estimated_cost=cost_data.get("estimated_cost"),
+            turn_id=turn_id,
+        )
+        return result
+    finally:
+        await llm_client.aclose()
 
 
 def write_or_print(text: str, output_path: str | None) -> None:

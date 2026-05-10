@@ -227,6 +227,9 @@ class _FakeLLMClient:
     ) -> LLMResponse:
         return self.responses.pop(0)
 
+    async def aclose(self) -> None:
+        return None
+
 
 @pytest.mark.asyncio
 async def test_run_agent_loop_simple_text_response(test_duckdb_path):
