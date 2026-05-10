@@ -156,10 +156,14 @@ def test_propose_streams_llm_proposals_only(loaded_state, monkeypatch):
         return ProposeResult(suggestions=[], raw_proposals=[], parse_warnings=[])
 
     monkeypatch.setattr(web_app, "propose_reshapes", fake_propose)
-    loaded_state.llm_client = cast(Any, object())
-    loaded_state.model = "stub"
 
+    # Set the LLM stub *inside* the TestClient context: FastAPI startup
+    # runs ``init_llm_client(state)`` which clears llm_client to None
+    # when the env has no API key (the case in CI). Setting after the
+    # context enters means our stub survives that re-init.
     with TestClient(web_app.app) as client:
+        loaded_state.llm_client = cast(Any, object())
+        loaded_state.model = "stub"
         response = client.post("/api/tidy/propose", json={"table": "sales"})
 
     assert response.status_code == 200
@@ -197,10 +201,13 @@ def test_propose_emits_llm_error_event_on_provider_failure(loaded_state, monkeyp
         raise RuntimeError("provider-down")
 
     monkeypatch.setattr(web_app, "propose_reshapes", boom)
-    loaded_state.llm_client = cast(Any, object())
-    loaded_state.model = "stub"
 
+    # See note in test_propose_streams_llm_proposals_only — set the LLM
+    # stub inside the TestClient context so it survives FastAPI startup's
+    # init_llm_client re-initialization.
     with TestClient(web_app.app) as client:
+        loaded_state.llm_client = cast(Any, object())
+        loaded_state.model = "stub"
         response = client.post("/api/tidy/propose", json={"table": "sales"})
 
     events = _parse_sse_events(response.text)
