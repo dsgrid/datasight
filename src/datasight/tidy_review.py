@@ -760,6 +760,44 @@ _MEASURES_YAML_HEADER = (
 )
 
 
+def _build_value_entry(suggestion: TidySuggestion, table: str) -> dict[str, Any]:
+    """Build the seeded measures.yaml entry for the long form's value column.
+
+    Mirrors what ``datasight generate`` writes: full inferred fields with
+    None / empty values stripped, so the user can see what's available to
+    override without consulting docs. The dtype assumption (DOUBLE) is
+    safe because DuckDB UNPIVOT always widens the value column to the
+    broadest numeric type of the mapped columns.
+    """
+    # Late import — data_profile imports tidy_review-adjacent helpers at
+    # module load, so importing it at the top here would create a cycle.
+    from datasight.data_profile import _infer_measure_semantics
+
+    value_column = suggestion.value_column
+    sibling_columns = (
+        list(suggestion.id_columns) + [d.name for d in suggestion.dimensions] + [value_column]
+    )
+    inferred = _infer_measure_semantics(value_column, "DOUBLE", sibling_columns)
+    if inferred is None:
+        return {"table": table, "column": value_column}
+
+    candidate: dict[str, Any] = {
+        "table": table,
+        "column": value_column,
+        "role": inferred.get("role", "measure"),
+        "unit": inferred.get("unit"),
+        "default_aggregation": inferred.get("default_aggregation", "avg"),
+        "average_strategy": inferred.get("average_strategy", "avg"),
+        "weight_column": inferred.get("weight_column"),
+        "allowed_aggregations": inferred.get("allowed_aggregations", []),
+        "forbidden_aggregations": inferred.get("forbidden_aggregations", []),
+        "additive_across_category": bool(inferred.get("additive_across_category")),
+        "additive_across_time": bool(inferred.get("additive_across_time")),
+        "reason": inferred.get("reason", ""),
+    }
+    return {key: value for key, value in candidate.items() if value not in (None, [], "")}
+
+
 def update_measures_yaml_for_apply(  # noqa: C901
     project_dir: str,
     *,
@@ -773,22 +811,24 @@ def update_measures_yaml_for_apply(  # noqa: C901
     the long form, so any pre-existing measure overrides that target those
     source columns become stale (the columns no longer exist on the
     relevant table). This helper cleans those up per disposition mode and
-    seeds a stub entry for the new value column so the user has somewhere
-    to attach overrides:
+    seeds a fully-inferred entry for the new value column so the user has
+    somewhere to attach overrides:
 
     - ``keep`` — source still has the mapped columns; existing entries
-      stay valid. Append a stub for the long form's value column.
+      stay valid. Append a fresh entry for the long form's value column.
     - ``rename`` — the source's table name moved; rewrite ``table`` on
       every entry from ``suggestion.table`` to ``result.source_renamed_to``
       (the columns themselves haven't changed, just the table name).
-      Append a stub for the long form's value column.
+      Append a fresh entry for the long form's value column.
     - ``replace`` / ``drop`` — the mapped columns no longer exist on
       ``suggestion.table``. Drop entries that reference them, then append
-      a stub for the value column on its final table.
+      a fresh entry for the value column on its final table.
 
-    The seeded stub is intentionally minimal (``table`` + ``column`` only)
-    so missing fields fall back to inference at read time. Callers who
-    want richer defaults should edit the file afterward.
+    The seeded entry uses the same inference path as ``datasight
+    generate`` so the file remains scannable: role, default_aggregation,
+    allowed_aggregations, etc. all show up with sensible defaults the
+    user can edit. Existing user overrides on other entries are preserved
+    verbatim.
 
     By default this is a no-op when ``measures.yaml`` is absent — matches
     the CLI semantics for ``schema.yaml``. Pass ``create_if_absent=True``
@@ -853,7 +893,7 @@ def update_measures_yaml_for_apply(  # noqa: C901
         for entry in updated
     )
     if not has_value_entry:
-        updated.append({"table": value_table, "column": value_column})
+        updated.append(_build_value_entry(suggestion, value_table))
 
     if updated == existing:
         return False

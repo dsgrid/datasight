@@ -1899,8 +1899,9 @@ def test_update_measures_yaml_for_apply_no_file_is_noop(tmp_path):
 
 
 def test_update_measures_yaml_for_apply_creates_file_when_opt_in(tmp_path):
-    """`create_if_absent=True` materializes a fresh measures.yaml with
-    just the value column stub — used by the web Apply path."""
+    """`create_if_absent=True` materializes a fresh measures.yaml with a
+    fully-inferred entry for the value column — mirrors what `datasight
+    generate` writes so users can see what's editable inline."""
     rewrote = update_measures_yaml_for_apply(
         str(tmp_path),
         suggestion=_measures_suggestion(),
@@ -1909,7 +1910,13 @@ def test_update_measures_yaml_for_apply_creates_file_when_opt_in(tmp_path):
     )
     assert rewrote is True
     data = _read_measures_yaml(tmp_path)
-    assert data == [{"table": "sales_long", "column": "sales"}]
+    assert len(data) == 1
+    entry = data[0]
+    assert entry["table"] == "sales_long"
+    assert entry["column"] == "sales"
+    assert entry["role"] == "measure"
+    assert entry["default_aggregation"] == "avg"
+    assert entry["allowed_aggregations"] == ["avg", "min", "max"]
     text = (tmp_path / "measures.yaml").read_text(encoding="utf-8")
     assert text.startswith("# datasight measure overrides\n")
 
