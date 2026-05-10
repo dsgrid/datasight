@@ -67,7 +67,7 @@ Toggle the sidebar with the hamburger button in the header or
 
 | Section | Purpose |
 |---------|---------|
-| **Tables** | Database tables, column types, preview rows, column stats |
+| **Tables** | Database tables, column types, preview rows, column stats. Per-table action chips: **Preview rows**, **Ask** (drops a question into chat), **Tidy** (DuckDB-only — opens the [Tidy review drawer](../use/how-to/curate-with-tidy-review.md#from-the-web-ui) for wide→long reshape proposals), **Insert** (in SQL view — drops the table or column name into the editor at the cursor) |
 | **Example queries** | From `queries.yaml`, filtered to the selected table |
 | **Recipes** | Schema-derived reusable prompts |
 | **Inspect** | Deterministic inspection flows (profile, measures, dimensions, quality, trends) |

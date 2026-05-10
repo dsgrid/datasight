@@ -1,7 +1,9 @@
 <script lang="ts">
   import { schemaStore } from "$lib/stores/schema.svelte";
   import { dashboardStore } from "$lib/stores/dashboard.svelte";
+  import { sessionStore } from "$lib/stores/session.svelte";
   import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
+  import { tidyStore } from "$lib/stores/tidy.svelte";
   import { sendMessage } from "$lib/api/chat";
   import { loadPreview, loadColumnStats } from "$lib/api/schema";
   import { getVisibleSchemaEntries } from "$lib/utils/search";
@@ -81,6 +83,10 @@
 
   function insertIntoEditor(text: string) {
     sqlEditorStore.pendingInsert = text;
+  }
+
+  function startTidyReview(tableName: string) {
+    void tidyStore.start(tableName);
   }
 </script>
 
@@ -162,6 +168,20 @@
               >
                 Ask
               </button>
+              {#if sessionStore.sqlDialect === "duckdb"}
+                <button
+                  class="cursor-pointer transition-all duration-150
+                    hover:text-teal hover:border-teal"
+                  style="border: 1px solid var(--border);
+                         background: color-mix(in srgb, var(--surface) 82%, var(--bg));
+                         border-radius: 999px; padding: 2px 8px; font-family: inherit;
+                         font-size: 0.67rem; color: var(--text-secondary);"
+                  onclick={() => startTidyReview(table.name)}
+                  title="LLM-augmented advisor that proposes wide→long reshapes"
+                >
+                  Tidy
+                </button>
+              {/if}
               {#if dashboardStore.currentView === "sql"}
                 <button
                   class="cursor-pointer transition-all duration-150

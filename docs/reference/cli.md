@@ -748,6 +748,7 @@ datasight tidy review --from plan.json --apply-all
 datasight tidy review --from plan.json --dry-run
 datasight tidy review --out detector.json
 datasight tidy review --from plan.json --apply-all --drop-source
+datasight tidy review --from plan.json --apply-all --replace-source
 datasight tidy review --from plan.json --apply-all --rename-source sales_wide_raw
 ```
 
@@ -768,7 +769,8 @@ datasight tidy review [OPTIONS]
 | `--as` | Materialize the long form as a table or view (default: view). Default: `view`. |
 | `--keep-source` | Leave the source object (table/view) unchanged after the reshape (default). |
 | `--rename-source` | Rename the source object (table/view) to NAME after a successful reshape. Requires '--as table' — a view's body references its source by name. |
-| `--drop-source` | Drop the source after a successful reshape and rename the long-form table to take the source's old name. The long form replaces the source. Requires '--as table' — a view's body references its source by name. |
+| `--replace-source` | Drop the source after a successful reshape and rename the long-form table to take the source's old name. Downstream code that referenced the source keeps working without edits. Requires '--as table' — a view's body references its source by name. |
+| `--drop-source` | Drop the source after a successful reshape; the long form keeps its target name. Pick this when the new shape is the canonical one going forward and you don't need to preserve the source's name. Requires '--as table'. NOTE: previously this flag carried the semantics now moved to '--replace-source'; scripts depending on the old behavior should switch to '--replace-source'. |
 | `--sample` | Send N sample rows per candidate to the configured LLM provider (default 0). Sample values get sent over the network — opt in only when the LLM seeing the values is acceptable. |
 
 ### `datasight integrity`

@@ -54,16 +54,29 @@ from datasight.tidy import (
 PLAN_VERSION = 1
 
 
-SourceDispositionMode = Literal["keep", "rename", "drop"]
+SourceDispositionMode = Literal["keep", "rename", "replace", "drop"]
 
 
 @dataclass
 class SourceDisposition:
     """What to do with the source table after a successful reshape.
 
-    ``mode='rename'`` requires ``new_name``. The other two modes ignore it.
-    ``--keep-source`` is the default; it leaves the source untouched so a
-    developer can compare wide and long forms side by side.
+    Four modes, each producing a different end state:
+
+    - ``keep`` (default) — source stays put. Long form lives at
+      ``target_object_name`` alongside it. Useful for comparing wide and
+      long forms.
+    - ``rename`` — source is renamed to ``new_name``. Long form lives at
+      ``target_object_name``. Requires ``new_name``.
+    - ``replace`` — source is dropped, then the long form is renamed to
+      take over the source's old name. Downstream code that referenced
+      the source keeps working without edits. The chosen
+      ``target_object_name`` is effectively a temporary intermediate
+      name.
+    - ``drop`` — source is dropped. The long form keeps its
+      ``target_object_name``. Downstream code that referenced the source
+      will break; pick this when the new shape is the canonical one
+      going forward.
     """
 
     mode: SourceDispositionMode = "keep"
@@ -85,7 +98,7 @@ class ApplyResult:
 
     ``final_target_name`` is the name the long-form object goes by *after*
     the disposition step. It differs from ``target_object_name`` only when
-    ``source_disposition == "drop"``, in which case the long form takes
+    ``source_disposition == "replace"``, in which case the long form takes
     over the source's old name (the source is dropped first).
     """
 
@@ -173,6 +186,7 @@ def _suggestion_to_proposal_dict(s: TidySuggestion) -> dict[str, Any]:
         "confidence": s.confidence,
         "source": s.source,
         "rationale": s.rationale,
+        "include_nulls": s.include_nulls,
     }
 
 
@@ -224,6 +238,13 @@ def _parse_proposal(p: Any, *, index: int) -> TidySuggestion:
     if not isinstance(pattern, str):
         raise ValueError(f"{where}: 'pattern' must be a string")
 
+    # Default False matches TidySuggestion's default — most NULLs in wide
+    # tables are structural placeholders, not real missing observations.
+    include_nulls_raw = p.get("include_nulls", False)
+    if not isinstance(include_nulls_raw, bool):
+        raise ValueError(f"{where}: 'include_nulls' must be a boolean")
+    include_nulls = include_nulls_raw
+
     reshape_sql = _build_reshape_sql(
         table=table,
         id_columns=list(id_columns_raw),
@@ -232,6 +253,7 @@ def _parse_proposal(p: Any, *, index: int) -> TidySuggestion:
         value_column=value_column,
         target_object_name=target_object_name,
         mode="table",
+        include_nulls=include_nulls,
     )
     return TidySuggestion(
         pattern=pattern,
@@ -245,6 +267,7 @@ def _parse_proposal(p: Any, *, index: int) -> TidySuggestion:
         reshape_sql=reshape_sql,
         confidence=confidence,
         source=source,
+        include_nulls=include_nulls,
     )
 
 
@@ -274,11 +297,34 @@ def _parse_dimensions(raw: Any, where: str) -> list[Dimension]:
             raise ValueError(
                 f"{sub}: 'kind' must be one of {sorted(DIMENSION_KINDS)}, got {kind!r}"
             )
-        dimensions.append(Dimension(name=name, kind=kind))
+        dtype = d_dict.get("dtype", "VARCHAR")
+        if not isinstance(dtype, str) or dtype.upper() not in _ALLOWED_DTYPES:
+            raise ValueError(
+                f"{sub}: 'dtype' must be one of {sorted(_ALLOWED_DTYPES)}, got {dtype!r}"
+            )
+        dimensions.append(Dimension(name=name, kind=kind, dtype=dtype.upper()))
     names = [d.name for d in dimensions]
     if len(set(names)) != len(names):
         raise ValueError(f"{where}: duplicate dimension names {names}")
     return dimensions
+
+
+# Whitelist of dimension column dtypes. Restricted because the value lands
+# inside a generated CAST clause, so accepting arbitrary strings would let
+# a hand-crafted plan inject SQL. Covers the period kinds the deterministic
+# detector emits (year/hour/day → INTEGER) plus the common LLM-friendly
+# string/date/numeric options.
+_ALLOWED_DTYPES: frozenset[str] = frozenset(
+    {
+        "VARCHAR",
+        "INTEGER",
+        "BIGINT",
+        "SMALLINT",
+        "DOUBLE",
+        "DATE",
+        "TIMESTAMP",
+    }
+)
 
 
 def _parse_column_mappings(raw: Any, dim_names: list[str], where: str) -> list[ColumnMapping]:
@@ -390,10 +436,16 @@ def apply_proposal(
 
        - ``keep`` — no-op.
        - ``rename`` — ``ALTER TABLE/VIEW … RENAME TO`` the source.
-       - ``drop`` — drop the source, then rename the long-form target to
-         the source's old name. The long form replaces the source so
+       - ``replace`` — drop the source, then rename the long-form target
+         to the source's old name. The long form replaces the source so
          downstream consumers (and any ``schema.yaml`` allowlist) keep
-         working without manual edits.
+         working without manual edits. The user-chosen
+         ``target_object_name`` is effectively a transient intermediate
+         here.
+       - ``drop`` — drop the source, leave the long form at its
+         ``target_object_name``. Pick this when the new shape is the
+         canonical one going forward and you don't need to preserve the
+         source's name.
 
     Source / target may be either tables or views (e.g. a view backed by a
     CSV). The DDL keyword is chosen per object via ``duckdb_views()``.
@@ -405,28 +457,31 @@ def apply_proposal(
     """
     if mode not in ("table", "view"):
         raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
-    # A view's body references its source by name. Renaming or dropping the
-    # source while the long form is a view leaves a dangling reference (or,
-    # for ``drop`` after the long form is renamed into the source's slot, an
-    # *infinite recursion* on bind). Force ``--as table`` so the long form
-    # is a self-contained materialization before we touch the source.
-    if mode == "view" and source_disposition.mode in ("rename", "drop"):
-        action = "drop" if source_disposition.mode == "drop" else "rename"
-        gerund = "dropping" if source_disposition.mode == "drop" else "renaming"
-        consequence = (
-            "recursively self-referencing"
-            if source_disposition.mode == "drop"
-            else "pointing at a missing object"
-        )
+    # A view's body references its source by name. Renaming or dropping
+    # the source while the long form is a view leaves a dangling reference
+    # — or, for ``replace`` (which renames the long form into the source's
+    # slot), an *infinite recursion* on bind. ``keep`` is the only mode
+    # that leaves the source untouched, so anything else needs ``--as
+    # table`` to materialize the long form before we modify the source.
+    if mode == "view" and source_disposition.mode != "keep":
+        if source_disposition.mode == "replace":
+            consequence = "recursively self-referencing"
+        else:
+            consequence = "pointing at a missing object"
+        verb = {
+            "rename": "renaming",
+            "replace": "replacing",
+            "drop": "dropping",
+        }[source_disposition.mode]
         raise ValueError(
-            f"--{action}-source requires --as table: a view references its "
-            f"source by name, so {gerund} the source would leave the view "
-            f"{consequence}."
+            f"source disposition {source_disposition.mode!r} requires --as "
+            f"table: a view references its source by name, so {verb} "
+            f"the source would leave the view {consequence}."
         )
     ddl = suggestion.build_sql(mode)
 
     final_target_name = (
-        suggestion.table if source_disposition.mode == "drop" else suggestion.target_object_name
+        suggestion.table if source_disposition.mode == "replace" else suggestion.target_object_name
     )
 
     if dry_run:
@@ -453,14 +508,29 @@ def apply_proposal(
         conn.execute(ddl)
         target_rows = _query_count(conn, suggestion.target_object_name)
         expected = source_rows * len(suggestion.column_mappings)
-        if target_rows != expected:
-            raise RuntimeError(
-                f"Reshape verification failed for {suggestion.target_object_name!r}: "
-                f"expected {expected} rows ({source_rows} source rows × "
-                f"{len(suggestion.column_mappings)} mapped columns), got {target_rows}. "
-                f"This usually means id_columns omits a column whose values "
-                f"duplicate or drop rows."
-            )
+        # When the proposal preserves NULLs, the row count must be exact:
+        # source_rows × mapped columns. id_column omissions or dropped
+        # rows show up here loud and clear. When the proposal drops NULLs
+        # we can't predict the count without an extra scan; the only
+        # invariant left is that the target sits within [0, expected].
+        # Anything outside that range still indicates a builder bug.
+        if suggestion.include_nulls:
+            if target_rows != expected:
+                raise RuntimeError(
+                    f"Reshape verification failed for {suggestion.target_object_name!r}: "
+                    f"expected {expected} rows ({source_rows} source rows × "
+                    f"{len(suggestion.column_mappings)} mapped columns), got {target_rows}. "
+                    f"This usually means id_columns omits a column whose values "
+                    f"duplicate or drop rows."
+                )
+        else:
+            if target_rows < 0 or target_rows > expected:
+                raise RuntimeError(
+                    f"Reshape verification failed for {suggestion.target_object_name!r}: "
+                    f"got {target_rows} rows, but with include_nulls=False the result "
+                    f"must sit between 0 and {expected} (source × mapped columns). "
+                    f"An out-of-range count signals a builder bug."
+                )
         source_renamed_to: str | None = None
         if source_disposition.mode == "rename":
             assert source_disposition.new_name is not None
@@ -470,16 +540,23 @@ def apply_proposal(
                 f"RENAME TO {_quote_identifier(source_disposition.new_name)}"
             )
             source_renamed_to = source_disposition.new_name
-        elif source_disposition.mode == "drop":
+        elif source_disposition.mode == "replace":
+            # Drop the source, then rename the long form into its slot so
+            # downstream consumers (and any schema.yaml allowlist) keep
+            # working without manual edits.
             source_kw = _drop_keyword(conn, suggestion.table)
             conn.execute(f"DROP {source_kw} {_quote_identifier(suggestion.table)}")
-            # The long form takes over the source's name so downstream
-            # consumers (and any schema.yaml allowlist) keep working.
             target_kw = _alter_keyword(conn, suggestion.target_object_name)
             conn.execute(
                 f"ALTER {target_kw} {_quote_identifier(suggestion.target_object_name)} "
                 f"RENAME TO {_quote_identifier(suggestion.table)}"
             )
+        elif source_disposition.mode == "drop":
+            # Bare drop: the long form keeps its target_object_name. Any
+            # downstream code that referenced the source by name will need
+            # to update its references.
+            source_kw = _drop_keyword(conn, suggestion.table)
+            conn.execute(f"DROP {source_kw} {_quote_identifier(suggestion.table)}")
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -546,38 +623,58 @@ def update_schema_yaml_for_apply(
     target_table: str,
     disposition_mode: str,
     rename_to: str | None = None,
+    create_if_absent: bool = False,
 ) -> bool:
     """Sync ``schema.yaml`` with what just changed in the database.
 
-    No-op when ``schema.yaml`` is absent — the project doesn't maintain an
-    allowlist, so live introspection already exposes whatever's there. When
-    it is present, the goal is to keep the file aligned with the database
-    so introspected tables don't silently disappear from the UI:
+    By default this is a no-op when ``schema.yaml`` is absent — the project
+    doesn't maintain an allowlist, so live introspection already exposes
+    whatever's there. The CLI relies on this default so a one-off
+    ``tidy review`` doesn't side-effect a project that never had an
+    allowlist. Pass ``create_if_absent=True`` from contexts where the user
+    explicitly opted in to persisting the reshape (e.g. the web Apply
+    button) — the helper will materialize a fresh ``schema.yaml`` listing
+    both the source and the new long-form object.
+
+    When the file is present (or being created), the goal is to keep it
+    aligned with the database so introspected tables don't silently
+    disappear from the UI:
 
     - ``keep`` — append a new entry for ``target_table`` so the long form
       shows up alongside the source.
     - ``rename`` — rename the existing source entry to ``rename_to`` and
       append a new entry for ``target_table``.
-    - ``drop`` — leave the source entry's *name* in place (the long form
-      took it over), but clear any ``columns`` / ``excluded_columns``
-      filter on it, since the long form has a different shape and an old
-      filter would hide the new columns.
+    - ``replace`` — leave the source entry's *name* in place (the long
+      form took it over), but clear any ``columns`` /
+      ``excluded_columns`` filter on it since the long form has a
+      different shape and an old filter would hide the new columns.
+    - ``drop`` — remove the source entry entirely and append a new entry
+      for ``target_table``. Downstream code referencing the source by
+      name will break; the allowlist reflects that.
 
-    Returns ``True`` when the file was rewritten. Comments and original
-    formatting in the YAML are not preserved — the file is round-tripped
-    through ``yaml.safe_dump``.
+    Returns ``True`` when the file was rewritten (or freshly written).
+    Comments and original formatting in the YAML are not preserved — the
+    file is round-tripped through ``yaml.safe_dump``.
     """
     path = Path(project_dir) / "schema.yaml"
     if not path.exists():
-        return False
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        logger.warning(f"schema.yaml: not updated (parse error: {exc})")
-        return False
-    if not isinstance(data, dict):
-        logger.warning(f"schema.yaml: not updated (expected mapping, got {type(data).__name__})")
-        return False
+        if not create_if_absent:
+            return False
+        # Seed with the source table so the long-form append below has the
+        # same starting point as the existing-file path. Without this seed,
+        # a freshly created allowlist would silently exclude the source.
+        data: dict[str, Any] = {"tables": [{"name": source_table}]}
+    else:
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            logger.warning(f"schema.yaml: not updated (parse error: {exc})")
+            return False
+        if not isinstance(data, dict):
+            logger.warning(
+                f"schema.yaml: not updated (expected mapping, got {type(data).__name__})"
+            )
+            return False
     raw_tables = data.get("tables")
     if raw_tables is not None and not isinstance(raw_tables, list):
         logger.warning("schema.yaml: 'tables' must be a list, ignoring the file")
@@ -591,10 +688,11 @@ def update_schema_yaml_for_apply(
             break
 
     match disposition_mode:
-        case "drop":
+        case "replace":
+            # Long form took over the source's name: same slot, different
+            # columns. Clear any old column filter so the new columns
+            # surface.
             if source_entry is not None:
-                # Long form replaces source: same name, different columns. Drop
-                # any old column filter so the new columns surface.
                 source_entry.pop("columns", None)
                 source_entry.pop("excluded_columns", None)
             else:
@@ -603,6 +701,14 @@ def update_schema_yaml_for_apply(
             tables = [
                 e for e in tables if not (isinstance(e, dict) and e.get("name") == target_table)
             ]
+        case "drop":
+            # Bare drop: source goes away entirely, long form lives at
+            # target_table.
+            tables = [
+                e for e in tables if not (isinstance(e, dict) and e.get("name") == source_table)
+            ]
+            if not _has_table_entry(tables, target_table):
+                tables.append({"name": target_table})
         case "rename":
             if source_entry is not None and rename_to:
                 source_entry["name"] = rename_to
@@ -624,19 +730,33 @@ def _has_table_entry(tables: list[Any], name: str) -> bool:
     return any(isinstance(e, dict) and e.get("name") == name for e in tables)
 
 
-def resolve_source_disposition(keep: bool, rename_to: str | None, drop: bool) -> SourceDisposition:
-    """Translate the three CLI flags into a :class:`SourceDisposition`.
+def resolve_source_disposition(
+    keep: bool,
+    rename_to: str | None,
+    replace: bool,
+    drop: bool,
+) -> SourceDisposition:
+    """Translate the four CLI flags into a :class:`SourceDisposition`.
 
-    Enforces mutual exclusion: at most one of the three may be active.
-    The default (no flag set) is ``keep`` to match the documented behavior.
+    Enforces mutual exclusion: at most one of the four may be active. The
+    default (no flag set) is ``keep`` to match the documented behavior.
+
+    ``replace`` corresponds to ``--replace-source`` (drop source, long form
+    takes over the source's name). ``drop`` corresponds to
+    ``--drop-source`` (drop source, long form keeps its target name) — a
+    breaking change from the prior CLI semantics where ``--drop-source``
+    meant what ``--replace-source`` now means.
     """
-    active = sum([keep, rename_to is not None, drop])
+    active = sum([keep, rename_to is not None, replace, drop])
     if active > 1:
         raise ValueError(
-            "--keep-source, --rename-source, and --drop-source are mutually exclusive"
+            "--keep-source, --rename-source, --replace-source, and "
+            "--drop-source are mutually exclusive"
         )
     if rename_to is not None:
         return SourceDisposition(mode="rename", new_name=rename_to)
+    if replace:
+        return SourceDisposition(mode="replace")
     if drop:
         return SourceDisposition(mode="drop")
     return SourceDisposition(mode="keep")

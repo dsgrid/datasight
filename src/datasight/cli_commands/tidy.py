@@ -371,6 +371,7 @@ def tidy_table(project_dir, source_table, dry_run):
             datasight tidy review --from plan.json --dry-run
             datasight tidy review --out detector.json
             datasight tidy review --from plan.json --apply-all --drop-source
+            datasight tidy review --from plan.json --apply-all --replace-source
             datasight tidy review --from plan.json --apply-all --rename-source sales_wide_raw
         """
     ),
@@ -432,14 +433,29 @@ def tidy_table(project_dir, source_table, dry_run):
     ),
 )
 @click.option(
+    "--replace-source",
+    "replace_source",
+    is_flag=True,
+    default=False,
+    help=(
+        "Drop the source after a successful reshape and rename the long-form "
+        "table to take the source's old name. Downstream code that referenced "
+        "the source keeps working without edits. Requires '--as table' — a "
+        "view's body references its source by name."
+    ),
+)
+@click.option(
     "--drop-source",
     "drop_source",
     is_flag=True,
     default=False,
     help=(
-        "Drop the source after a successful reshape and rename the long-form "
-        "table to take the source's old name. The long form replaces the source. "
-        "Requires '--as table' — a view's body references its source by name."
+        "Drop the source after a successful reshape; the long form keeps its "
+        "target name. Pick this when the new shape is the canonical one going "
+        "forward and you don't need to preserve the source's name. Requires "
+        "'--as table'. NOTE: previously this flag carried the semantics now "
+        "moved to '--replace-source'; scripts depending on the old behavior "
+        "should switch to '--replace-source'."
     ),
 )
 @click.option(
@@ -463,6 +479,7 @@ def tidy_review(
     as_mode,
     keep_source,
     rename_source,
+    replace_source,
     drop_source,
     sample_rows,
 ):
@@ -481,26 +498,37 @@ def tidy_review(
     Calls the configured LLM provider whenever ``--from`` is not set.
     """
     try:
-        disposition = resolve_source_disposition(keep_source, rename_source, drop_source)
+        disposition = resolve_source_disposition(
+            keep_source, rename_source, replace_source, drop_source
+        )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
 
     # ``--as view`` is only safe with ``--keep-source``: a view's body
-    # references its source by name, so renaming or dropping the source
-    # leaves the view dangling — and for ``drop`` (which also renames the
-    # long form into the source's slot), DuckDB rejects subsequent SELECTs
-    # with "infinite recursion detected". Catch the bad combo before any
-    # work runs, including before the LLM call when ``--from`` is omitted.
-    if as_mode == "view" and disposition.mode in ("rename", "drop"):
-        action = "drop" if disposition.mode == "drop" else "rename"
-        gerund = "dropping" if disposition.mode == "drop" else "renaming"
+    # references its source by name, so renaming/replacing/dropping the
+    # source leaves the view dangling — and for ``replace`` (which also
+    # renames the long form into the source's slot), DuckDB rejects
+    # subsequent SELECTs with "infinite recursion detected". Catch the
+    # bad combo before any work runs, including before the LLM call when
+    # ``--from`` is omitted.
+    if as_mode == "view" and disposition.mode != "keep":
+        flag = {
+            "rename": "--rename-source",
+            "replace": "--replace-source",
+            "drop": "--drop-source",
+        }[disposition.mode]
+        gerund = {
+            "rename": "renaming",
+            "replace": "replacing",
+            "drop": "dropping",
+        }[disposition.mode]
         consequence = (
             "recursively self-referencing."
-            if disposition.mode == "drop"
+            if disposition.mode == "replace"
             else "pointing at a missing object."
         )
         raise click.UsageError(
-            f"--{action}-source requires '--as table'. A view references "
+            f"{flag} requires '--as table'. A view references "
             f"its source by name, so {gerund} the source would leave "
             f"the long-form view {consequence}"
         )

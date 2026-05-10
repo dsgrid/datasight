@@ -494,10 +494,12 @@ def test_apply_proposal_rename_source(tmp_path):
     assert "sales_long" in names
 
 
-def test_apply_proposal_drop_source(tmp_path):
-    """`--drop-source` drops the original wide table and renames the long
-    form into its place. Downstream consumers continue to query the same
-    table name; only the shape (and the data) has changed."""
+def test_apply_proposal_replace_source(tmp_path):
+    """``replace`` drops the original wide table and renames the long form
+    into its place. Downstream consumers continue to query the same table
+    name; only the shape (and the data) has changed. (Previously this
+    behavior was the ``drop`` mode; the rename was prompted by the user-
+    facing label being more accurate.)"""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
     plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
@@ -507,7 +509,7 @@ def test_apply_proposal_drop_source(tmp_path):
             conn,
             plan.proposals[0],
             mode="table",
-            source_disposition=SourceDisposition(mode="drop"),
+            source_disposition=SourceDisposition(mode="replace"),
             dry_run=False,
         )
         names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
@@ -522,6 +524,32 @@ def test_apply_proposal_drop_source(tmp_path):
     assert result.final_target_name == "sales_wide"
     assert len(rows) == 8
     assert rows[0] == ("north", "2020", 10.0)
+
+
+def test_apply_proposal_drop_source_keeps_long_form_name(tmp_path):
+    """``drop`` is the bare-drop semantics: the source goes away but the
+    long form keeps its target name. Downstream code that referenced the
+    source name will fail; pick this when the new shape is the canonical
+    one going forward."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
+    conn = duckdb.connect(str(db_path))
+    try:
+        result = apply_proposal(
+            conn,
+            plan.proposals[0],
+            mode="table",
+            source_disposition=SourceDisposition(mode="drop"),
+            dry_run=False,
+        )
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    assert "sales_wide" not in names
+    assert "sales_long" in names  # kept its target name
+    assert result.final_target_name == "sales_long"
+    assert result.source_disposition == "drop"
 
 
 def test_apply_proposal_verification_failure_rolls_back(tmp_path):
@@ -574,6 +602,10 @@ def test_apply_proposal_verification_failure_rolls_back(tmp_path):
             "UNION ALL SELECT region, '2021', v_2021 FROM dup_wide "
             "UNION ALL SELECT region, '2022', v_2022 FROM dup_wide;"
         ),
+        # The strict ``count == source × mapped`` verify only fires for
+        # include_nulls=True; the bare-drop case relies on a looser range
+        # check that wouldn't trip on this synthetic mismatch.
+        include_nulls=True,
     )
 
     conn = duckdb.connect(str(db_path))
@@ -600,31 +632,42 @@ def test_apply_proposal_verification_failure_rolls_back(tmp_path):
 
 
 def test_resolve_source_disposition_default_keep():
-    d = resolve_source_disposition(keep=False, rename_to=None, drop=False)
+    d = resolve_source_disposition(keep=False, rename_to=None, replace=False, drop=False)
     assert d.mode == "keep"
 
 
 def test_resolve_source_disposition_explicit_keep():
-    d = resolve_source_disposition(keep=True, rename_to=None, drop=False)
+    d = resolve_source_disposition(keep=True, rename_to=None, replace=False, drop=False)
     assert d.mode == "keep"
 
 
 def test_resolve_source_disposition_rename():
-    d = resolve_source_disposition(keep=False, rename_to="raw_table", drop=False)
+    d = resolve_source_disposition(keep=False, rename_to="raw_table", replace=False, drop=False)
     assert d.mode == "rename"
     assert d.new_name == "raw_table"
 
 
+def test_resolve_source_disposition_replace():
+    """``--replace-source`` carries the original ``--drop-source`` semantics:
+    drop the source, long form takes over its name."""
+    d = resolve_source_disposition(keep=False, rename_to=None, replace=True, drop=False)
+    assert d.mode == "replace"
+
+
 def test_resolve_source_disposition_drop():
-    d = resolve_source_disposition(keep=False, rename_to=None, drop=True)
+    """``--drop-source`` is the bare drop: source goes away, long form keeps
+    its target name. (Breaking change from the prior CLI semantics.)"""
+    d = resolve_source_disposition(keep=False, rename_to=None, replace=False, drop=True)
     assert d.mode == "drop"
 
 
 def test_resolve_source_disposition_rejects_combination():
     with pytest.raises(ValueError, match="mutually exclusive"):
-        resolve_source_disposition(keep=False, rename_to="x", drop=True)
+        resolve_source_disposition(keep=False, rename_to="x", replace=False, drop=True)
     with pytest.raises(ValueError, match="mutually exclusive"):
-        resolve_source_disposition(keep=True, rename_to="x", drop=False)
+        resolve_source_disposition(keep=True, rename_to="x", replace=False, drop=False)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        resolve_source_disposition(keep=False, rename_to=None, replace=True, drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -665,8 +708,48 @@ def test_cli_review_from_plan_apply_all_keep_source(tmp_path):
     assert "sales_wide" in names  # default disposition is keep
 
 
+def test_cli_review_from_plan_replace_source(tmp_path):
+    """End-to-end ``--replace-source``: source dropped, long form renamed
+    to source's name. (Previously this was the ``--drop-source`` flag.)"""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            "--as",
+            "table",
+            "--replace-source",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    conn = duckdb.connect(str(db_path))
+    try:
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+        kind = conn.execute(
+            "SELECT table_type FROM information_schema.tables WHERE table_name = 'sales_wide'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert "sales_wide" in names  # the long form took the source's name
+    assert "sales_long" not in names
+    # And the surviving "sales_wide" really is the new long-form table.
+    assert kind is not None and kind[0] == "BASE TABLE"
+
+
 def test_cli_review_from_plan_drop_source(tmp_path):
-    """End-to-end --drop-source: source dropped, long form renamed to source's name."""
+    """``--drop-source`` after the breaking change: source goes away, long
+    form keeps its target name. Downstream queries against the source name
+    fail."""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
     project_dir = _project_with_db(tmp_path, db_path)
@@ -691,15 +774,10 @@ def test_cli_review_from_plan_drop_source(tmp_path):
     conn = duckdb.connect(str(db_path))
     try:
         names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
-        kind = conn.execute(
-            "SELECT table_type FROM information_schema.tables WHERE table_name = 'sales_wide'"
-        ).fetchone()
     finally:
         conn.close()
-    assert "sales_wide" in names  # the long form took the source's name
-    assert "sales_long" not in names
-    # And the surviving "sales_wide" really is the new long-form table.
-    assert kind is not None and kind[0] == "BASE TABLE"
+    assert "sales_wide" not in names
+    assert "sales_long" in names  # long form kept its target name
 
 
 def test_cli_review_from_plan_rename_source(tmp_path):
@@ -1309,6 +1387,24 @@ async def test_propose_reshapes_user_message_includes_samples():
     assert "coal_mwh" in content
 
 
+def test_system_prompt_pins_value_column_to_value():
+    """The system prompt must steer the LLM toward ``value`` as the value
+    column name. Without this rule the model picks domain-specific names
+    like ``load_mwh`` per table, which makes downstream queries
+    inconsistent across reshapes."""
+    from datasight.tidy_llm import PROPOSE_RESHAPES_TOOL, SYSTEM_PROMPT
+
+    # Prompt-level rule.
+    assert "value column" in SYSTEM_PROMPT.lower()
+    assert "always use `value`" in SYSTEM_PROMPT.lower()
+    # Tool-schema rule (belt-and-braces — model weighs both).
+    value_desc = PROPOSE_RESHAPES_TOOL["input_schema"]["properties"]["proposals"]["items"][
+        "properties"
+    ]["value_column"]["description"]
+    assert "default to 'value'" in value_desc.lower()
+    assert "do not bake units" in value_desc.lower()
+
+
 # ---------------------------------------------------------------------------
 # CLI review with a fake LLMClient injected via monkeypatch
 # ---------------------------------------------------------------------------
@@ -1432,8 +1528,8 @@ async def test_propose_reshapes_live_llm_proposes_fuel_pivot():
 # ---------------------------------------------------------------------------
 
 
-def test_apply_proposal_drop_source_when_source_is_view(tmp_path):
-    """`--drop-source` must succeed when the source is a CSV-backed view.
+def test_apply_proposal_replace_source_when_source_is_view(tmp_path):
+    """``replace`` must succeed when the source is a CSV-backed view.
 
     Reproduces the user-reported failure: a view (typical when a project is
     set up by registering CSV files) cannot be dropped with `DROP TABLE`.
@@ -1449,7 +1545,7 @@ def test_apply_proposal_drop_source_when_source_is_view(tmp_path):
             conn,
             plan.proposals[0],
             mode="table",
-            source_disposition=SourceDisposition(mode="drop"),
+            source_disposition=SourceDisposition(mode="replace"),
             dry_run=False,
         )
         names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
@@ -1529,8 +1625,8 @@ def test_update_schema_yaml_for_apply_keep_appends_target(tmp_path):
     assert sales.get("columns") == ["region", "sales_2020"]
 
 
-def test_update_schema_yaml_for_apply_drop_clears_filter(tmp_path):
-    """`drop` disposition: entry name kept (long form took it over);
+def test_update_schema_yaml_for_apply_replace_clears_filter(tmp_path):
+    """``replace`` disposition: entry name kept (long form took it over);
     column / excluded_columns filters cleared because the shape changed."""
     (tmp_path / "schema.yaml").write_text(
         "tables:\n"
@@ -1543,7 +1639,7 @@ def test_update_schema_yaml_for_apply_drop_clears_filter(tmp_path):
         str(tmp_path),
         source_table="sales_wide",
         target_table="sales_long",
-        disposition_mode="drop",
+        disposition_mode="replace",
     )
     assert rewrote is True
     data = _read_schema_yaml(tmp_path)
@@ -1552,6 +1648,26 @@ def test_update_schema_yaml_for_apply_drop_clears_filter(tmp_path):
     sales = next(t for t in data["tables"] if t["name"] == "sales_wide")
     assert "columns" not in sales
     assert "excluded_columns" not in sales
+
+
+def test_update_schema_yaml_for_apply_drop_removes_source(tmp_path):
+    """``drop`` disposition: source entry removed, long form appended at
+    its target name. Reflects that downstream references to the source
+    name will break."""
+    (tmp_path / "schema.yaml").write_text(
+        "tables:\n  - name: sales_wide\n  - name: customers\n",
+        encoding="utf-8",
+    )
+    rewrote = update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="drop",
+    )
+    assert rewrote is True
+    data = _read_schema_yaml(tmp_path)
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["customers", "sales_long"]
 
 
 def test_update_schema_yaml_for_apply_rename_renames_and_appends(tmp_path):
@@ -1589,6 +1705,23 @@ def test_update_schema_yaml_for_apply_no_file_is_noop(tmp_path):
     assert not (tmp_path / "schema.yaml").exists()
 
 
+def test_update_schema_yaml_for_apply_creates_file_when_opt_in(tmp_path):
+    """``create_if_absent=True`` materializes a fresh schema.yaml seeded
+    with both the source and the new long-form table — used by the web
+    Apply button so an explicit user action persists across restarts."""
+    rewrote = update_schema_yaml_for_apply(
+        str(tmp_path),
+        source_table="sales_wide",
+        target_table="sales_long",
+        disposition_mode="keep",
+        create_if_absent=True,
+    )
+    assert rewrote is True
+    data = _read_schema_yaml(tmp_path)
+    names = [t["name"] for t in data["tables"]]
+    assert names == ["sales_wide", "sales_long"]
+
+
 def test_update_schema_yaml_for_apply_keep_skips_duplicate_target(tmp_path):
     """If the target is already listed, don't add it twice."""
     (tmp_path / "schema.yaml").write_text(
@@ -1606,8 +1739,8 @@ def test_update_schema_yaml_for_apply_keep_skips_duplicate_target(tmp_path):
     assert names == ["sales_wide", "sales_long"]
 
 
-def test_cli_review_drop_source_updates_schema_yaml(tmp_path):
-    """End-to-end: tidy review --drop-source rewrites schema.yaml so the
+def test_cli_review_replace_source_updates_schema_yaml(tmp_path):
+    """End-to-end: tidy review --replace-source rewrites schema.yaml so the
     long form (now under the source's old name) stays visible."""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
@@ -1630,7 +1763,7 @@ def test_cli_review_drop_source_updates_schema_yaml(tmp_path):
             "--apply-all",
             "--as",
             "table",
-            "--drop-source",
+            "--replace-source",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -1672,8 +1805,8 @@ def test_cli_review_keep_source_appends_target_to_schema_yaml(tmp_path):
     assert names == ["sales_wide", "sales_long"]
 
 
-def test_apply_proposal_rejects_view_mode_with_drop_source(tmp_path):
-    """``--as view`` + ``--drop-source`` is unsafe: dropping the source and
+def test_apply_proposal_rejects_view_mode_with_replace_source(tmp_path):
+    """``--as view`` + ``replace`` is unsafe: dropping the source and
     renaming the view into its slot leaves the view recursively
     self-referencing (DuckDB raises "infinite recursion detected" on the
     next bind). The apply path must reject the combo before any DDL runs.
@@ -1683,7 +1816,30 @@ def test_apply_proposal_rejects_view_mode_with_drop_source(tmp_path):
     plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
     conn = duckdb.connect(str(db_path))
     try:
-        with pytest.raises(ValueError, match="--drop-source requires --as table"):
+        with pytest.raises(ValueError, match="'replace' requires --as table"):
+            apply_proposal(
+                conn,
+                plan.proposals[0],
+                mode="view",
+                source_disposition=SourceDisposition(mode="replace"),
+                dry_run=False,
+            )
+        names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+    finally:
+        conn.close()
+    # Database is untouched: the wide source survives, no view leaked through.
+    assert names == {"sales_wide"}
+
+
+def test_apply_proposal_rejects_view_mode_with_drop_source(tmp_path):
+    """``--as view`` + bare ``drop`` is unsafe: the view's body references
+    the source by name, so dropping the source leaves the view dangling."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
+    conn = duckdb.connect(str(db_path))
+    try:
+        with pytest.raises(ValueError, match="'drop' requires --as table"):
             apply_proposal(
                 conn,
                 plan.proposals[0],
@@ -1694,7 +1850,6 @@ def test_apply_proposal_rejects_view_mode_with_drop_source(tmp_path):
         names = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
     finally:
         conn.close()
-    # Database is untouched: the wide source survives, no view leaked through.
     assert names == {"sales_wide"}
 
 
@@ -1706,7 +1861,7 @@ def test_apply_proposal_rejects_view_mode_with_rename_source(tmp_path):
     plan = load_plan(_write_plan(tmp_path, _single_pivot_plan_dict()))
     conn = duckdb.connect(str(db_path))
     try:
-        with pytest.raises(ValueError, match="--rename-source requires --as table"):
+        with pytest.raises(ValueError, match="'rename' requires --as table"):
             apply_proposal(
                 conn,
                 plan.proposals[0],
@@ -1730,9 +1885,10 @@ def _normalize_cli_output(output: str) -> str:
     return re.sub(r"\s+", " ", plain)
 
 
-def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
-    """``datasight tidy review --drop-source`` (default ``--as view``) must
-    fail fast with a UsageError, not silently produce a recursive view."""
+def test_cli_review_view_mode_replace_source_is_a_usage_error(tmp_path):
+    """``datasight tidy review --replace-source`` (default ``--as view``)
+    must fail fast with a UsageError, not silently produce a recursive
+    view."""
     db_path = tmp_path / "wide.duckdb"
     _build_single_pivot_db(db_path)
     project_dir = _project_with_db(tmp_path, db_path)
@@ -1748,12 +1904,12 @@ def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
             "--from",
             str(plan_path),
             "--apply-all",
-            # No --as flag → defaults to view, which is incompatible with drop.
-            "--drop-source",
+            # No --as flag → defaults to view, which is incompatible with replace.
+            "--replace-source",
         ],
     )
     assert result.exit_code != 0
-    assert "--drop-source requires '--as table'" in _normalize_cli_output(result.output)
+    assert "--replace-source requires '--as table'" in _normalize_cli_output(result.output)
     # No DDL ran.
     conn = duckdb.connect(str(db_path))
     try:
@@ -1761,6 +1917,31 @@ def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
     finally:
         conn.close()
     assert names == {"sales_wide"}
+
+
+def test_cli_review_view_mode_drop_source_is_a_usage_error(tmp_path):
+    """``--drop-source`` (post-rename) on view mode also rejects: a view
+    referencing the source can't survive the source going away."""
+    db_path = tmp_path / "wide.duckdb"
+    _build_single_pivot_db(db_path)
+    project_dir = _project_with_db(tmp_path, db_path)
+    plan_path = _write_plan(tmp_path, _single_pivot_plan_dict())
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "tidy",
+            "review",
+            "--project-dir",
+            project_dir,
+            "--from",
+            str(plan_path),
+            "--apply-all",
+            "--drop-source",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--drop-source requires '--as table'" in _normalize_cli_output(result.output)
 
 
 def test_cli_review_view_mode_rename_source_is_a_usage_error(tmp_path):
@@ -1787,10 +1968,10 @@ def test_cli_review_view_mode_rename_source_is_a_usage_error(tmp_path):
     assert "--rename-source requires '--as table'" in _normalize_cli_output(result.output)
 
 
-def test_cli_review_drop_source_view_end_to_end(tmp_path):
+def test_cli_review_replace_source_view_end_to_end(tmp_path):
     """The original user-reported flow: source is a CSV-backed view,
-    --drop-source must succeed AND schema.yaml must keep the entry under
-    the original name."""
+    ``--replace-source`` must succeed AND schema.yaml must keep the entry
+    under the original name. (Previously this flag was ``--drop-source``.)"""
     db_path = tmp_path / "wide.duckdb"
     csv_path = tmp_path / "sales.csv"
     _build_single_pivot_view_db(db_path, csv_path)
@@ -1812,7 +1993,7 @@ def test_cli_review_drop_source_view_end_to_end(tmp_path):
             "--apply-all",
             "--as",
             "table",
-            "--drop-source",
+            "--replace-source",
         ],
     )
     assert result.exit_code == 0, result.output

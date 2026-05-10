@@ -14,19 +14,30 @@ one-dimension case. The deterministic detector emits single-pivot
 proposals only; multi-pivot proposals come from the ``tidy review``
 LLM-augmented advisor.
 
-The DDL emitted depends on the target object and the dimension count:
+The DDL emitted depends on the target object, the dimension count, and
+whether the suggestion preserves NULL values:
 
-- Single-pivot, ``CREATE OR REPLACE TABLE`` — DuckDB ``UNPIVOT``. This
-  is the canonical, terse form.
-- Single-pivot, ``CREATE OR REPLACE VIEW`` — ``UNION ALL`` branches.
-  Workaround for a regression in the Python ``duckdb`` 1.5.2 binding:
-  UNPIVOT stored inside a view fails to re-bind on a fresh connection
-  (``Binder Error: UNPIVOT name count mismatch``). The standalone
-  ``duckdb`` CLI 1.5.1 isn't affected, but every datasight query path
-  uses the Python binding, so views need a form that survives re-bind.
-- Multi-pivot, table or view — ``UNION ALL`` with N dimension literals
-  per branch. UNPIVOT only emits one name column, so it doesn't extend
-  cleanly to multiple dimensions.
+- Single-pivot, ``CREATE OR REPLACE TABLE``, ``include_nulls=False`` (the
+  default) — DuckDB ``UNPIVOT``. This is the only path where UNPIVOT
+  applies; it's the terse form and DuckDB's native UNPIVOT silently
+  drops NULL rows, which matches the typical wide-table reshape where
+  NULLs are structural placeholders rather than real observations.
+- Everything else — ``UNION ALL`` with one branch per pivoted column.
+  Required for multi-pivot (UNPIVOT only emits one name column), for
+  view mode (the Python ``duckdb`` 1.5.2 binding has a regression where
+  UNPIVOT stored inside a view fails to re-bind on a fresh connection —
+  ``Binder Error: UNPIVOT name count mismatch``), and for the opt-in
+  ``include_nulls=True`` case (DuckDB 1.5.2 has no ``INCLUDE NULLS``
+  clause, so UNION ALL preserves NULLs naturally). When
+  ``include_nulls=False`` and we're forced onto the UNION ALL path, each
+  branch carries a ``WHERE col IS NOT NULL`` filter so the result still
+  matches UNPIVOT's drop behavior.
+
+Each :class:`Dimension` carries a ``dtype`` so the long-form column
+doesn't inherit VARCHAR from the literal — year-like kinds default to
+INTEGER, string-shaped period codes (``q1``, ``Jan``, ``2020-01``) stay
+VARCHAR. The literals in the generated SQL are wrapped in ``CAST(... AS
+dtype)`` when the dtype isn't VARCHAR.
 
 Detection is deterministic and purely structural (column names plus
 dtypes plus row count), so it runs without issuing extra SQL. The DDL is
@@ -145,6 +156,25 @@ _PERIOD_DIMENSION_NAMES: dict[str, str] = {
     "day": "day",
 }
 
+# Default SQL dtype for the dimension column produced by each period kind.
+# Without this, the long-form column inherits VARCHAR from the literal,
+# which forces awkward casts in downstream filters (``WHERE year >= 2022``
+# fails). Numeric kinds map to INTEGER; string-shaped period codes (e.g.
+# ``2020-01``, ``q1``, ``Jan``) stay VARCHAR so they preserve the original
+# encoding.
+_PERIOD_DIMENSION_DTYPES: dict[str, str] = {
+    "year": "INTEGER",
+    "year_month": "VARCHAR",
+    "year_quarter": "VARCHAR",
+    "year_month_word": "VARCHAR",
+    "month_year": "VARCHAR",
+    "quarter": "VARCHAR",
+    "month": "VARCHAR",
+    "month_num": "INTEGER",
+    "hour": "INTEGER",
+    "day": "INTEGER",
+}
+
 
 # Allowed dimension kinds. ``date_period`` covers any time-axis pivot (year,
 # month, quarter, hour, day). The remaining kinds are used by LLM-proposed
@@ -159,10 +189,19 @@ CONFIDENCE_LEVELS: frozenset[str] = frozenset({"high", "medium", "low"})
 
 @dataclass
 class Dimension:
-    """One axis of a tidy reshape (e.g., year, fuel_type)."""
+    """One axis of a tidy reshape (e.g., year, fuel_type).
+
+    ``dtype`` is the SQL type the long-form dimension column will carry.
+    Without this hint the column inherits VARCHAR from the literal in the
+    generated SQL, which forces casts in downstream filters. The
+    deterministic detector picks INTEGER for numeric period kinds (year,
+    hour, day, month_num); LLM and user-supplied dimensions default to
+    VARCHAR.
+    """
 
     name: str
     kind: str
+    dtype: str = "VARCHAR"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -194,6 +233,15 @@ class TidySuggestion:
     ``source`` and ``confidence`` exist so deterministic and LLM-proposed
     suggestions share one rendering path. The deterministic detector
     always emits ``source="deterministic"`` and ``confidence="high"``.
+
+    ``include_nulls`` controls whether rows where the value column is NULL
+    survive the reshape. Default ``False`` because most NULLs in wide
+    tables are *structural* — placeholders for combinations that don't
+    apply (e.g. ``lpg_lighting`` in an end-use × fuel pivot) — and
+    keeping them just inflates the long form with rows analysts would
+    filter out anyway. Flip to ``True`` for data where NULLs represent
+    real missing observations (sensor outages, optional survey answers)
+    and you want to preserve the gap.
     """
 
     pattern: str
@@ -207,6 +255,7 @@ class TidySuggestion:
     reshape_sql: str
     confidence: str = "high"
     source: str = "deterministic"
+    include_nulls: bool = False
 
     def build_sql(self, mode: str = "table") -> str:
         """Return DDL that materializes this suggestion as a table or view."""
@@ -220,6 +269,7 @@ class TidySuggestion:
             self.value_column,
             self.target_object_name,
             mode=mode,
+            include_nulls=self.include_nulls,
         )
 
     @property
@@ -240,6 +290,7 @@ class TidySuggestion:
             "reshape_sql": self.reshape_sql,
             "confidence": self.confidence,
             "source": self.source,
+            "include_nulls": self.include_nulls,
         }
 
 
@@ -264,28 +315,38 @@ def _build_unpivot_sql(
     target_object_name: str,
     mode: str,
 ) -> str:
-    """Build a single-pivot ``CREATE OR REPLACE TABLE|VIEW`` using ``UNPIVOT``.
+    """Build a single-pivot ``CREATE OR REPLACE TABLE`` using ``UNPIVOT``.
 
-    Only safe for ``mode='table'``. The Python ``duckdb`` 1.5.2 binding has a
-    regression where UNPIVOT stored inside a view fails to re-bind on a fresh
-    connection (the standalone CLI 1.5.1 is unaffected). ``_build_reshape_sql``
-    routes view mode to ``_build_union_all_sql`` instead.
+    Only used by the dispatcher when ``include_nulls=False`` and ``mode==
+    'table'`` and there's a single dimension — UNPIVOT silently drops
+    rows where the value is NULL (DuckDB 1.5.2 has no ``INCLUDE NULLS``
+    clause), which lines up with the explicit drop-nulls request. View
+    mode also stays out of this path because the Python duckdb 1.5.2
+    binding has a regression where UNPIVOT inside a view fails to re-bind
+    on a fresh connection.
 
-    Multi-pivot reshapes never use this builder — UNPIVOT emits a single name
-    column, so it doesn't extend to multiple dimensions.
+    Multi-pivot reshapes never use this builder — UNPIVOT emits a single
+    name column, so it doesn't extend to multiple dimensions.
+
+    The ``SELECT * REPLACE`` wrapper applies the dimension's target dtype
+    so the long-form column doesn't inherit VARCHAR from the literal.
     """
-    keyword = "TABLE" if mode == "table" else "VIEW"
     on_clause = ",\n    ".join(
         f"{_quote_identifier(m.column)} AS '{m.dimension_values[dimension.name].replace(chr(39), chr(39) * 2)}'"
         for m in column_mappings
     )
+    quoted_dim = _quote_identifier(dimension.name)
+    if dimension.dtype.upper() != "VARCHAR":
+        projection = f"SELECT * REPLACE (CAST({quoted_dim} AS {dimension.dtype}) AS {quoted_dim})"
+    else:
+        projection = "SELECT *"
     return (
-        f"CREATE OR REPLACE {keyword} {_quote_identifier(target_object_name)} AS\n"
-        f"SELECT * FROM (\n"
+        f"CREATE OR REPLACE TABLE {_quote_identifier(target_object_name)} AS\n"
+        f"{projection} FROM (\n"
         f"  UNPIVOT {_quote_identifier(table)}\n"
         f"  ON {on_clause}\n"
         f"  INTO\n"
-        f"    NAME {_quote_identifier(dimension.name)}\n"
+        f"    NAME {quoted_dim}\n"
         f"    VALUE {_quote_identifier(value_column)}\n"
         f");"
     )
@@ -299,18 +360,26 @@ def _build_union_all_sql(
     value_column: str,
     target_object_name: str,
     mode: str,
+    include_nulls: bool = False,
 ) -> str:
     """Build a ``CREATE OR REPLACE TABLE|VIEW`` using ``UNION ALL`` branches.
 
-    This is the unified path for:
+    This is the default path for everything except the single-pivot
+    drop-nulls table case, which uses :func:`_build_unpivot_sql`. UNION
+    ALL is required for:
 
-    - Single-pivot view mode (workaround for the duckdb 1.5.2 view-binding
-      bug; see module docstring).
-    - Multi-pivot, both table and view mode (UNPIVOT can't emit multiple
-      dimension columns).
+    - Single-pivot view mode (the duckdb 1.5.2 view-binding bug — see
+      module docstring).
+    - Multi-pivot, any mode (UNPIVOT only emits one name column).
+    - Any mode where ``include_nulls=True`` (DuckDB 1.5.2 UNPIVOT has no
+      ``INCLUDE NULLS`` clause; UNION ALL keeps NULLs naturally).
 
     Each affected column becomes one branch with N dimension literals plus
-    the value, in dimension-declaration order.
+    the value, in dimension-declaration order. When ``include_nulls`` is
+    False, every branch carries a ``WHERE <col> IS NOT NULL`` filter so
+    the result mirrors UNPIVOT's drop behavior. Dimension literals are
+    cast to the dimension's target dtype when it isn't VARCHAR so the
+    long-form columns don't all inherit VARCHAR.
     """
     keyword = "TABLE" if mode == "table" else "VIEW"
     quoted_table = _quote_identifier(table)
@@ -318,40 +387,52 @@ def _build_union_all_sql(
     id_select = ", ".join(_quote_identifier(c) for c in id_columns)
     id_prefix = f"{id_select}, " if id_select else ""
 
+    def _dim_literal(d: Dimension, value: str, *, with_alias: bool) -> str:
+        escaped = value.replace(chr(39), chr(39) * 2)
+        literal = f"'{escaped}'"
+        if d.dtype.upper() != "VARCHAR":
+            literal = f"CAST({literal} AS {d.dtype})"
+        if with_alias:
+            return f"{literal} AS {_quote_identifier(d.name)}"
+        return literal
+
     branches: list[str] = []
     for index, mapping in enumerate(column_mappings):
         dim_literals_first = ", ".join(
-            f"'{mapping.dimension_values[d.name].replace(chr(39), chr(39) * 2)}' "
-            f"AS {_quote_identifier(d.name)}"
-            for d in dimensions
+            _dim_literal(d, mapping.dimension_values[d.name], with_alias=True) for d in dimensions
         )
         dim_literals_subsequent = ", ".join(
-            f"'{mapping.dimension_values[d.name].replace(chr(39), chr(39) * 2)}'"
-            for d in dimensions
+            _dim_literal(d, mapping.dimension_values[d.name], with_alias=False) for d in dimensions
         )
         quoted_col = _quote_identifier(mapping.column)
+        where_clause = f" WHERE {quoted_col} IS NOT NULL" if not include_nulls else ""
         if index == 0:
             branches.append(
                 f"SELECT {id_prefix}{dim_literals_first}, "
-                f"{quoted_col} AS {quoted_value} FROM {quoted_table}"
+                f"{quoted_col} AS {quoted_value} FROM {quoted_table}{where_clause}"
             )
         else:
             branches.append(
                 f"UNION ALL SELECT {id_prefix}{dim_literals_subsequent}, "
-                f"{quoted_col} FROM {quoted_table}"
+                f"{quoted_col} FROM {quoted_table}{where_clause}"
             )
     body = "\n".join(branches)
 
-    # The single-pivot view case is the historical reason this builder
-    # exists — the comment surfaces that in the generated DDL so a reader
-    # tracing the file knows why UNION ALL appears instead of UNPIVOT.
-    if mode == "view" and len(dimensions) == 1:
+    # Surface the reason this builder is the default path so a reader
+    # tracing the generated DDL knows why UNION ALL appears instead of
+    # the more compact UNPIVOT form.
+    if mode == "view" and len(dimensions) == 1 and include_nulls:
         header = (
             "-- Python `duckdb` 1.5.2 fails to re-bind UNPIVOT inside views on a fresh\n"
             "-- connection (Binder Error: UNPIVOT name count mismatch), so we use\n"
-            "-- UNION ALL here. `tidy table` keeps the cleaner UNPIVOT form because\n"
-            "-- materialized tables don't re-bind. The standalone duckdb CLI 1.5.1\n"
-            "-- is unaffected.\n"
+            "-- UNION ALL here. `tidy table` with include_nulls=false keeps the\n"
+            "-- cleaner UNPIVOT form because materialized tables don't re-bind.\n"
+        )
+    elif include_nulls and len(dimensions) == 1:
+        header = (
+            "-- UNION ALL preserves NULL values; DuckDB 1.5.2 UNPIVOT has no\n"
+            "-- INCLUDE NULLS clause, so UNPIVOT is reserved for the explicit\n"
+            "-- drop-nulls case.\n"
         )
     elif len(dimensions) > 1:
         header = (
@@ -374,18 +455,24 @@ def _build_reshape_sql(
     value_column: str,
     target_object_name: str,
     mode: str = "table",
+    include_nulls: bool = False,
 ) -> str:
     """Build the DDL for one tidy reshape.
 
     Dispatch:
 
-    - single-pivot + ``mode='table'`` → UNPIVOT (canonical DuckDB form).
-    - single-pivot + ``mode='view'`` → UNION ALL (duckdb 1.5.2 view bug).
-    - multi-pivot, any mode → UNION ALL (UNPIVOT can't emit N name columns).
+    - single-pivot + ``mode='table'`` + ``include_nulls=False`` (the
+      default) → UNPIVOT. DuckDB drops NULLs natively, which matches the
+      common case of structural NAs in wide tables.
+    - everything else → UNION ALL with optional ``WHERE … IS NOT NULL``
+      branches when ``include_nulls=False``. Required for view mode (the
+      duckdb 1.5.2 view-binding bug), multi-pivot (UNPIVOT can only emit
+      one name column), and the opt-in ``include_nulls=True`` case
+      (DuckDB 1.5.2 has no INCLUDE NULLS clause).
     """
     if mode not in ("view", "table"):
         raise ValueError(f"mode must be 'view' or 'table', got {mode!r}")
-    if len(dimensions) == 1 and mode == "table":
+    if len(dimensions) == 1 and mode == "table" and not include_nulls:
         return _build_unpivot_sql(
             table,
             column_mappings,
@@ -402,6 +489,7 @@ def _build_reshape_sql(
         value_column,
         target_object_name,
         mode,
+        include_nulls=include_nulls,
     )
 
 
@@ -435,7 +523,8 @@ def _build_period_suggestion(
             f"the {period_kind} dimension appears to be encoded in column headers."
         )
 
-    dimensions = [Dimension(name=dimension_name, kind="date_period")]
+    dimension_dtype = _PERIOD_DIMENSION_DTYPES.get(period_kind, "VARCHAR")
+    dimensions = [Dimension(name=dimension_name, kind="date_period", dtype=dimension_dtype)]
     column_mappings = [
         ColumnMapping(column=col, dimension_values={dimension_name: token})
         for col, token in column_period_pairs

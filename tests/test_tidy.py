@@ -121,7 +121,9 @@ def test_detects_year_columns_with_shared_prefix():
     assert len(out["suggestions"]) == 1
     s = out["suggestions"][0]
     assert s["pattern"] == "repeated_prefix_period"
-    assert s["dimensions"] == [{"name": "year", "kind": "date_period"}]
+    # Year-kind dimensions default to INTEGER so downstream filters like
+    # ``WHERE year >= 2022`` work without an explicit cast.
+    assert s["dimensions"] == [{"name": "year", "kind": "date_period", "dtype": "INTEGER"}]
     assert [m["column"] for m in s["column_mappings"]] == [
         "sales_2020",
         "sales_2021",
@@ -139,8 +141,15 @@ def test_detects_year_columns_with_shared_prefix():
     assert s["target_object_name"] == "sales_wide_long"
     assert s["confidence"] == "high"
     assert s["source"] == "deterministic"
+    # Default is include_nulls=False (most NULLs in wide tables are
+    # structural placeholders); single-pivot table mode routes through
+    # the terse UNPIVOT builder.
+    assert s["include_nulls"] is False
     assert "UNPIVOT" in s["reshape_sql"]
     assert "CREATE OR REPLACE TABLE" in s["reshape_sql"]
+    # The dimension column gets cast to INTEGER per the dtype default —
+    # in UNPIVOT mode the cast is wrapped via SELECT * REPLACE.
+    assert 'CAST("year" AS INTEGER)' in s["reshape_sql"]
 
 
 def test_detects_hour_columns_no_prefix():
@@ -156,7 +165,7 @@ def test_detects_hour_columns_no_prefix():
     assert len(out["suggestions"]) == 1
     s = out["suggestions"][0]
     assert s["pattern"] == "date_in_column_names"
-    assert s["dimensions"] == [{"name": "hour", "kind": "date_period"}]
+    assert s["dimensions"] == [{"name": "hour", "kind": "date_period", "dtype": "INTEGER"}]
     assert len(s["column_mappings"]) == 24
     assert s["value_column"] == "value"
     assert s["id_columns"] == ["plant_id", "date"]
@@ -178,7 +187,9 @@ def test_detects_quarter_columns():
     ]
     out = analyze_tidy_patterns(schema)
     assert len(out["suggestions"]) == 1
-    assert out["suggestions"][0]["dimensions"] == [{"name": "quarter", "kind": "date_period"}]
+    assert out["suggestions"][0]["dimensions"] == [
+        {"name": "quarter", "kind": "date_period", "dtype": "VARCHAR"}
+    ]
 
 
 def test_clean_table_produces_no_suggestions():
@@ -325,17 +336,23 @@ def test_reshape_sql_executes_in_duckdb(tmp_path):
     rows = conn.execute(
         "SELECT region, year, sales FROM sales_wide_long ORDER BY region, year"
     ).fetchall()
+    # Year column is INTEGER per the deterministic detector's dtype default,
+    # not VARCHAR — so a downstream filter like ``WHERE year >= 2022`` works
+    # without an explicit cast.
+    schema_rows = conn.execute("DESCRIBE sales_wide_long").fetchall()
     conn.close()
     assert rows == [
-        ("north", "2020", 10.0),
-        ("north", "2021", 20.0),
-        ("north", "2022", 30.0),
-        ("north", "2023", 40.0),
-        ("south", "2020", 5.0),
-        ("south", "2021", 15.0),
-        ("south", "2022", 25.0),
-        ("south", "2023", 35.0),
+        ("north", 2020, 10.0),
+        ("north", 2021, 20.0),
+        ("north", 2022, 30.0),
+        ("north", 2023, 40.0),
+        ("south", 2020, 5.0),
+        ("south", 2021, 15.0),
+        ("south", 2022, 25.0),
+        ("south", 2023, 35.0),
     ]
+    year_dtype = next(r[1] for r in schema_rows if r[0] == "year")
+    assert year_dtype == "INTEGER"
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +447,207 @@ def test_multi_pivot_reshape_round_trips_in_duckdb(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# include_nulls + dimension dtype: behavior pinning around the toggle.
+# ---------------------------------------------------------------------------
+
+
+def _wide_db_with_nulls(tmp_path) -> tuple[str, list[tuple]]:
+    """Build a single-table DuckDB with sparse nulls in pivoted columns.
+
+    Returns the path and the expected long-form rows when NULLs are kept.
+    """
+    db_path = tmp_path / "sparse.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE sales ("
+        "region VARCHAR, "
+        "sales_2020 INTEGER, sales_2021 INTEGER, sales_2022 INTEGER)"
+    )
+    # north has data for all years; south skips 2021.
+    conn.execute("INSERT INTO sales VALUES ('north', 100, 110, 120), ('south', 200, NULL, 220)")
+    conn.close()
+    return str(db_path), [
+        ("north", 2020, 100),
+        ("north", 2021, 110),
+        ("north", 2022, 120),
+        ("south", 2020, 200),
+        ("south", 2021, None),
+        ("south", 2022, 220),
+    ]
+
+
+def test_include_nulls_default_drops_null_rows(tmp_path):
+    """The default ``include_nulls=False`` matches DuckDB UNPIVOT's native
+    behavior: rows where the pivoted value is NULL are dropped from the
+    long form. The dispatcher routes single-pivot table mode through the
+    terse UNPIVOT builder in this case."""
+    from datasight.tidy import _detect_period_groups
+
+    db_path, _ = _wide_db_with_nulls(tmp_path)
+
+    schema = [
+        _table(
+            "sales",
+            [
+                ("region", "VARCHAR"),
+                ("sales_2020", "INTEGER"),
+                ("sales_2021", "INTEGER"),
+                ("sales_2022", "INTEGER"),
+            ],
+            row_count=2,
+        )
+    ]
+    sugg = _detect_period_groups(schema[0])[0]
+    assert sugg.include_nulls is False
+    sql = sugg.build_sql("table")
+    # Single-pivot + table + drop-nulls is the only path that keeps UNPIVOT.
+    assert "UNPIVOT" in sql
+    assert "UNION ALL" not in sql
+
+    conn = duckdb.connect(db_path)
+    conn.execute(sql)
+    rows = conn.execute(
+        "SELECT region, year, sales FROM sales_long ORDER BY region, year"
+    ).fetchall()
+    conn.close()
+    # The NULL row for ('south', 2021) has been dropped.
+    assert rows == [
+        ("north", 2020, 100),
+        ("north", 2021, 110),
+        ("north", 2022, 120),
+        ("south", 2020, 200),
+        ("south", 2022, 220),
+    ]
+
+
+def test_include_nulls_true_preserves_null_rows(tmp_path):
+    """Opt-in ``include_nulls=True`` preserves NULL rows: the long form
+    mirrors the wide form's NULLs row-for-row (``rows × pivoted_columns``
+    rows). Routes through UNION ALL because DuckDB 1.5.2 ``UNPIVOT`` has
+    no INCLUDE NULLS clause."""
+    from datasight.tidy import _detect_period_groups
+
+    db_path, expected_full = _wide_db_with_nulls(tmp_path)
+
+    schema = [
+        _table(
+            "sales",
+            [
+                ("region", "VARCHAR"),
+                ("sales_2020", "INTEGER"),
+                ("sales_2021", "INTEGER"),
+                ("sales_2022", "INTEGER"),
+            ],
+            row_count=2,
+        )
+    ]
+    sugg = _detect_period_groups(schema[0])[0]
+    sugg.include_nulls = True
+    sql = sugg.build_sql("table")
+    # Strip the leading SQL comment block before checking — the comment
+    # explains *why* UNPIVOT is skipped here, so it mentions the keyword
+    # in prose. The actual DDL must not use UNPIVOT.
+    body = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
+    assert "UNION ALL" in body
+    assert "UNPIVOT" not in body
+
+    conn = duckdb.connect(db_path)
+    conn.execute(sql)
+    rows = conn.execute(
+        "SELECT region, year, sales FROM sales_long ORDER BY region, year"
+    ).fetchall()
+    conn.close()
+    assert rows == expected_full
+
+
+def test_include_nulls_false_in_view_mode_uses_where_filter(tmp_path):
+    """View mode can't use UNPIVOT (DuckDB 1.5.2 view-binding bug), so
+    ``include_nulls=False`` falls back to UNION ALL with a per-branch
+    ``WHERE col IS NOT NULL`` filter that mirrors UNPIVOT's drop."""
+    from datasight.tidy import _detect_period_groups
+
+    db_path, _ = _wide_db_with_nulls(tmp_path)
+
+    schema = [
+        _table(
+            "sales",
+            [
+                ("region", "VARCHAR"),
+                ("sales_2020", "INTEGER"),
+                ("sales_2021", "INTEGER"),
+                ("sales_2022", "INTEGER"),
+            ],
+            row_count=2,
+        )
+    ]
+    sugg = _detect_period_groups(schema[0])[0]
+    sugg.include_nulls = False
+    sql = sugg.build_sql("view")
+    assert "UNION ALL" in sql
+    assert "IS NOT NULL" in sql
+
+    conn = duckdb.connect(db_path)
+    conn.execute(sql)
+    count = conn.execute("SELECT COUNT(*) FROM sales_long").fetchone()
+    conn.close()
+    assert count is not None
+    # 2 rows × 3 columns - 1 null = 5 surviving rows.
+    assert count[0] == 5
+
+
+def test_dimension_dtype_casts_literal_in_union_all_branches(tmp_path):
+    """Year-kind dimensions default to INTEGER. With ``include_nulls=True``
+    the dispatcher routes through the UNION ALL builder, where the
+    dimension literal in each branch is wrapped in ``CAST(... AS
+    INTEGER)`` rather than leaking VARCHAR into the long-form column."""
+    from datasight.tidy import _detect_period_groups
+
+    db_path, _ = _wide_db_with_nulls(tmp_path)
+    schema = [
+        _table(
+            "sales",
+            [
+                ("region", "VARCHAR"),
+                ("sales_2020", "INTEGER"),
+                ("sales_2021", "INTEGER"),
+                ("sales_2022", "INTEGER"),
+            ],
+            row_count=2,
+        )
+    ]
+    sugg = _detect_period_groups(schema[0])[0]
+    sugg.include_nulls = True  # force the UNION ALL path
+    sql = sugg.build_sql("table")
+    assert "CAST('2020' AS INTEGER)" in sql
+    assert "CAST('2021' AS INTEGER)" in sql
+    assert "CAST('2022' AS INTEGER)" in sql
+
+
+def test_dimension_dtype_casts_inside_unpivot_via_select_replace(tmp_path):
+    """With the new ``include_nulls=False`` default + single-pivot table
+    mode, the dispatcher picks UNPIVOT. The dimension column then gets
+    its dtype via ``SELECT * REPLACE`` wrapping the UNPIVOT result."""
+    from datasight.tidy import _detect_period_groups
+
+    schema = [
+        _table(
+            "sales",
+            [
+                ("region", "VARCHAR"),
+                ("sales_2020", "INTEGER"),
+                ("sales_2021", "INTEGER"),
+                ("sales_2022", "INTEGER"),
+            ],
+            row_count=2,
+        )
+    ]
+    sugg = _detect_period_groups(schema[0])[0]
+    sql = sugg.build_sql("table")
+    assert "UNPIVOT" in sql
+    assert 'CAST("year" AS INTEGER)' in sql
+
+
+# ---------------------------------------------------------------------------
 # CLI integration: `datasight quality` surfaces tidy suggestions
 # ---------------------------------------------------------------------------
 
@@ -461,7 +679,8 @@ def test_quality_cli_emits_tidy_suggestions_json(wide_project):
     assert len(data["tidy_suggestions"]) == 1
     s = data["tidy_suggestions"][0]
     assert s["table"] == "sales_wide"
-    assert s["dimensions"] == [{"name": "year", "kind": "date_period"}]
+    assert s["dimensions"] == [{"name": "year", "kind": "date_period", "dtype": "INTEGER"}]
+    # Default include_nulls=False + single-pivot + table → UNPIVOT.
     assert "UNPIVOT" in s["reshape_sql"]
 
 
@@ -471,7 +690,9 @@ def test_quality_cli_emits_tidy_suggestions_markdown(wide_project):
     assert result.exit_code == 0, result.output
     assert "Tidy Reshape Suggestions" in result.output
     assert "sales_wide" in result.output
-    assert "UNPIVOT" in result.output
+    # Suggestions table renders the source name; SQL details aren't shown
+    # in markdown summary.
+    assert "year" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -575,15 +796,21 @@ def test_tidy_view_sql_uses_union_all_workaround(tmp_path):
     assert "UNPIVOT" not in body
 
 
-def test_tidy_table_sql_uses_unpivot(tmp_path):
-    """Table mode uses the canonical UNPIVOT form (works because materialized
-    tables don't re-bind on query)."""
+def test_tidy_table_sql_uses_unpivot_by_default(tmp_path):
+    """``tidy table`` with the default ``include_nulls=False`` routes
+    single-pivot proposals through the terse UNPIVOT builder. UNION ALL
+    is reserved for view mode, multi-pivot, and the opt-in
+    ``include_nulls=True`` case — see the dispatcher in
+    ``_build_reshape_sql``."""
     project_dir, _ = _wide_project_dir(tmp_path)
     runner = CliRunner()
     result = runner.invoke(cli, ["tidy", "table", "--project-dir", project_dir, "--dry-run"])
     assert result.exit_code == 0, result.output
-    assert "UNPIVOT" in result.output
-    assert "UNION ALL" not in result.output
+    body = "\n".join(
+        line for line in result.output.splitlines() if not line.lstrip().startswith("--")
+    )
+    assert "UNPIVOT" in body
+    assert "UNION ALL" not in body
 
 
 def test_tidy_view_actually_creates_view(tmp_path):
@@ -597,14 +824,14 @@ def test_tidy_view_actually_creates_view(tmp_path):
     ).fetchall()
     conn.close()
     assert rows == [
-        ("north", "2020", 10.0),
-        ("north", "2021", 20.0),
-        ("north", "2022", 30.0),
-        ("north", "2023", 40.0),
-        ("south", "2020", 5.0),
-        ("south", "2021", 15.0),
-        ("south", "2022", 25.0),
-        ("south", "2023", 35.0),
+        ("north", 2020, 10.0),
+        ("north", 2021, 20.0),
+        ("north", 2022, 30.0),
+        ("north", 2023, 40.0),
+        ("south", 2020, 5.0),
+        ("south", 2021, 15.0),
+        ("south", 2022, 25.0),
+        ("south", 2023, 35.0),
     ]
 
 
@@ -718,7 +945,9 @@ def test_tidy_suggest_accepts_csv_without_project(tmp_path):
     assert data["table_count"] == 1
     assert len(data["suggestions"]) == 1
     s = data["suggestions"][0]
-    assert s["dimensions"] == [{"name": "month", "kind": "date_period"}]
+    # Month words (jan/feb/...) stay VARCHAR — they're string codes, not
+    # numeric ordinals like ``month_num`` would be.
+    assert s["dimensions"] == [{"name": "month", "kind": "date_period", "dtype": "VARCHAR"}]
     assert len(s["column_mappings"]) == 12
     assert s["id_columns"] == ["plant_id", "fuel_type"]
 

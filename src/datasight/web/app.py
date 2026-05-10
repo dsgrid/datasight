@@ -98,6 +98,15 @@ from datasight.settings import (
     restore_original_env,
 )
 from datasight.sql_validation import build_measure_rule_map, build_schema_map, validate_sql
+from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
+from datasight.tidy_llm import propose_reshapes
+from datasight.tidy_review import (
+    SourceDisposition,
+    _parse_proposal,
+    apply_proposal,
+    update_schema_yaml_for_apply,
+    validate_against_schema,
+)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -2992,6 +3001,410 @@ async def sql_format(request: Request, state: AppState = Depends(get_state)):
         return {"formatted": formatted, "error": None}
     except Exception as e:
         return {"formatted": sql, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Tidy review endpoints
+# ---------------------------------------------------------------------------
+#
+# Three endpoints back the per-table Tidy drawer in the UI. They mirror the
+# pieces of ``datasight tidy review`` that map to the drawer's flow:
+#
+# - POST /api/tidy/propose  — SSE stream. Emits the deterministic detector's
+#   hits immediately, then invokes the LLM advisor. Lets the drawer render
+#   regex-derived candidates while the model is still working.
+# - POST /api/tidy/preview  — Run the proposal's reshape SQL with LIMIT 50
+#   on a read-only connection so the user can sanity-check the long form
+#   before applying. No DDL.
+# - POST /api/tidy/apply    — Materialize the long form, verify the row
+#   count, optionally reshape the source via SourceDisposition, sync
+#   schema.yaml, and re-introspect so the sidebar reflects the new objects.
+#
+# All three reject non-DuckDB modes — ``apply_proposal`` opens a writable
+# DuckDB connection, and the deterministic builders emit DuckDB-specific DDL.
+
+
+def _tidy_select_body(suggestion: Any) -> str:
+    """Extract the SELECT body from a tidy CREATE OR REPLACE ... AS <body>; DDL.
+
+    The reshape DDL produced by ``TidySuggestion.build_sql`` always wraps a
+    plain SELECT in ``CREATE OR REPLACE TABLE|VIEW <name> AS\\n<body>;``.
+    For preview we want just the body so it can run on a read-only
+    connection without materializing the target.
+    """
+    ddl = suggestion.build_sql("table")
+    match = re.search(r'CREATE OR REPLACE (?:TABLE|VIEW) "[^"]+" AS\n', ddl)
+    if not match:
+        raise ValueError("Could not extract SELECT body from reshape DDL")
+    body = ddl[match.end() :].rstrip()
+    if body.endswith(";"):
+        body = body[:-1]
+    return body
+
+
+def _serialize_tidy_suggestion(s: Any) -> dict[str, Any]:
+    """Add ``preview_sql`` and reshape DDL variants to the wire shape.
+
+    The drawer renders the SELECT for the inline SQL preview and records the
+    full DDL for the eventual apply, so emitting both up front lets the UI
+    avoid a separate round trip.
+    """
+    payload = s.to_dict()
+    try:
+        payload["preview_sql"] = _tidy_select_body(s)
+    except ValueError:
+        payload["preview_sql"] = ""
+    payload["reshape_sql_view"] = s.build_sql("view")
+    payload["reshape_sql_table"] = s.build_sql("table")
+    return payload
+
+
+def _sse_error(message: str) -> "StreamingResponse":
+    """Return an SSE stream containing a single error event."""
+    payload = json.dumps({"error": message})
+    return StreamingResponse(
+        iter([f"event: error\ndata: {payload}\n\n"]),
+        media_type="text/event-stream",
+    )
+
+
+@app.get("/api/tidy/detect")
+async def tidy_detect(table: str = "", state: AppState = Depends(get_state)):
+    """Return deterministic tidy proposals for one table — no LLM call.
+
+    Cheap, schema-only, instant. The Tidy drawer hits this on open so the
+    user sees regex-detected candidates immediately. The LLM advisor fires
+    only when the user clicks "Run agent", which calls
+    :func:`tidy_propose`.
+    """
+    if state.sql_runner is None or not state.schema_info:
+        return {"proposals": [], "error": "No dataset loaded"}
+    if state.sql_dialect != "duckdb":
+        return {"proposals": [], "error": "Tidy review requires DuckDB"}
+    table_name = table.strip()
+    if not table_name:
+        return {"proposals": [], "error": "Missing 'table' parameter"}
+
+    table_info = next((t for t in state.schema_info if t["name"] == table_name), None)
+    if table_info is None:
+        return {"proposals": [], "error": f"Table {table_name!r} not found"}
+
+    deterministic = _detect_period_groups(table_info)
+    return {
+        "proposals": [_serialize_tidy_suggestion(s) for s in deterministic],
+        "error": None,
+    }
+
+
+@app.post("/api/tidy/propose")
+async def tidy_propose(request: Request, state: AppState = Depends(get_state)):
+    """Stream LLM-augmented tidy proposals for one table.
+
+    Body: ``{table: str, sample_rows?: int}``. ``sample_rows > 0`` opts the
+    user into sending N values per LLM call (off by default — values go
+    over the network).
+
+    Deterministic detector hits are not emitted here — the drawer fetches
+    those separately via :func:`tidy_detect` so the LLM call only fires on
+    explicit user opt-in.
+    """
+    body = await request.json()
+    table = str(body.get("table") or "").strip()
+    try:
+        sample_rows = max(0, int(body.get("sample_rows") or 0))
+    except (TypeError, ValueError):
+        sample_rows = 0
+
+    if state.sql_runner is None or not state.schema_info:
+        return _sse_error("No dataset loaded")
+    if state.sql_dialect != "duckdb":
+        return _sse_error("Tidy review requires DuckDB")
+    if not table:
+        return _sse_error("Missing 'table' parameter")
+
+    table_info = next((t for t in state.schema_info if t["name"] == table), None)
+    if table_info is None:
+        return _sse_error(f"Table {table!r} not found")
+
+    async def generate():
+        try:
+            if state.llm_client is None:
+                yield 'event: error\ndata: {"error":"LLM not initialized"}\n\n'
+                return
+
+            samples: dict[str, list[dict[str, Any]]] | None = None
+            if sample_rows > 0:
+                assert state.sql_runner is not None
+                df = await state.sql_runner.run_sql(f'SELECT * FROM "{table}" LIMIT {sample_rows}')
+                samples = {table: df.to_dict(orient="records")}
+
+            schema_subset = [table_info]
+            tidy_data = analyze_tidy_patterns(schema_subset)
+            deterministic_hits = tidy_data["suggestions"]
+
+            yield "event: llm_started\ndata: {}\n\n"
+            try:
+                result = await propose_reshapes(
+                    state.llm_client,
+                    model=state.model,
+                    schema_info=schema_subset,
+                    deterministic_hits=deterministic_hits,
+                    samples=samples,
+                )
+            except Exception as exc:
+                logger.exception("Tidy LLM proposal failed")
+                yield (f"event: llm_error\ndata: {json.dumps({'error': str(exc)})}\n\n")
+                yield "event: done\ndata: {}\n\n"
+                return
+
+            yield (
+                "event: llm_proposals\n"
+                f"data: {json.dumps({'proposals': [_serialize_tidy_suggestion(s) for s in result.suggestions], 'parse_warnings': list(result.parse_warnings)})}\n\n"
+            )
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:
+            logger.exception("Tidy propose error")
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.post("/api/tidy/preview")
+async def tidy_preview(request: Request, state: AppState = Depends(get_state)):
+    """Sample 50 rows of the proposed long form without materializing it."""
+    body = await request.json()
+    proposal_dict = body.get("proposal") or {}
+
+    if state.sql_runner is None:
+        return {"html": None, "row_count": 0, "error": "Database not connected"}
+    if state.sql_dialect != "duckdb":
+        return {"html": None, "row_count": 0, "error": "Tidy review requires DuckDB"}
+
+    try:
+        suggestion = _parse_proposal(proposal_dict, index=0)
+    except ValueError as exc:
+        return {"html": None, "row_count": 0, "error": f"Invalid proposal: {exc}"}
+
+    # Re-run the schema cross-check, but ignore the target-name collision
+    # rule — preview doesn't materialize the target, so a same-named existing
+    # object is fine here. Apply still enforces the rule.
+    problems = [
+        p
+        for p in validate_against_schema(suggestion, state.schema_info)
+        if "would collide" not in p and "already exists" not in p
+    ]
+    if problems:
+        return {"html": None, "row_count": 0, "error": "; ".join(problems)}
+
+    try:
+        select_body = _tidy_select_body(suggestion)
+    except ValueError as exc:
+        return {"html": None, "row_count": 0, "error": str(exc)}
+
+    sample_sql = f"SELECT * FROM (\n{select_body}\n) _tidy_preview LIMIT 50"
+    try:
+        df = await state.sql_runner.run_sql(sample_sql)
+    except Exception as exc:
+        return {"html": None, "row_count": 0, "error": str(exc)}
+
+    return {
+        "html": df_to_html_table(df),
+        "row_count": int(len(df)),
+        "error": None,
+    }
+
+
+@app.post("/api/tidy/render-sql")
+async def tidy_render_sql(request: Request, state: AppState = Depends(get_state)):
+    """Render the reshape DDL for a proposal in the requested mode.
+
+    The drawer shows pre-baked ``reshape_sql_view`` / ``reshape_sql_table``
+    on the proposal payload, but those are frozen at detect time and don't
+    reflect user edits (target name, value column, id columns,
+    include_nulls). This endpoint re-runs the builder against the current
+    proposal so the Show SQL panel stays accurate as the user tweaks
+    fields and toggles ``view`` vs ``table``.
+    """
+    body = await request.json()
+    proposal_dict = body.get("proposal") or {}
+    mode = str(body.get("mode") or "view")
+    if mode not in ("view", "table"):
+        return {"sql": "", "error": f"mode must be 'view' or 'table', got {mode!r}"}
+    try:
+        suggestion = _parse_proposal(proposal_dict, index=0)
+    except ValueError as exc:
+        return {"sql": "", "error": f"Invalid proposal: {exc}"}
+    return {"sql": suggestion.build_sql(mode), "error": None}
+
+
+@app.post("/api/tidy/apply")
+async def tidy_apply(request: Request, state: AppState = Depends(get_state)):
+    """Apply one tidy proposal and refresh schema state.
+
+    Mirrors ``datasight tidy review --apply-all`` for a single proposal:
+    swap the read-only runner for a writable connection, run the reshape +
+    optional source disposition under one transaction, then reopen the
+    runner read-only and re-introspect.
+    """
+    body = await request.json()
+    proposal_dict = body.get("proposal") or {}
+    mode = str(body.get("mode") or "view")
+    disposition_in = body.get("disposition") or {"mode": "keep"}
+
+    if state.sql_runner is None:
+        return {"success": False, "error": "Database not connected"}
+    if state.sql_dialect != "duckdb":
+        return {"success": False, "error": "Tidy review requires DuckDB"}
+    if mode not in ("view", "table"):
+        return {
+            "success": False,
+            "error": f"mode must be 'view' or 'table', got {mode!r}",
+        }
+
+    try:
+        suggestion = _parse_proposal(proposal_dict, index=0)
+    except ValueError as exc:
+        return {"success": False, "error": f"Invalid proposal: {exc}"}
+
+    disp_mode = str(disposition_in.get("mode") or "keep")
+    if disp_mode not in ("keep", "rename", "replace", "drop"):
+        return {
+            "success": False,
+            "error": (
+                "disposition.mode must be 'keep', 'rename', 'replace', or "
+                f"'drop', got {disp_mode!r}"
+            ),
+        }
+    new_name = disposition_in.get("new_name") or None
+    if disp_mode == "rename" and not new_name:
+        return {
+            "success": False,
+            "error": "disposition.new_name is required when mode == 'rename'",
+        }
+    # Mirror the safety rule from apply_proposal: only ``keep`` is safe in
+    # view mode. rename/replace/drop all touch the source, which a view
+    # references by name — the long-form view would dangle (or, for
+    # replace, infinitely self-reference after the rename-into-source-slot).
+    if mode == "view" and disp_mode != "keep":
+        return {
+            "success": False,
+            "error": (
+                f"disposition '{disp_mode}' requires mode='table'. A view "
+                "references its source by name, so modifying the source "
+                "would leave the long-form view dangling."
+            ),
+        }
+
+    # disp_mode is constrained above; cast for ty's narrowing (Literal type).
+    from typing import cast as _cast
+
+    disposition = SourceDisposition(mode=_cast(Any, disp_mode), new_name=new_name)
+
+    problems = validate_against_schema(suggestion, state.schema_info)
+    if problems:
+        return {
+            "success": False,
+            "error": "Plan failed schema cross-check: " + "; ".join(problems),
+        }
+
+    from datasight.runner import DuckDBRunner
+
+    runner = state.sql_runner
+    if isinstance(runner, CachingSqlRunner):
+        runner = runner._inner
+    if not isinstance(runner, DuckDBRunner):
+        return {
+            "success": False,
+            "error": "Tidy apply requires a project DuckDB runner",
+        }
+
+    db_path = runner._database_path
+
+    async with state.state_lock:
+        # Cached DataFrames can keep DuckDB buffers alive and block the
+        # read-write reopen of the same file; drop them before closing.
+        # See /api/add-files for the same dance.
+        state.clear_sql_cache()
+        runner.close()
+        import gc
+
+        gc.collect()
+
+        import duckdb as _duckdb
+
+        write_conn = _duckdb.connect(db_path, read_only=False)
+        try:
+            try:
+                result = await asyncio.to_thread(
+                    apply_proposal,
+                    write_conn,
+                    suggestion,
+                    mode=mode,
+                    source_disposition=disposition,
+                    dry_run=False,
+                )
+            except Exception as exc:
+                logger.exception("Tidy apply failed")
+                try:
+                    write_conn.close()
+                except Exception:
+                    pass
+                runner._connect()
+                return {"success": False, "error": str(exc)}
+            try:
+                write_conn.close()
+            except Exception:
+                pass
+        finally:
+            # Always restore the read-only runner so subsequent requests work
+            # even if the apply errored out before write_conn.close().
+            if runner._conn is None:
+                runner._connect()
+
+        # Sync schema.yaml. Pass create_if_absent=True so projects without
+        # an existing allowlist still get the long-form table persisted —
+        # the user clicked Apply, so the reshape should survive a restart.
+        # The CLI keeps the no-op-when-absent default. Failures are logged
+        # but don't fail the request: the database mutation already
+        # succeeded.
+        if state.project_dir:
+            try:
+                update_schema_yaml_for_apply(
+                    state.project_dir,
+                    source_table=suggestion.table,
+                    target_table=suggestion.target_object_name,
+                    disposition_mode=result.source_disposition,
+                    rename_to=result.source_renamed_to,
+                    create_if_absent=True,
+                )
+            except OSError as exc:
+                logger.warning(f"schema.yaml not updated: {exc}")
+
+        # Re-introspect so the schema sidebar reflects the new long-form
+        # object (and any rename/drop of the source).
+        tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+        state.schema_info = [
+            {
+                "name": t.name,
+                "row_count": t.row_count,
+                "columns": [
+                    {"name": c.name, "dtype": c.dtype, "nullable": c.nullable} for c in t.columns
+                ],
+            }
+            for t in tables
+        ]
+        state.schema_text = format_schema_context(
+            tables,
+            user_description=None if state.is_ephemeral else _load_user_description(state),
+        )
+        state.schema_map = build_schema_map(state.schema_info)
+        state.rebuild_system_prompt()
+
+    return {
+        "success": True,
+        "result": result.to_dict(),
+        "schema_info": state.schema_info,
+    }
 
 
 @app.get("/api/measures/editor")

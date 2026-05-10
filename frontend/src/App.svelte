@@ -10,6 +10,7 @@
   import SqlView from "$lib/components/SqlView.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import MeasureEditorModal from "$lib/components/MeasureEditorModal.svelte";
+  import TidyDrawer from "$lib/components/TidyDrawer.svelte";
   import SaveProjectModal from "$lib/components/SaveProjectModal.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import ShortcutsModal from "$lib/components/ShortcutsModal.svelte";
@@ -24,6 +25,7 @@
   import { queriesStore } from "$lib/stores/queries.svelte";
   import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
   import { paletteStore } from "$lib/stores/palette.svelte";
+  import { tidyStore } from "$lib/stores/tidy.svelte";
   import { exitExploreSession, getProjectStatus } from "$lib/api/projects";
   import { loadSettings, loadLlmConfig } from "$lib/api/settings";
   import { loadSchema, loadQueries, loadRecipes } from "$lib/api/schema";
@@ -285,7 +287,9 @@
     /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
 
   function handleEscape() {
-    if (dashboardStore.fullscreenCardId !== null) {
+    if (tidyStore.open) {
+      tidyStore.close();
+    } else if (dashboardStore.fullscreenCardId !== null) {
       dashboardStore.fullscreenCardId = null;
     } else if (shortcutsOpen) {
       shortcutsOpen = false;
@@ -599,4 +603,5 @@
   open={shortcutsOpen}
   onClose={() => (shortcutsOpen = false)}
 />
+<TidyDrawer />
 <Toast />

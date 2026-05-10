@@ -109,8 +109,12 @@ PROPOSE_RESHAPES_TOOL: dict[str, Any] = {
                         "value_column": {
                             "type": "string",
                             "description": (
-                                "Snake_case name for the new measure column, "
-                                "e.g., 'net_generation_mwh'."
+                                "Snake_case name for the new measure column. "
+                                "Default to 'value' for predictability across "
+                                "long-form tables — do NOT bake units "
+                                "(`load_mwh`, `capacity_kw`) or measure names "
+                                "into this field unless an extremely obvious "
+                                "domain-specific name is unavoidable."
                             ),
                         },
                         "id_columns": {
@@ -201,11 +205,25 @@ A reshape is NOT appropriate when:
 When unsure, prefer to omit the proposal — the developer reviews
 everything you return.
 
-Always use snake_case for new column names. Prefer domain-meaningful
-names (`fuel_type`, `net_generation_mwh`) over generic ones (`category`,
-`value`) when the column names give you enough signal. Make `id_columns`
-the columns whose values identify a row in the original wide form
-(plant_id, region, report_date) — never include columns you are pivoting.
+Always use snake_case for new column names. Naming rules differ for
+dimensions vs. the value column:
+
+- **Dimension columns**: prefer domain-meaningful names (`fuel_type`,
+  `region`, `scenario`) over generic ones (`category`, `dim_1`) when the
+  column names give you enough signal. The dimension is what the long
+  form lets users *group by*, so a descriptive name pays off in queries.
+- **Value column**: always use `value` unless an extremely obvious
+  domain-specific name is unavoidable (rare). Predictability matters
+  more than descriptiveness here — analysts and downstream queries
+  consistently reference the same column name across all long-form
+  tables, so resist the urge to bake units (`load_mwh`, `capacity_kw`)
+  or measures (`generation`, `revenue`) into the column name. The unit
+  belongs in a separate metadata field or in the table's documentation,
+  not in the value column itself.
+
+Make `id_columns` the columns whose values identify a row in the
+original wide form (plant_id, region, report_date) — never include
+columns you are pivoting.
 
 Call the `propose_reshapes` tool exactly once. Pass an empty list if no
 reshapes are warranted.
