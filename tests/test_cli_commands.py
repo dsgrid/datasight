@@ -731,3 +731,26 @@ def test_report_run_saved_report(tv_project_isolated):
 
     result = runner.invoke(cli, ["report", "delete", "1", "--project-dir", tv_project_isolated])
     assert result.exit_code == 0
+
+
+def test_verify_rejects_static_only_with_skip_grounding_check(tv_project_isolated):
+    """`--static-only` and `--skip-grounding-check` contradict each other.
+
+    Accepting the combination silently would fall through to the LLM
+    phase (the static branch is gated by `not skip_grounding_check`),
+    contradicting `--static-only`'s documented semantics. Make sure the
+    CLI rejects it with a usage error before any LLM work happens.
+    """
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "verify",
+            "--project-dir",
+            tv_project_isolated,
+            "--static-only",
+            "--skip-grounding-check",
+        ],
+    )
+    assert result.exit_code == 2, result.output
+    assert "mutually exclusive" in result.output

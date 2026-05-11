@@ -89,6 +89,19 @@ def verify(project_dir, model, queries_path, static_only, skip_grounding_check):
 
     project_dir = str(Path(project_dir).resolve())
 
+    # ``--static-only`` runs *only* the drift check; ``--skip-grounding-check``
+    # asks to skip that very check. The combination has no coherent
+    # meaning — accepting it silently would either run nothing or fall
+    # through to the LLM phase (contradicting ``--static-only``). Reject
+    # it up front so the user fixes their invocation.
+    if static_only and skip_grounding_check:
+        click.echo(
+            "Error: --static-only and --skip-grounding-check are mutually "
+            "exclusive (one runs the static check; the other skips it).",
+            err=True,
+        )
+        sys.exit(2)
+
     # Static drift check first. Cheap, no LLM, no async — runs against a
     # direct DuckDB connection. For non-DuckDB backends we skip the
     # static check (information_schema.columns availability varies) and

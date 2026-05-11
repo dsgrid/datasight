@@ -3354,28 +3354,31 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
 
     db_path = runner._database_path
 
-    # Snapshot the pre-apply schema so a follow-up grounding-repair call
-    # can show the LLM both old and new shapes. Without an explicit
-    # snapshot the repair prompt degenerates to "regenerate from scratch"
-    # and loses any human customizations in the grounding files. Stashed
-    # on AppState because grounding repair runs as a separate request
-    # (the LLM call is too slow to block the apply response).
-    old_schema: dict[str, set[str]] = {
-        t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
-    }
-    state.pre_tidy_schema = old_schema
-    # Persist alongside the in-memory snapshot so the user can retry
-    # grounding repair after a server restart, or run it from the CLI
-    # against this same baseline. Best-effort: a write failure here
-    # shouldn't block the apply itself (the in-memory copy still works
-    # for the immediate banner flow).
-    if state.project_dir and not state.is_ephemeral:
-        try:
-            write_snapshot(state.project_dir, old_schema)
-        except OSError as exc:
-            logger.warning(f"grounding snapshot write failed: {exc}")
-
     async with state.state_lock:
+        # Snapshot the pre-apply schema so a follow-up grounding-repair
+        # call can show the LLM both old and new shapes. Without an
+        # explicit snapshot the repair prompt degenerates to "regenerate
+        # from scratch" and loses any human customizations in the
+        # grounding files. Stashed on AppState because grounding repair
+        # runs as a separate request (the LLM call is too slow to block
+        # the apply response). Capture this under the lock so a
+        # concurrent project switch can't desync the snapshot from the
+        # DB the apply is about to mutate.
+        old_schema: dict[str, set[str]] = {
+            t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
+        }
+        state.pre_tidy_schema = old_schema
+        # Persist alongside the in-memory snapshot so the user can retry
+        # grounding repair after a server restart, or run it from the
+        # CLI against this same baseline. Best-effort: a write failure
+        # here shouldn't block the apply itself (the in-memory copy
+        # still works for the immediate banner flow).
+        if state.project_dir and not state.is_ephemeral:
+            try:
+                write_snapshot(state.project_dir, old_schema)
+            except OSError as exc:
+                logger.warning(f"grounding snapshot write failed: {exc}")
+
         # Cached DataFrames can keep DuckDB buffers alive and block the
         # read-write reopen of the same file; drop them before closing.
         # See /api/add-files for the same dance.
@@ -3635,54 +3638,63 @@ async def tidy_grounding_repair(state: AppState = Depends(get_state)):
     ``grounding_drift.needs_repair`` in the apply response. Reads the
     pre-tidy schema snapshot stashed on AppState during the apply.
     """
-    if not state.project_loaded or not state.project_dir:
-        return {"success": False, "error": "No project loaded"}
-    if state.is_ephemeral:
-        return {"success": False, "error": "Grounding repair not supported in explore sessions"}
-    if state.llm_client is None or not state.model:
-        return {"success": False, "error": "LLM client not configured"}
-    if state.sql_runner is None:
-        return {"success": False, "error": "No SQL runner available"}
-    # Prefer the in-memory snapshot from the current server's apply, but
-    # fall back to the on-disk snapshot so the user can retry repair
-    # after a restart (or after the LLM call timed out and nothing was
-    # written). The CLI's `datasight grounding repair` reads the same
-    # file — they're interchangeable baselines.
-    old_schema = state.pre_tidy_schema
-    if old_schema is None:
-        old_schema = read_snapshot(state.project_dir)
-    if old_schema is None:
-        return {
-            "success": False,
-            "error": (
-                "No pre-tidy schema snapshot available. Run a tidy apply "
-                "first, or use `datasight grounding repair --from-csv ...` "
-                "to supply a baseline from a source CSV."
-            ),
-        }
-
     from datasight.runner import DuckDBRunner
 
-    runner = state.sql_runner
-    if isinstance(runner, CachingSqlRunner):
-        runner = runner._inner
-    if not isinstance(runner, DuckDBRunner):
-        return {"success": False, "error": "Grounding repair requires a project DuckDB runner"}
-    db_path = runner._database_path
+    # Snapshot the inputs we need under ``state_lock`` so a concurrent
+    # project switch can't hand us a mix of fields from before and after
+    # the swap. ``project_dir_snapshot`` is the guard — if it differs
+    # when we re-acquire the lock after the LLM call, the user switched
+    # projects mid-flight and we must not touch the new project's state.
+    # The lock is released before the slow LLM/validation/write work so
+    # other state-level operations aren't blocked for minutes.
+    async with state.state_lock:
+        if not state.project_loaded or not state.project_dir:
+            return {"success": False, "error": "No project loaded"}
+        if state.is_ephemeral:
+            return {
+                "success": False,
+                "error": "Grounding repair not supported in explore sessions",
+            }
+        if state.llm_client is None or not state.model:
+            return {"success": False, "error": "LLM client not configured"}
+        if state.sql_runner is None:
+            return {"success": False, "error": "No SQL runner available"}
+        # Prefer the in-memory snapshot from the current server's apply,
+        # but fall back to the on-disk snapshot so the user can retry
+        # repair after a restart (or after the LLM call timed out and
+        # nothing was written). The CLI's `datasight grounding repair`
+        # reads the same file — they're interchangeable baselines.
+        old_schema = state.pre_tidy_schema
+        if old_schema is None:
+            old_schema = read_snapshot(state.project_dir)
+        if old_schema is None:
+            return {
+                "success": False,
+                "error": (
+                    "No pre-tidy schema snapshot available. Run a tidy apply "
+                    "first, or use `datasight grounding repair --from-csv ...` "
+                    "to supply a baseline from a source CSV."
+                ),
+            }
 
-    new_schema: dict[str, set[str]] = {
-        t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
-    }
+        runner = state.sql_runner
+        if isinstance(runner, CachingSqlRunner):
+            runner = runner._inner
+        if not isinstance(runner, DuckDBRunner):
+            return {
+                "success": False,
+                "error": "Grounding repair requires a project DuckDB runner",
+            }
+        db_path = runner._database_path
 
-    # Snapshot the inputs we need before releasing the lock so the LLM
-    # call doesn't see a half-mutated state if a concurrent project
-    # change races us. ``project_dir`` is the guard — if it differs when
-    # we re-acquire the lock, the user switched projects mid-call and
-    # we must not touch the new project's state.
-    project_dir_snapshot = state.project_dir
-    llm_client = state.llm_client
-    model = state.model
-    run_sql = state.sql_runner.run_sql
+        new_schema: dict[str, set[str]] = {
+            t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
+        }
+
+        project_dir_snapshot = state.project_dir
+        llm_client = state.llm_client
+        model = state.model
+        run_sql = state.sql_runner.run_sql
 
     # Run the slow LLM + validation + write outside ``state_lock`` so
     # other state-level operations (project load/unload, settings
