@@ -26,6 +26,7 @@ from datasight.grounding_repair import (
     format_repair_summary,
     repair_grounding,
     write_repair_atomic,
+    write_snapshot,
 )
 from datasight.schema import introspect_schema
 from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
@@ -482,6 +483,16 @@ def tidy_table(project_dir, source_table, dry_run):
         "when the LLM seeing the values is acceptable."
     ),
 )
+@click.option(
+    "--model",
+    default=None,
+    help=(
+        "LLM model name to use for the propose-reshapes call and the "
+        "post-apply grounding-repair call (overrides .env). Useful when "
+        "different models suit each workload — see "
+        "docs/use/concepts/choosing-an-llm.md."
+    ),
+)
 def tidy_review(  # noqa: C901
     project_dir,
     source_table,
@@ -495,6 +506,7 @@ def tidy_review(  # noqa: C901
     replace_source,
     drop_source,
     sample_rows,
+    model,
 ):
     """LLM-augmented advisor that proposes reshapes for the developer to review.
 
@@ -551,6 +563,11 @@ def tidy_review(  # noqa: C901
     if settings.database.mode != "duckdb":
         msg = "tidy review requires DuckDB; the apply path opens a writable DuckDB connection."
         raise click.UsageError(msg)
+    # ``--model`` overrides the configured default for both the
+    # propose-reshapes call and the post-apply grounding-repair call.
+    # Both flows accept the override; the rest of the command (snapshot,
+    # validation, DDL) doesn't touch the LLM.
+    resolved_model = model if model else settings.llm.model
 
     # Load suggestions. Three sources, in priority order:
     #   1. --from PLAN  : load that plan and skip the LLM entirely.
@@ -568,7 +585,9 @@ def tidy_review(  # noqa: C901
         )
         suggestions = [s for sugs in suggestions_by_table.values() for s in sugs]
     else:
-        suggestions = _propose_via_llm(project_dir, settings, source_table, sample_rows)
+        suggestions = _propose_via_llm(
+            project_dir, settings, source_table, sample_rows, resolved_model
+        )
 
     if source_table:
         suggestions = [s for s in suggestions if s.table == source_table]
@@ -627,9 +646,12 @@ def tidy_review(  # noqa: C901
             return
 
     # Snapshot the pre-apply schema so the grounding repair flow (post-apply,
-    # below) can show the LLM both old and new schemas. Skipped on dry runs
-    # since nothing changes; skipped on snapshot errors so a quirky DuckDB
-    # state doesn't block the apply itself.
+    # below) can show the LLM both old and new schemas. Persist it to
+    # ``.datasight/grounding_snapshot.json`` so a later
+    # ``datasight grounding repair`` invocation can retry against the
+    # same baseline (e.g. with a different model after a timeout).
+    # Skipped on dry runs since nothing changes; skipped on snapshot
+    # errors so a quirky DuckDB state doesn't block the apply itself.
     old_schema: dict[str, set[str]] | None = None
     if not dry_run:
         try:
@@ -640,11 +662,22 @@ def tidy_review(  # noqa: C901
                 ro.close()
         except duckdb.Error:
             old_schema = None
+        if old_schema is not None:
+            try:
+                write_snapshot(project_dir, old_schema)
+            except OSError as exc:
+                click.echo(
+                    f"warn: grounding snapshot write failed ({exc}); "
+                    f"`datasight grounding repair` won't be able to retry against this baseline.",
+                    err=True,
+                )
 
     _apply_review_proposals(approved, disposition, as_mode, dry_run, resolved_db_path, project_dir)
 
     if not dry_run and old_schema is not None:
-        _offer_grounding_repair(resolved_db_path, project_dir, settings, old_schema)
+        _offer_grounding_repair(
+            resolved_db_path, project_dir, settings, old_schema, resolved_model
+        )
 
 
 def _offer_grounding_repair(  # noqa: C901
@@ -652,6 +685,7 @@ def _offer_grounding_repair(  # noqa: C901
     project_dir: str,
     settings: Any,
     old_schema: dict[str, set[str]],
+    resolved_model: str,
 ) -> None:
     """Post-apply hook: detect grounding drift, offer LLM-driven repair.
 
@@ -697,7 +731,6 @@ def _offer_grounding_repair(  # noqa: C901
     ):
         return
 
-    resolved_model = settings.llm.model
     try:
         result = asyncio.run(
             _run_grounding_repair(
@@ -770,7 +803,11 @@ async def _run_grounding_repair(
 
 
 def _propose_via_llm(
-    project_dir: str, settings: Any, source_table: str | None, sample_rows: int
+    project_dir: str,
+    settings: Any,
+    source_table: str | None,
+    sample_rows: int,
+    resolved_model: str,
 ) -> list:
     """Call the configured LLM provider for tidy-reshape proposals.
 
@@ -809,7 +846,7 @@ def _propose_via_llm(
         api_key=settings.llm.api_key,
         base_url=settings.llm.base_url,
         timeout=settings.llm.timeout,
-        model=settings.llm.model,
+        model=resolved_model,
     )
 
     async def _call():
@@ -818,7 +855,7 @@ def _propose_via_llm(
         try:
             return await propose_reshapes(
                 llm_client,
-                model=settings.llm.model,
+                model=resolved_model,
                 schema_info=schema_info,
                 deterministic_hits=deterministic_hits,
                 samples=samples or None,

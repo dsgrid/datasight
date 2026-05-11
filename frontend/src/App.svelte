@@ -26,6 +26,7 @@
   import { sqlEditorStore } from "$lib/stores/sql_editor.svelte";
   import { paletteStore } from "$lib/stores/palette.svelte";
   import { tidyStore } from "$lib/stores/tidy.svelte";
+  import { groundingStore } from "$lib/stores/grounding.svelte";
   import { exitExploreSession, getProjectStatus } from "$lib/api/projects";
   import { loadSettings, loadLlmConfig } from "$lib/api/settings";
   import { loadSchema, loadQueries, loadRecipes } from "$lib/api/schema";
@@ -114,6 +115,12 @@
       loadMeasureCatalog(),
     ]);
 
+    // Refresh the always-on grounding pill. Fires after the schema
+    // load above so the server's drift check sees the up-to-date
+    // schema (the static check doesn't care about timing, but this
+    // keeps the lifecycle obvious). Cheap call — no LLM.
+    groundingStore.check();
+
     // Run pending starter if one was selected on landing page
     if (fromLanding) {
       await maybeRunPendingStarter();
@@ -189,6 +196,7 @@
     dashboardStore.clear();
     sqlEditorStore.clearAll();
     sessionStore.reset();
+    groundingStore.reset();
     dashboardStore.currentView = "chat";
     exportMode = false;
     exportExcludeIndices = new Set();

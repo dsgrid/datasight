@@ -78,10 +78,40 @@ export interface TidyApplyResult {
   dry_run: boolean;
 }
 
+/** Static drift summary returned by /api/tidy/apply. The slow LLM
+ * repair runs separately via /api/tidy/grounding/repair so the apply
+ * response can return immediately after the database mutation. */
+export interface TidyGroundingDrift {
+  needs_repair: boolean;
+  drift_items: number;
+}
+
 export interface TidyApplyResponse {
   success: boolean;
   result?: TidyApplyResult;
   schema_info?: TableInfo[];
+  /** Present when apply changed the schema and a drift check ran. */
+  grounding_drift?: TidyGroundingDrift | null;
+  error?: string;
+}
+
+/** Result of the LLM grounding repair. Mirrors the summary built on
+ * the server in ``_run_grounding_repair``. */
+export interface TidyGroundingRepairSummary {
+  drift_items: number;
+  files_written: string[];
+  applied: boolean;
+  /** Set when the repair was a no-op (e.g. "no_drift", "no_llm_changes"). */
+  skipped?: string;
+  /** Set when the LLM proposal failed SQL validation after retries. */
+  validation_errors?: string[];
+  /** Set when the LLM call itself crashed (timeout, etc). */
+  error?: string;
+}
+
+export interface TidyGroundingRepairResponse {
+  success: boolean;
+  grounding_repair?: TidyGroundingRepairSummary;
   error?: string;
 }
 
@@ -227,4 +257,34 @@ export async function applyTidy(args: {
   disposition: TidyDisposition;
 }): Promise<TidyApplyResponse> {
   return postJson<TidyApplyResponse>("/api/tidy/apply", args);
+}
+
+/** Trigger the LLM grounding repair after a tidy apply. Slow (the LLM
+ * call can take minutes on local models); the caller should show a
+ * spinner. The server reads the pre-tidy schema snapshot it stashed
+ * during /api/tidy/apply, so this only works while that snapshot is
+ * still live (cleared on project change or after a successful repair). */
+export async function repairGrounding(): Promise<TidyGroundingRepairResponse> {
+  return postJson<TidyGroundingRepairResponse>(
+    "/api/tidy/grounding/repair",
+    {},
+  );
+}
+
+/** Always-on grounding-drift status, polled by the header pill on
+ * project load (and after applies/repairs). When ``available`` is
+ * false the UI hides the pill — covers ephemeral sessions, no-project
+ * states, and non-DuckDB backends. ``has_snapshot`` tells the pill
+ * whether the repair button should be enabled or whether the user
+ * needs the CLI's ``--from-csv`` fallback. */
+export interface GroundingStatusResponse {
+  available: boolean;
+  reason?: string;
+  needs_repair?: boolean;
+  drift_items?: number;
+  has_snapshot?: boolean;
+}
+
+export async function fetchGroundingStatus(): Promise<GroundingStatusResponse> {
+  return fetchJson<GroundingStatusResponse>("/api/grounding/status");
 }

@@ -40,6 +40,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -48,6 +49,95 @@ from loguru import logger
 
 from datasight.grounding import DriftReport
 from datasight.llm import LLMClient, TextBlock
+
+# Pre-tidy schema snapshot: written by tidy apply, consumed by grounding
+# repair. Lives under ``.datasight/`` (same dir as conversations,
+# query_log.jsonl, etc.) so it survives server restarts and is
+# accessible to both the CLI and the web endpoint.
+SNAPSHOT_RELATIVE_PATH = Path(".datasight") / "grounding_snapshot.json"
+SNAPSHOT_SCHEMA_VERSION = 1
+
+
+def snapshot_path(project_dir: Path | str) -> Path:
+    """Return the absolute path to the project's grounding snapshot file."""
+    return Path(project_dir) / SNAPSHOT_RELATIVE_PATH
+
+
+def write_snapshot(project_dir: Path | str, schema: dict[str, set[str]]) -> Path:
+    """Persist the pre-tidy schema snapshot atomically.
+
+    Overwrites any prior snapshot — there's only one "most recent
+    apply" per project. Sets are serialized as sorted lists for stable
+    file content (so a snapshot diff in git review is meaningful).
+
+    Parameters
+    ----------
+    project_dir : Path | str
+        Project root containing ``.datasight/``.
+    schema : dict[str, set[str]]
+        Tables → column-name set, as captured immediately before the
+        tidy apply mutates the database.
+
+    Returns
+    -------
+    Path
+        The path that was written.
+    """
+    payload = {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "applied_at": datetime.now(timezone.utc).isoformat(),
+        "schema": {table: sorted(cols) for table, cols in schema.items()},
+    }
+    target = snapshot_path(project_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=target.parent, delete=False,
+        prefix=".grounding-snapshot-",
+    ) as tmp:
+        json.dump(payload, tmp, indent=2, sort_keys=True)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = Path(tmp.name)
+    try:
+        os.replace(tmp_path, target)
+    except OSError:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def read_snapshot(project_dir: Path | str) -> dict[str, set[str]] | None:
+    """Load the most recent pre-tidy schema snapshot, or None if absent.
+
+    Returns None for missing files, malformed JSON, or unrecognized
+    schema versions — callers treat absence as "no prior apply on
+    record" and surface that to the user. We deliberately don't raise
+    on corruption so a bad snapshot can't permanently brick the
+    repair flow; the user can re-apply or pass an explicit fallback.
+    """
+    path = snapshot_path(project_dir)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(f"grounding snapshot at {path} is unreadable: {exc}")
+        return None
+    if not isinstance(payload, dict) or payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        logger.warning(
+            f"grounding snapshot at {path} has unexpected schema_version "
+            f"{payload.get('schema_version') if isinstance(payload, dict) else 'n/a'!r}; ignoring"
+        )
+        return None
+    raw_schema = payload.get("schema")
+    if not isinstance(raw_schema, dict):
+        return None
+    out: dict[str, set[str]] = {}
+    for table, cols in raw_schema.items():
+        if not isinstance(table, str) or not isinstance(cols, list):
+            continue
+        out[table] = {c for c in cols if isinstance(c, str)}
+    return out
 
 
 # Files the repair flow may touch. Other grounding-adjacent files

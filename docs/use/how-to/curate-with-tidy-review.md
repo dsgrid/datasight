@@ -419,6 +419,101 @@ whose values would duplicate or drop rows — the transaction rolls back
 in step 2, before the source is touched. The error message names the
 table and the count it expected.
 
+## Repair grounding after a reshape
+
+A successful Tidy review changes the database schema — long-form
+column and table names replace the wide-form ones. That breaks any
+reference to the old column names in your grounding files
+(`queries.yaml`, `schema_description.md`, `time_series.yaml`), which
+the LLM agent reads on every turn. Stale grounding silently teaches
+the agent to hallucinate against columns that no longer exist.
+
+### How drift is detected
+
+Every Tidy review apply (CLI or web) does two things in addition to
+the reshape itself:
+
+1. Writes a snapshot of the pre-apply schema to
+   `.datasight/grounding_snapshot.json`. This is the "before" picture
+   the LLM needs to rewrite the grounding files in context.
+2. Runs a fast static check against the new schema. The CLI
+   surfaces drift in an interactive prompt (see the `--apply-all`
+   sections above); the web UI shows an orange "Grounding may be
+   stale" banner with a **Repair grounding** button.
+
+### Run the repair
+
+Web UI: click **Repair grounding** in the banner. The agent rewrites
+the affected files, validates every SQL example against the live DB,
+and applies the changes if validation passes.
+
+CLI:
+
+```bash
+datasight grounding repair
+```
+
+This reads the snapshot, runs the LLM repair, prints a unified diff
+of the proposed rewrites, and asks `Apply this diff? [y/N]` before
+writing.
+
+### Retry with a different model
+
+Local LLMs sometimes time out on the repair (the prompt includes
+your full grounding files plus both schemas, which can be large).
+Retry with a different model — no need to re-run the reshape:
+
+```bash
+datasight grounding repair --model qwen3.6:35b-a3b-coding-mxfp8
+```
+
+`--model` overrides the configured `OLLAMA_MODEL` (or
+`ANTHROPIC_MODEL`, etc.) for this one call.
+
+The two LLM-using steps in the Tidy review flow have very different
+shapes and reward different model variants — `tidy review`'s
+proposal step is a tool call (favors general-purpose models),
+`grounding repair` is a long-form file rewrite (favors
+coding-specialized models). Both `tidy review` and `grounding
+repair` accept `--model` so you can pick per call. See
+[Choosing an LLM](../concepts/choosing-an-llm.md) for the per-workload
+recommendation table.
+
+### When the snapshot is missing
+
+If you applied a reshape before snapshotting was wired in, or you
+deleted `.datasight/grounding_snapshot.json`, the repair has nothing
+to compare against. Pass `--from-csv` pointing at the original
+wide-form source so the CLI can derive the pre-tidy schema from the
+header row:
+
+```bash
+datasight grounding repair --from-csv generation_fuel_wide.csv
+```
+
+You can pass `--from-csv` multiple times for multi-file inputs;
+each CSV becomes a single table named after the file stem.
+
+### Preview without writing
+
+Add `--dry-run` to skip the confirmation and the write. The diff
+prints as usual, then the command exits — useful for inspecting the
+LLM's proposal in CI or before committing the result:
+
+```bash
+datasight grounding repair --dry-run
+```
+
+### Check drift without repairing
+
+```bash
+datasight grounding check
+```
+
+Static, no LLM. Exits 0 when grounding is clean, 1 when drift
+exists. Same logic as `datasight verify --static-only`, exposed
+under a more discoverable name.
+
 ## Recipes
 
 ### Curate one wide table from the web UI

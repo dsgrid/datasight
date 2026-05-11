@@ -6,6 +6,8 @@
   import { formatCost } from "$lib/utils/format";
   import { summarizeDataset } from "$lib/api/summarize";
   import { chatStore } from "$lib/stores/chat.svelte";
+  import { groundingStore } from "$lib/stores/grounding.svelte";
+  import { toastStore } from "$lib/stores/toast.svelte";
 
   interface Props {
     theme: string;
@@ -50,6 +52,47 @@
   let showCost = $derived(
     settingsStore.showCost && queriesStore.sessionTotalCost > 0,
   );
+
+  let groundingPillTitle = $derived(
+    !groundingStore.hasSnapshot
+      ? "Grounding files reference columns that don't exist. " +
+        "No pre-tidy snapshot available — use the CLI: " +
+        "datasight grounding repair --from-csv <source>.csv"
+      : groundingStore.repairStatus === "running"
+        ? "Repairing grounding files..."
+        : `${groundingStore.driftItems} stale reference${
+            groundingStore.driftItems === 1 ? "" : "s"
+          } in queries.yaml / schema_description.md / time_series.yaml. ` +
+          "Click to repair with the configured LLM.",
+  );
+
+  async function handleRepairFromPill() {
+    if (!groundingStore.hasSnapshot) {
+      toastStore.show(
+        "No snapshot available — repair via CLI: datasight grounding repair --from-csv <file>.csv",
+        "error",
+      );
+      return;
+    }
+    await groundingStore.runRepair();
+    if (groundingStore.repairStatus === "success") {
+      const summary = groundingStore.repairSummary;
+      const written = summary?.files_written ?? [];
+      toastStore.show(
+        written.length > 0
+          ? `Rewrote ${written.join(", ")}`
+          : "Grounding files were already up to date",
+        "success",
+      );
+      groundingStore.dismissRepairResult();
+    } else if (groundingStore.repairStatus === "error") {
+      toastStore.show(
+        groundingStore.repairError ?? "Grounding repair failed",
+        "error",
+      );
+      groundingStore.dismissRepairResult();
+    }
+  }
 </script>
 
 <header
@@ -152,6 +195,34 @@
           <span style="text-transform: uppercase; font-size: 0.6rem; letter-spacing: 0.05em; opacity: 0.8;">Project</span>
           <span style="overflow: hidden; text-overflow: ellipsis;">{projectName}</span>
         </div>
+      {/if}
+
+      <!-- Grounding-drift pill: visible whenever the static drift
+           check finds stale references in the project's grounding
+           files. Persistent (not just post-apply) so the user sees
+           drift independently of the tidy review flow. -->
+      {#if groundingStore.pillVisible}
+        <button
+          class="flex items-center whitespace-nowrap cursor-pointer transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-progress"
+          style="gap: 8px; padding: 4px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 500;
+                 max-width: 320px; overflow: hidden;
+                 border: none; font-family: inherit;
+                 background: color-mix(in srgb, var(--orange) 22%, transparent); color: var(--orange);"
+          title={groundingPillTitle}
+          disabled={groundingStore.repairStatus === "running"}
+          onclick={handleRepairFromPill}
+        >
+          <span style="text-transform: uppercase; font-size: 0.6rem; letter-spacing: 0.05em; opacity: 0.8;">
+            Grounding
+          </span>
+          <span style="overflow: hidden; text-overflow: ellipsis;">
+            {#if groundingStore.repairStatus === "running"}
+              Repairing…
+            {:else}
+              {groundingStore.driftItems} stale ref{groundingStore.driftItems === 1 ? "" : "s"} — repair
+            {/if}
+          </span>
+        </button>
       {/if}
     {/if}
   </div>

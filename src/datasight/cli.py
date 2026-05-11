@@ -1316,7 +1316,7 @@ click.rich_click.COMMAND_GROUPS = {
     "datasight": [
         {
             "name": "Quick start",
-            "commands": ["inspect", "run"],
+            "commands": ["inspect", "run", "config"],
         },
         {
             "name": "Project setup",
@@ -1325,6 +1325,10 @@ click.rich_click.COMMAND_GROUPS = {
         {
             "name": "AI-powered",
             "commands": ["ask", "verify"],
+        },
+        {
+            "name": "Schema curation",
+            "commands": ["tidy", "grounding"],
         },
         {
             "name": "Data analysis (no LLM)",
@@ -1344,7 +1348,7 @@ click.rich_click.COMMAND_GROUPS = {
         },
         {
             "name": "Session history",
-            "commands": ["log", "export", "report"],
+            "commands": ["log", "export", "report", "session"],
         },
         {
             "name": "Demo datasets",
@@ -1433,6 +1437,7 @@ def _register_commands() -> None:
     from datasight.cli_commands.doctor import doctor
     from datasight.cli_commands.export import export
     from datasight.cli_commands.generate import generate
+    from datasight.cli_commands.grounding import grounding
     from datasight.cli_commands.init import init
     from datasight.cli_commands.inspect import inspect
     from datasight.cli_commands.integrity import integrity
@@ -1462,6 +1467,7 @@ def _register_commands() -> None:
     cli.add_command(measures)
     cli.add_command(quality)
     cli.add_command(tidy)
+    cli.add_command(grounding)
     cli.add_command(integrity)
     cli.add_command(distribution)
     cli.add_command(validate)

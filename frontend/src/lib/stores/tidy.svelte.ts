@@ -15,9 +15,12 @@ import {
   detectTidy,
   previewTidy,
   proposeTidy,
+  repairGrounding,
   type TidyApplyResult,
   type TidyDisposition,
   type TidyDispositionMode,
+  type TidyGroundingDrift,
+  type TidyGroundingRepairSummary,
   type TidyMaterializeMode,
   type TidyProposal,
 } from "$lib/api/tidy";
@@ -109,6 +112,12 @@ function applyEdits(p: TidyProposal, edits: ProposalEdits): TidyProposal {
   };
 }
 
+/** Lifecycle of the post-apply grounding-repair LLM call. The repair is
+ * user-triggered (the drawer shows a banner after apply succeeds), and
+ * runs as a separate slow request — keeping its status here so the
+ * banner can show a spinner / result without blocking the drawer. */
+export type RepairStatus = "idle" | "running" | "success" | "error";
+
 function createTidyStore() {
   let open = $state(false);
   let table = $state<string | null>(null);
@@ -121,6 +130,12 @@ function createTidyStore() {
   let dispositionRenameTo = $state("");
   let sampleRows = $state(0);
   let abortController = $state<AbortController | null>(null);
+  // Grounding drift detected on the last apply (null when no apply has
+  // run yet, or when no drift was found). Drives the repair banner.
+  let groundingDrift = $state<TidyGroundingDrift | null>(null);
+  let repairStatus = $state<RepairStatus>("idle");
+  let repairSummary = $state<TidyGroundingRepairSummary | null>(null);
+  let repairError = $state<string | null>(null);
 
   // The store keeps its own onApplied hook so callers (App.svelte) can
   // reload the schema sidebar without introducing a circular import
@@ -139,6 +154,10 @@ function createTidyStore() {
     dispositionMode = "keep";
     dispositionRenameTo = "";
     sampleRows = 0;
+    groundingDrift = null;
+    repairStatus = "idle";
+    repairSummary = null;
+    repairError = null;
   }
 
   return {
@@ -387,12 +406,20 @@ function createTidyStore() {
       let applied = 0;
       let failed = 0;
       let lastSchema: unknown = null;
+      let lastDrift: TidyGroundingDrift | null = null;
 
       const disposition: TidyDisposition = {
         mode: dispositionMode,
         new_name:
           dispositionMode === "rename" ? dispositionRenameTo.trim() : undefined,
       };
+
+      // Starting a fresh apply batch: clear any prior repair status so
+      // the banner reflects this run's drift.
+      groundingDrift = null;
+      repairStatus = "idle";
+      repairSummary = null;
+      repairError = null;
 
       for (const id of queue) {
         const target = proposals.find((p) => p.id === id);
@@ -414,6 +441,13 @@ function createTidyStore() {
           if (resp.success) {
             applied += 1;
             lastSchema = resp.schema_info ?? lastSchema;
+            // Each apply re-runs the drift check against the latest
+            // schema, so the last response's drift is the only one that
+            // matters — earlier ones describe intermediate states the
+            // user can't see.
+            if (resp.grounding_drift) {
+              lastDrift = resp.grounding_drift;
+            }
             proposals = proposals.map((p) =>
               p.id === id
                 ? {
@@ -452,7 +486,77 @@ function createTidyStore() {
         appliedHook(lastSchema);
       }
 
+      // Only surface the banner when there's actually drift to repair —
+      // a clean check (or a server that didn't run one) shouldn't nag.
+      if (lastDrift?.needs_repair) {
+        groundingDrift = lastDrift;
+      }
+
       return { applied, failed };
+    },
+
+    get groundingDrift() {
+      return groundingDrift;
+    },
+    get repairStatus() {
+      return repairStatus;
+    },
+    get repairSummary() {
+      return repairSummary;
+    },
+    get repairError() {
+      return repairError;
+    },
+
+    /** Trigger the slow LLM grounding repair for the most recent apply.
+     * The banner calls this; status flips to "running" so the UI can
+     * show a spinner. On success the drift is cleared and the summary
+     * is exposed via :prop:`repairSummary` for a one-shot confirmation. */
+    async runGroundingRepair(): Promise<void> {
+      if (repairStatus === "running") return;
+      repairStatus = "running";
+      repairSummary = null;
+      repairError = null;
+      try {
+        const resp = await repairGrounding();
+        if (!resp.success) {
+          repairStatus = "error";
+          repairError = resp.error ?? "Grounding repair failed";
+          return;
+        }
+        const summary = resp.grounding_repair ?? null;
+        repairSummary = summary;
+        if (summary?.applied) {
+          repairStatus = "success";
+          // Drift is resolved (or partially) — drop the banner. Summary
+          // stays visible so the user can see what was rewritten.
+          groundingDrift = null;
+        } else if (summary?.error) {
+          repairStatus = "error";
+          repairError = summary.error;
+        } else if (summary?.validation_errors?.length) {
+          repairStatus = "error";
+          repairError = summary.validation_errors.join("; ");
+        } else {
+          // No-op (no_drift / no_llm_changes): treat as success and
+          // clear the banner so we don't keep prompting.
+          repairStatus = "success";
+          groundingDrift = null;
+        }
+      } catch (err) {
+        repairStatus = "error";
+        repairError = (err as Error).message ?? "Grounding repair failed";
+      }
+    },
+
+    /** Dismiss the grounding-repair banner without running the LLM call.
+     * Used by the Skip button. Doesn't touch the server snapshot — it
+     * just suppresses the prompt for this drawer session. */
+    dismissGroundingPrompt(): void {
+      groundingDrift = null;
+      repairStatus = "idle";
+      repairSummary = null;
+      repairError = null;
     },
   };
 }

@@ -2,6 +2,7 @@
   import { tidyStore } from "$lib/stores/tidy.svelte";
   import { toastStore } from "$lib/stores/toast.svelte";
   import { schemaStore, type TableInfo } from "$lib/stores/schema.svelte";
+  import { groundingStore } from "$lib/stores/grounding.svelte";
   import TidyProposalCard from "./TidyProposalCard.svelte";
 
   let renameValid = $derived(
@@ -58,6 +59,9 @@
         `Applied ${applied} proposal${applied === 1 ? "" : "s"}`,
         "success",
       );
+      // Apply changed the schema; refresh the always-on header pill so
+      // it reflects the new drift state (typically: drift just appeared).
+      groundingStore.check();
     }
     if (failed > 0) {
       toastStore.show(
@@ -66,6 +70,27 @@
       );
     }
   }
+
+  async function handleRepairGrounding() {
+    await tidyStore.runGroundingRepair();
+    if (tidyStore.repairStatus === "success") {
+      const written = tidyStore.repairSummary?.files_written ?? [];
+      const msg = written.length > 0
+        ? `Rewrote ${written.join(", ")}`
+        : "Grounding files were already up to date";
+      toastStore.show(msg, "success");
+    } else if (tidyStore.repairStatus === "error") {
+      toastStore.show(
+        tidyStore.repairError ?? "Grounding repair failed",
+        "error",
+      );
+    }
+    // Repair (success or partial-failure) changed something on disk;
+    // re-poll so the header pill matches what the user just did.
+    groundingStore.check();
+  }
+
+  let isRepairing = $derived(tidyStore.repairStatus === "running");
 
   function handleSampleRowsBlur(value: string) {
     const n = parseInt(value, 10);
@@ -109,6 +134,77 @@
       </header>
 
       <div class="panel-body">
+        <!-- Grounding repair prompt: appears after apply when the static
+             drift check found stale references in queries.yaml /
+             schema_description.md / time_series.yaml. The LLM rewrite
+             is slow so it's user-triggered, not automatic. -->
+        {#if tidyStore.groundingDrift?.needs_repair}
+          <section class="repair-panel" class:repair-panel-running={isRepairing}>
+            <div class="repair-head">
+              <div>
+                <h4>
+                  {#if isRepairing}
+                    <span class="dot-flash" aria-hidden="true"></span>
+                    Repairing grounding files…
+                  {:else}
+                    Grounding may be stale
+                  {/if}
+                </h4>
+                <p>
+                  {#if isRepairing}
+                    The agent is rewriting queries.yaml,
+                    schema_description.md, and time_series.yaml against
+                    the new schema. Local models can take a few minutes.
+                  {:else}
+                    The reshape changed the schema and the static check
+                    found {tidyStore.groundingDrift.drift_items} stale
+                    reference{tidyStore.groundingDrift.drift_items === 1
+                      ? ""
+                      : "s"} in your grounding files. Run the LLM
+                    repair to rewrite them, or skip if you'd rather edit
+                    by hand.
+                  {/if}
+                </p>
+              </div>
+              {#if !isRepairing}
+                <div class="repair-actions">
+                  <button
+                    class="btn ghost"
+                    onclick={() => tidyStore.dismissGroundingPrompt()}
+                  >
+                    Skip
+                  </button>
+                  <button class="btn primary" onclick={handleRepairGrounding}>
+                    Repair grounding
+                  </button>
+                </div>
+              {/if}
+            </div>
+          </section>
+        {/if}
+
+        <!-- Last grounding-repair result. Stays visible after success
+             so the user can see which files changed; hidden once they
+             open the drawer for a new table. -->
+        {#if tidyStore.repairStatus === "success" && tidyStore.repairSummary}
+          <p class="banner banner-ok">
+            {#if tidyStore.repairSummary.applied}
+              Rewrote {tidyStore.repairSummary.files_written.join(", ")}.
+            {:else if tidyStore.repairSummary.skipped === "no_drift"}
+              Grounding files were already up to date.
+            {:else if tidyStore.repairSummary.skipped === "no_llm_changes"}
+              The agent didn't propose any changes.
+            {:else}
+              Grounding repair finished.
+            {/if}
+          </p>
+        {/if}
+        {#if tidyStore.repairStatus === "error"}
+          <p class="banner banner-err">
+            Grounding repair failed: {tidyStore.repairError ?? "unknown error"}
+          </p>
+        {/if}
+
         <!-- Run-agent panel: configure + trigger the LLM advisor -->
         <section class="agent-panel" class:agent-panel-running={isLlmLoading}>
           <div class="agent-head">
@@ -523,6 +619,55 @@
     background: color-mix(in srgb, #ef4444 8%, var(--surface));
     border-color: color-mix(in srgb, #ef4444 36%, var(--border));
     color: color-mix(in srgb, #ef4444 80%, var(--text));
+  }
+  .banner-ok {
+    background: color-mix(in srgb, #22c55e 8%, var(--surface));
+    border-color: color-mix(in srgb, #22c55e 36%, var(--border));
+    color: color-mix(in srgb, #16a34a 80%, var(--text));
+  }
+
+  /* Grounding-repair prompt: same visual language as .agent-panel so
+     it reads as a peer prompt rather than an inline notice. Orange tint
+     to flag that action is needed; flips to a more urgent border while
+     the LLM call is in flight. */
+  .repair-panel {
+    display: grid;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--orange) 32%, var(--border));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--orange) 6%, var(--surface));
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .repair-panel-running {
+    border-color: color-mix(in srgb, var(--orange) 60%, var(--border));
+    background: color-mix(in srgb, var(--orange) 10%, var(--surface));
+  }
+  .repair-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .repair-head h4 {
+    margin: 0 0 4px;
+    font-size: 0.86rem;
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .repair-head p {
+    margin: 0;
+    max-width: 52ch;
+    font-size: 0.74rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+  .repair-actions {
+    display: inline-flex;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .warnings {

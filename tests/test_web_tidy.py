@@ -458,17 +458,60 @@ def test_apply_creates_table_with_replace_disposition(loaded_state):
     assert any(c["name"] == "year" for c in sales_cols)
 
 
-def test_apply_repairs_stale_grounding_when_llm_configured(loaded_state, monkeypatch):
+def test_apply_returns_grounding_drift_summary(loaded_state, monkeypatch):
     """When grounding files reference columns the reshape removes, the
-    apply endpoint should detect drift, call the LLM, and rewrite the
-    affected files atomically — surfacing what changed in the response.
-
-    Monkeypatches :func:`repair_grounding` so the test exercises the
-    wiring (drift detection → repair call → atomic write → response
-    shaping) without depending on a live LLM. The endpoint's TestClient
-    startup re-initializes ``state.llm_client`` from the env, so a
-    state-level stub gets clobbered before the request runs.
+    apply endpoint runs the static drift check inline and returns a
+    summary so the UI can prompt the user — but the slow LLM rewrite is
+    NOT called from /api/tidy/apply (it moved to a separate endpoint
+    so the apply response can return immediately).
     """
+    project_dir = Path(loaded_state.project_dir)
+    queries_path = project_dir / "queries.yaml"
+    queries_path.write_text(
+        "- question: Stale wide reference\n"
+        "  sql: SELECT region, sales_2020 FROM sales;\n",
+        encoding="utf-8",
+    )
+
+    repair_called: list[Any] = []
+
+    async def fake_repair(*args, **kwargs):
+        repair_called.append((args, kwargs))
+        raise AssertionError("repair_grounding must not run during apply")
+
+    monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
+
+    suggestion = _detect_period_groups(loaded_state.schema_info[0])[0]
+    proposal = _suggestion_to_proposal_dict(suggestion)
+
+    with TestClient(web_app.app) as client:
+        response = client.post(
+            "/api/tidy/apply",
+            json={
+                "proposal": proposal,
+                "mode": "table",
+                "disposition": {"mode": "drop"},
+            },
+        )
+
+    body = response.json()
+    assert body["success"], body
+    drift = body["grounding_drift"]
+    assert drift is not None, body
+    assert drift["needs_repair"] is True
+    assert drift["drift_items"] >= 1
+    assert repair_called == [], "repair_grounding should not be called from apply"
+    # Apply leaves the file untouched — the user has to opt in to repair.
+    assert "sales_2020" in queries_path.read_text(encoding="utf-8")
+    # The pre-tidy schema snapshot is stashed for the repair endpoint.
+    assert loaded_state.pre_tidy_schema is not None
+    assert "sales_2020" in loaded_state.pre_tidy_schema["sales"]
+
+
+def test_grounding_repair_endpoint_rewrites_stale_files(loaded_state, monkeypatch):
+    """Calling /api/tidy/grounding/repair after a tidy apply runs the
+    LLM rewrite and atomically writes the corrected files, using the
+    pre-tidy schema snapshot stashed on AppState during the apply."""
     project_dir = Path(loaded_state.project_dir)
     queries_path = project_dir / "queries.yaml"
     queries_path.write_text(
@@ -504,7 +547,7 @@ def test_apply_repairs_stale_grounding_when_llm_configured(loaded_state, monkeyp
     proposal = _suggestion_to_proposal_dict(suggestion)
 
     with TestClient(web_app.app) as client:
-        response = client.post(
+        apply_resp = client.post(
             "/api/tidy/apply",
             json={
                 "proposal": proposal,
@@ -512,11 +555,13 @@ def test_apply_repairs_stale_grounding_when_llm_configured(loaded_state, monkeyp
                 "disposition": {"mode": "drop"},
             },
         )
+        assert apply_resp.json()["success"], apply_resp.json()
 
-    body = response.json()
+        repair_resp = client.post("/api/tidy/grounding/repair")
+
+    body = repair_resp.json()
     assert body["success"], body
     summary = body["grounding_repair"]
-    assert summary is not None, body
     assert summary["applied"] is True, summary
     assert summary["files_written"] == ["queries.yaml"]
     assert summary["drift_items"] >= 1
@@ -524,12 +569,16 @@ def test_apply_repairs_stale_grounding_when_llm_configured(loaded_state, monkeyp
     rewritten = queries_path.read_text(encoding="utf-8")
     assert "sales_2020" not in rewritten
     assert "sales_long" in rewritten
+    # Snapshot is consumed after a successful write so a second click
+    # can't reuse a stale pre-tidy schema.
+    assert loaded_state.pre_tidy_schema is None
 
 
-def test_apply_skips_grounding_repair_when_no_llm_configured(loaded_state, monkeypatch):
-    """No llm_client → repair flow short-circuits before the drift check.
-    Response carries ``grounding_repair: None`` and ``repair_grounding``
-    is never called even when drift exists on disk."""
+def test_grounding_repair_endpoint_requires_llm_client(loaded_state, monkeypatch):
+    """The static drift check runs even without an LLM, so apply still
+    surfaces drift. But the repair endpoint needs an LLM client — it
+    returns an error so the UI can surface it instead of silently
+    failing."""
     project_dir = Path(loaded_state.project_dir)
     queries_path = project_dir / "queries.yaml"
     original_text = "- question: Stale\n  sql: SELECT sales_2020 FROM sales;\n"
@@ -539,7 +588,7 @@ def test_apply_skips_grounding_repair_when_no_llm_configured(loaded_state, monke
 
     async def fake_repair(*args, **kwargs):
         repair_called.append((args, kwargs))
-        raise AssertionError("repair_grounding should not be called without llm_client")
+        raise AssertionError("repair_grounding must not run without llm_client")
 
     monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
 
@@ -547,9 +596,8 @@ def test_apply_skips_grounding_repair_when_no_llm_configured(loaded_state, monke
     proposal = _suggestion_to_proposal_dict(suggestion)
 
     with TestClient(web_app.app) as client:
-        # Drop the LLM client after startup has re-initialized it from env.
         loaded_state.llm_client = None
-        response = client.post(
+        apply_resp = client.post(
             "/api/tidy/apply",
             json={
                 "proposal": proposal,
@@ -557,16 +605,20 @@ def test_apply_skips_grounding_repair_when_no_llm_configured(loaded_state, monke
                 "disposition": {"mode": "drop"},
             },
         )
+        # Apply still reports drift — the static check doesn't need an LLM.
+        assert apply_resp.json()["grounding_drift"]["needs_repair"] is True
 
-    body = response.json()
-    assert body["success"], body
-    assert body["grounding_repair"] is None, body
-    assert repair_called == [], "repair_grounding was called unexpectedly"
-    # The stale queries.yaml stays exactly as written.
+        loaded_state.llm_client = None
+        repair_resp = client.post("/api/tidy/grounding/repair")
+
+    body = repair_resp.json()
+    assert body["success"] is False, body
+    assert "LLM client" in body.get("error", ""), body
+    assert repair_called == []
     assert queries_path.read_text(encoding="utf-8") == original_text
 
 
-def test_apply_grounding_repair_surfaces_validation_errors(loaded_state, monkeypatch):
+def test_grounding_repair_endpoint_surfaces_validation_errors(loaded_state, monkeypatch):
     """When the LLM proposal validates dirty, the file is left untouched
     and the summary surfaces the validation errors so the UI can show
     them to the user."""
@@ -597,7 +649,7 @@ def test_apply_grounding_repair_surfaces_validation_errors(loaded_state, monkeyp
     proposal = _suggestion_to_proposal_dict(suggestion)
 
     with TestClient(web_app.app) as client:
-        response = client.post(
+        apply_resp = client.post(
             "/api/tidy/apply",
             json={
                 "proposal": proposal,
@@ -605,17 +657,21 @@ def test_apply_grounding_repair_surfaces_validation_errors(loaded_state, monkeyp
                 "disposition": {"mode": "drop"},
             },
         )
+        assert apply_resp.json()["success"], apply_resp.json()
 
-    body = response.json()
+        repair_resp = client.post("/api/tidy/grounding/repair")
+
+    body = repair_resp.json()
     assert body["success"], body
     summary = body["grounding_repair"]
-    assert summary is not None, body
     assert summary["applied"] is False
     assert summary["files_written"] == []
     assert summary["validation_errors"], summary
     assert any("nonexistent_col" in err for err in summary["validation_errors"])
     # File contents untouched — write_repair_atomic skipped the bad file.
     assert queries_path.read_text(encoding="utf-8") == original_text
+    # Snapshot retained on failure so the user can retry without re-applying.
+    assert loaded_state.pre_tidy_schema is not None
 
 
 def test_apply_creates_table_with_bare_drop_disposition(loaded_state):

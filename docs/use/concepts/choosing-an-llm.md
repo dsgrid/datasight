@@ -132,13 +132,43 @@ option**, despite the "e2b" (effective 2B) naming. Its weights are
 small but the default 256K-token context allocation dominates resident
 memory. Use it on 32 GB+ Macs only.
 
+The benchmark above measures `datasight ask` only. The other LLM-using
+commands have very different shapes, and observed behavior on the
+two qwen3.6 variants splits cleanly along those shapes:
+
+| Workload | Calls a tool? | Output budget | Best of the two |
+|---|---|---|---|
+| `datasight ask` | yes (multi-turn agent) | small per turn | either; coding MoE for richer prose |
+| `datasight tidy review` (LLM advisor) | yes (single `propose_reshapes` call) | 4 K | **general `qwen3.6`** |
+| `datasight grounding repair` | no (long-form file rewrite) | 16 K | **`qwen3.6:35b-a3b-coding-mxfp8`** |
+
+The split is consistent with what code-specialized fine-tunes are known
+to trade: better long-form structured generation (winning grounding
+repair, where the prompt and the output are both large) at the cost of
+weaker tool-call adherence (losing `tidy review`, where the model has
+to emit a structured tool call instead of free text). Observed in
+practice: the coding variant silently emitted zero proposals on
+`tidy review`'s `propose_reshapes`, while the general variant timed out
+on grounding repair against the same database.
+
+**Practical setup**: pull both models. Use `qwen3.6` as your default
+`OLLAMA_MODEL`, and override per-call where the coding variant wins:
+
+```bash
+datasight grounding repair --model qwen3.6:35b-a3b-coding-mxfp8
+datasight tidy review --model qwen3.6   # explicit default; useful in scripts
+```
+
+Both `tidy review` and `grounding repair` accept `--model`, as do
+`ask`, `verify`, and `run`.
+
 Apple Silicon recommendations by RAM tier:
 
 | Unified memory | Recommended model | Why |
 |---|---|---|
 | 16 GB | `qwen2.5:7b` (GGUF) | Only option that fits with headroom for the OS, browser, and IDE. |
 | 32 GB | `qwen2.5:7b` or `gemma4:e2b-mlx-bf16` | Either fits. Gemma is faster but its answers are tersest; pick based on whether you want interpretation or just raw data. |
-| 48 GB+ | `qwen3.6:35b-a3b-coding-mxfp8` | Sparse MoE (3B active params) — best answer quality, comparable speed, properly leverages Apple Silicon's unified memory + Metal. |
+| 48 GB+ | Both `qwen3.6` and `qwen3.6:35b-a3b-coding-mxfp8` (switch per command) | Sparse MoE (3B active params) — properly leverages Apple Silicon's unified memory + Metal. The two variants are complementary, not interchangeable: general for tool-use commands (`ask`, `tidy review`), coding for long-form generation (`grounding repair`, `ask` when you want richer prose). See workload table above. |
 
 If you have an Apple Silicon machine but aren't sure which tag to use,
 start with `qwen2.5:7b` (the cross-platform recommendation above). It

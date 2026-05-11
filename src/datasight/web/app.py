@@ -102,8 +102,10 @@ from datasight.grounding import (
     check_grounding_drift,
 )
 from datasight.grounding_repair import (
+    read_snapshot,
     repair_grounding,
     write_repair_atomic,
+    write_snapshot,
 )
 from datasight.sql_validation import build_measure_rule_map, build_schema_map, validate_sql
 from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
@@ -604,6 +606,10 @@ class AppState:
         self.is_ephemeral: bool = False
         self.ephemeral_tables_info: list[dict[str, Any]] = []
         self.time_series_configs: list[dict[str, Any]] = []
+        # Snapshot of the schema captured immediately before the most recent
+        # tidy_apply. Consumed by /api/tidy/grounding/repair so the LLM
+        # repair prompt can show both shapes; cleared on project change.
+        self.pre_tidy_schema: dict[str, set[str]] | None = None
 
     def clear_project(self) -> None:
         """Clear project-specific state."""
@@ -638,6 +644,7 @@ class AppState:
         self.ephemeral_tables_info = []
         self._ephemeral_messages = {}
         self._session_locks.clear()
+        self.pre_tidy_schema = None
 
     def rebuild_system_prompt(self) -> None:
         """Rebuild the system prompt after settings change."""
@@ -3347,14 +3354,27 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
 
     db_path = runner._database_path
 
-    # Snapshot the pre-apply schema so the post-apply grounding-repair step
+    # Snapshot the pre-apply schema so a follow-up grounding-repair call
     # can show the LLM both old and new shapes. Without an explicit
     # snapshot the repair prompt degenerates to "regenerate from scratch"
-    # and loses any human customizations in the grounding files.
+    # and loses any human customizations in the grounding files. Stashed
+    # on AppState because grounding repair runs as a separate request
+    # (the LLM call is too slow to block the apply response).
     old_schema: dict[str, set[str]] = {
         t["name"]: {c["name"] for c in t["columns"]}
         for t in state.schema_info
     }
+    state.pre_tidy_schema = old_schema
+    # Persist alongside the in-memory snapshot so the user can retry
+    # grounding repair after a server restart, or run it from the CLI
+    # against this same baseline. Best-effort: a write failure here
+    # shouldn't block the apply itself (the in-memory copy still works
+    # for the immediate banner flow).
+    if state.project_dir and not state.is_ephemeral:
+        try:
+            write_snapshot(state.project_dir, old_schema)
+        except OSError as exc:
+            logger.warning(f"grounding snapshot write failed: {exc}")
 
     async with state.state_lock:
         # Cached DataFrames can keep DuckDB buffers alive and block the
@@ -3449,34 +3469,26 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
             for t in tables
         ]
 
-        # Grounding repair: when the schema actually changed, rewrite
-        # queries.yaml / schema_description.md / time_series.yaml so the
-        # next LLM call sees stale-reference-free grounding. Must happen
-        # *before* the schema_text rebuild below, because
-        # ``_load_user_description`` reads schema_description.md from
-        # disk — we want it to load the repaired content, not the stale
-        # one. Failures here are logged and surfaced in the response but
-        # don't fail the apply (the database mutation already committed).
-        grounding_summary: dict[str, Any] | None = None
+        # Grounding drift check: fast, static. When the schema actually
+        # changed, scan queries.yaml / schema_description.md /
+        # time_series.yaml for stale references so the UI can prompt the
+        # user to run grounding repair as a separate, slow step. The LLM
+        # rewrite happens in /api/tidy/grounding/repair — keeping it out
+        # of the apply path so the response returns immediately.
+        grounding_drift: dict[str, Any] | None = None
         new_schema: dict[str, set[str]] = {
             t["name"]: {c["name"] for c in t["columns"]}
             for t in state.schema_info
         }
         if (
             state.project_dir
-            and state.llm_client is not None
-            and state.model
             and new_schema != old_schema
             and not state.is_ephemeral
         ):
-            grounding_summary = await _repair_grounding_after_tidy(
+            grounding_drift = _summarize_grounding_drift(
                 project_dir=state.project_dir,
                 db_path=db_path,
-                old_schema=old_schema,
                 new_schema=new_schema,
-                llm_client=state.llm_client,
-                model=state.model,
-                run_sql=state.sql_runner.run_sql,
             )
 
         state.schema_text = format_schema_context(
@@ -3490,11 +3502,44 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
         "success": True,
         "result": result.to_dict(),
         "schema_info": state.schema_info,
-        "grounding_repair": grounding_summary,
+        "grounding_drift": grounding_drift,
     }
 
 
-async def _repair_grounding_after_tidy(  # noqa: C901
+def _summarize_grounding_drift(
+    *,
+    project_dir: str,
+    db_path: str,
+    new_schema: dict[str, set[str]],
+) -> dict[str, Any]:
+    """Run the static drift check and return a summary for the UI banner.
+
+    Fast: just reads the project's grounding YAML/markdown files and
+    cross-references them against ``new_schema``. Used by ``tidy_apply``
+    so the response can tell the client whether to prompt the user for
+    grounding repair.
+    """
+    import duckdb as _duckdb
+
+    try:
+        ro = _duckdb.connect(db_path, read_only=True)
+        try:
+            enum_values = build_enum_values_sync(ro, new_schema)
+        finally:
+            ro.close()
+    except Exception:  # noqa: BLE001
+        enum_values = set()
+
+    drift = check_grounding_drift(
+        Path(project_dir), new_schema, enum_values=enum_values
+    )
+    return {
+        "needs_repair": not drift.is_clean,
+        "drift_items": len(drift.items),
+    }
+
+
+async def _run_grounding_repair(  # noqa: C901
     *,
     project_dir: str,
     db_path: str,
@@ -3504,7 +3549,7 @@ async def _repair_grounding_after_tidy(  # noqa: C901
     model: str,
     run_sql,
 ) -> dict[str, Any]:
-    """Run the grounding-drift check and, if needed, the LLM repair.
+    """Run the LLM grounding repair and atomically write changed files.
 
     Returns a structured summary the API caller can render in the UI:
 
@@ -3514,13 +3559,9 @@ async def _repair_grounding_after_tidy(  # noqa: C901
     - ``validation_errors``: per-file SQL execution errors when the LLM's
       proposal still didn't validate after retries (empty on success)
     - ``error``: top-level exception message when the flow itself crashed
-
-    The endpoint already committed the database mutation by the time this
-    runs, so failures here are surfaced as info but don't fail the apply.
     """
     import duckdb as _duckdb
 
-    # Load enum values from a fresh read-only conn — pure data fetch.
     try:
         ro = _duckdb.connect(db_path, read_only=True)
         try:
@@ -3594,6 +3635,136 @@ async def _repair_grounding_after_tidy(  # noqa: C901
         "drift_items": len(drift.items),
         "files_written": [p.name for p in written],
         "applied": True,
+    }
+
+
+@app.post("/api/tidy/grounding/repair")
+async def tidy_grounding_repair(state: AppState = Depends(get_state)):
+    """Run the slow LLM grounding repair triggered by the user post-apply.
+
+    Split out from ``tidy_apply`` so the apply response can return
+    immediately. The client calls this endpoint after seeing
+    ``grounding_drift.needs_repair`` in the apply response. Reads the
+    pre-tidy schema snapshot stashed on AppState during the apply.
+    """
+    if not state.project_loaded or not state.project_dir:
+        return {"success": False, "error": "No project loaded"}
+    if state.is_ephemeral:
+        return {"success": False, "error": "Grounding repair not supported in explore sessions"}
+    if state.llm_client is None or not state.model:
+        return {"success": False, "error": "LLM client not configured"}
+    if state.sql_runner is None:
+        return {"success": False, "error": "No SQL runner available"}
+    # Prefer the in-memory snapshot from the current server's apply, but
+    # fall back to the on-disk snapshot so the user can retry repair
+    # after a restart (or after the LLM call timed out and nothing was
+    # written). The CLI's `datasight grounding repair` reads the same
+    # file — they're interchangeable baselines.
+    old_schema = state.pre_tidy_schema
+    if old_schema is None:
+        old_schema = read_snapshot(state.project_dir)
+    if old_schema is None:
+        return {
+            "success": False,
+            "error": (
+                "No pre-tidy schema snapshot available. Run a tidy apply "
+                "first, or use `datasight grounding repair --from-csv ...` "
+                "to supply a baseline from a source CSV."
+            ),
+        }
+
+    from datasight.runner import DuckDBRunner
+
+    runner = state.sql_runner
+    if isinstance(runner, CachingSqlRunner):
+        runner = runner._inner
+    if not isinstance(runner, DuckDBRunner):
+        return {"success": False, "error": "Grounding repair requires a project DuckDB runner"}
+    db_path = runner._database_path
+
+    new_schema: dict[str, set[str]] = {
+        t["name"]: {c["name"] for c in t["columns"]}
+        for t in state.schema_info
+    }
+
+    async with state.state_lock:
+        summary = await _run_grounding_repair(
+            project_dir=state.project_dir,
+            db_path=db_path,
+            old_schema=old_schema,
+            new_schema=new_schema,
+            llm_client=state.llm_client,
+            model=state.model,
+            run_sql=state.sql_runner.run_sql,
+        )
+
+        # Reload the user-facing prose so the system prompt picks up the
+        # repaired schema_description.md. schema_info itself didn't
+        # change in this endpoint — only the grounding files on disk did.
+        if summary.get("applied"):
+            tables = await introspect_schema(
+                state.sql_runner.run_sql, runner=state.sql_runner
+            )
+            state.schema_text = format_schema_context(
+                tables,
+                user_description=_load_user_description(state),
+            )
+            state.schema_map = build_schema_map(state.schema_info)
+            state.rebuild_system_prompt()
+            # Snapshot is consumed — clear it so a stale one can't shadow
+            # a future apply.
+            state.pre_tidy_schema = None
+
+    return {"success": True, "grounding_repair": summary}
+
+
+@app.get("/api/grounding/status")
+async def grounding_status(state: AppState = Depends(get_state)):
+    """Static grounding-drift summary for the always-on header pill.
+
+    The header pill polls this on project load so the user sees
+    "grounding stale" any time the files are out of sync — not only
+    after they just ran an apply. Static check, no LLM, fast.
+
+    Returns ``{available: false}`` for sessions where the check
+    doesn't apply (no project loaded, ephemeral, non-DuckDB) so the
+    UI can hide the pill rather than showing a confusing error.
+    """
+    if not state.project_loaded or not state.project_dir or state.is_ephemeral:
+        return {"available": False, "reason": "no_project"}
+    if state.sql_runner is None:
+        return {"available": False, "reason": "no_runner"}
+
+    from datasight.runner import DuckDBRunner
+
+    runner = state.sql_runner
+    if isinstance(runner, CachingSqlRunner):
+        runner = runner._inner
+    if not isinstance(runner, DuckDBRunner):
+        return {"available": False, "reason": "non_duckdb"}
+    db_path = runner._database_path
+
+    new_schema: dict[str, set[str]] = {
+        t["name"]: {c["name"] for c in t["columns"]}
+        for t in state.schema_info
+    }
+    summary = _summarize_grounding_drift(
+        project_dir=state.project_dir,
+        db_path=db_path,
+        new_schema=new_schema,
+    )
+    # Tell the UI whether a snapshot exists so the pill can choose
+    # whether to enable the repair button — without one, the user has
+    # to use the CLI's ``--from-csv`` fallback.
+    has_snapshot = (
+        state.pre_tidy_schema is not None
+        or read_snapshot(state.project_dir) is not None
+    )
+    return {
+        "available": True,
+        "needs_repair": summary["needs_repair"],
+        "drift_items": summary["drift_items"],
+        "has_snapshot": has_snapshot,
     }
 
 
