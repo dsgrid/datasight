@@ -5,9 +5,16 @@ import os
 import sys
 from pathlib import Path
 
+import duckdb
 import rich_click as click
 
 from datasight.config import create_sql_runner_from_settings
+from datasight.grounding import (
+    build_enum_values_sync,
+    build_schema_truth_sync,
+    check_grounding_drift,
+    format_drift_report,
+)
 
 from datasight import cli
 from datasight.cli_helpers import format_epilog
@@ -19,6 +26,7 @@ from datasight.cli_helpers import format_epilog
         Examples:
 
             datasight verify
+            datasight verify --static-only
             datasight verify --queries verification.yaml
             datasight verify --model gpt-4o
 
@@ -50,15 +58,77 @@ from datasight.cli_helpers import format_epilog
     default=None,
     help="Path to queries YAML file (default: queries.yaml in project dir).",
 )
-def verify(project_dir, model, queries_path):  # noqa: C901
+@click.option(
+    "--static-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run only the cheap schema-drift check (no LLM, no query execution). "
+        "Reports unresolved column/table references in queries.yaml, "
+        "schema_description.md, and time_series.yaml against the live DB."
+    ),
+)
+@click.option(
+    "--skip-grounding-check",
+    is_flag=True,
+    default=False,
+    help="Skip the static drift check that normally runs before the LLM phase.",
+)
+def verify(project_dir, model, queries_path, static_only, skip_grounding_check):  # noqa: C901
     """Verify LLM-generated SQL against expected results.
 
     Runs each question from queries.yaml through the full LLM pipeline,
     executes the generated SQL, and compares results against expected values.
     Use this to validate correctness across different models and providers.
+
+    Before the LLM phase, runs a static schema-drift check that flags
+    references to columns or tables that no longer exist in the live
+    database. ``--static-only`` skips the LLM phase entirely;
+    ``--skip-grounding-check`` skips the static check.
     """
 
     project_dir = str(Path(project_dir).resolve())
+
+    # Static drift check first. Cheap, no LLM, no async — runs against a
+    # direct DuckDB connection. For non-DuckDB backends we skip the
+    # static check (information_schema.columns availability varies) and
+    # rely on the LLM-phase query execution to surface drift.
+    if not skip_grounding_check:
+        settings_preflight, _ = cli.resolve_settings(project_dir, model)
+        if settings_preflight.database.mode == "duckdb":
+            resolved_db_path = cli.resolve_db_path(settings_preflight, project_dir)
+            if resolved_db_path and os.path.exists(resolved_db_path):
+                conn = duckdb.connect(resolved_db_path, read_only=True)
+                try:
+                    truth = build_schema_truth_sync(conn)
+                    enums = build_enum_values_sync(conn, truth)
+                finally:
+                    conn.close()
+                report = check_grounding_drift(
+                    Path(project_dir), truth, enum_values=enums
+                )
+                if not report.is_clean:
+                    click.echo(format_drift_report(report), err=True)
+                    click.echo("", err=True)
+                    click.echo(
+                        "Drift found. Run `datasight tidy review` to repair, "
+                        "or pass `--skip-grounding-check` to proceed anyway.",
+                        err=True,
+                    )
+                    if static_only:
+                        sys.exit(1)
+                    # Continue into the LLM phase; the user can opt out via
+                    # Ctrl-C if they didn't want to burn tokens.
+                elif static_only:
+                    click.echo("grounding clean: no drift detected.")
+                    sys.exit(0)
+        elif static_only:
+            click.echo(
+                "--static-only requires DuckDB; database.mode is "
+                f"{settings_preflight.database.mode!r}.",
+                err=True,
+            )
+            sys.exit(2)
 
     # Load queries
     from datasight.config import load_example_queries

@@ -13,8 +13,20 @@ from rich.console import Console
 
 from datasight import cli
 from datasight.cli_helpers import format_epilog
+from datasight.config import create_sql_runner_from_settings
 from datasight.data_profile import find_table_info
 from datasight.explore import create_files_session_for_settings
+from datasight.grounding import (
+    build_enum_values_sync,
+    build_schema_truth_sync,
+    check_grounding_drift,
+    format_drift_report,
+)
+from datasight.grounding_repair import (
+    format_repair_summary,
+    repair_grounding,
+    write_repair_atomic,
+)
 from datasight.schema import introspect_schema
 from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
 from datasight.tidy_llm import propose_reshapes
@@ -614,7 +626,147 @@ def tidy_review(  # noqa: C901
             click.echo("No proposals approved.")
             return
 
+    # Snapshot the pre-apply schema so the grounding repair flow (post-apply,
+    # below) can show the LLM both old and new schemas. Skipped on dry runs
+    # since nothing changes; skipped on snapshot errors so a quirky DuckDB
+    # state doesn't block the apply itself.
+    old_schema: dict[str, set[str]] | None = None
+    if not dry_run:
+        try:
+            ro = duckdb.connect(resolved_db_path, read_only=True)
+            try:
+                old_schema = build_schema_truth_sync(ro)
+            finally:
+                ro.close()
+        except duckdb.Error:
+            old_schema = None
+
     _apply_review_proposals(approved, disposition, as_mode, dry_run, resolved_db_path, project_dir)
+
+    if not dry_run and old_schema is not None:
+        _offer_grounding_repair(resolved_db_path, project_dir, settings, old_schema)
+
+
+def _offer_grounding_repair(  # noqa: C901
+    db_path: str,
+    project_dir: str,
+    settings: Any,
+    old_schema: dict[str, set[str]],
+) -> None:
+    """Post-apply hook: detect grounding drift, offer LLM-driven repair.
+
+    No-op when the schema is unchanged, when drift is clean against the new
+    schema, when the user declines the prompt, or when LLM settings are
+    incomplete.
+    """
+    try:
+        ro = duckdb.connect(db_path, read_only=True)
+        try:
+            new_schema = build_schema_truth_sync(ro)
+            enum_values = build_enum_values_sync(ro, new_schema)
+        finally:
+            ro.close()
+    except duckdb.Error as exc:
+        click.echo(f"warn: grounding check skipped (DB unreadable): {exc}", err=True)
+        return
+
+    if old_schema == new_schema:
+        return
+
+    drift = check_grounding_drift(
+        Path(project_dir), new_schema, enum_values=enum_values
+    )
+    if drift.is_clean:
+        return
+
+    click.echo("")
+    click.echo(format_drift_report(drift))
+    click.echo("")
+
+    try:
+        cli.validate_settings_for_llm(settings)
+    except (click.UsageError, click.ClickException, SystemExit) as exc:
+        click.echo(
+            f"Grounding files have drifted but no LLM is configured to repair them: {exc}",
+            err=True,
+        )
+        return
+
+    if not click.confirm(
+        "Repair grounding files with the configured LLM?", default=False
+    ):
+        return
+
+    resolved_model = settings.llm.model
+    try:
+        result = asyncio.run(
+            _run_grounding_repair(
+                project_dir, old_schema, new_schema, drift, settings, resolved_model
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — broad on purpose; surface to user
+        click.echo(f"Repair failed: {exc}", err=True)
+        return
+
+    if not result.any_changes:
+        click.echo("LLM proposed no changes.")
+        return
+
+    click.echo("")
+    click.echo(format_repair_summary(result))
+    for f in result.files:
+        if not f.changed:
+            continue
+        click.echo("")
+        click.echo(f.unified_diff(), nl=False)
+
+    if not result.overall_ok:
+        click.echo("")
+        click.echo(
+            "Some proposed files failed validation after retries. Skipping apply; "
+            "edit the files manually using the diff above as a starting point.",
+            err=True,
+        )
+        return
+
+    click.echo("")
+    if not click.confirm("Apply this diff?", default=False):
+        return
+
+    written = write_repair_atomic(result, Path(project_dir))
+    for p in written:
+        click.echo(f"Wrote {p}")
+
+
+async def _run_grounding_repair(
+    project_dir: str,
+    old_schema: dict[str, set[str]],
+    new_schema: dict[str, set[str]],
+    drift,
+    settings: Any,
+    resolved_model: str,
+):
+    """Wire up the LLM client + SQL runner the repair library needs."""
+    llm_client = cli.create_llm_client(
+        provider=settings.llm.provider,
+        api_key=settings.llm.api_key,
+        base_url=settings.llm.base_url,
+        timeout=settings.llm.timeout,
+        model=resolved_model,
+    )
+    try:
+        sql_runner = create_sql_runner_from_settings(settings.database, project_dir)
+        return await repair_grounding(
+            Path(project_dir),
+            old_schema,
+            new_schema,
+            drift,
+            llm_client=llm_client,
+            model=resolved_model,
+            run_sql=sql_runner.run_sql,
+        )
+    finally:
+        await llm_client.aclose()
 
 
 def _propose_via_llm(

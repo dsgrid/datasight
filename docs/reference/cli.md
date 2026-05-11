@@ -437,10 +437,16 @@ Runs each question from queries.yaml through the full LLM pipeline,
 executes the generated SQL, and compares results against expected values.
 Use this to validate correctness across different models and providers.
 
+Before the LLM phase, runs a static schema-drift check that flags
+references to columns or tables that no longer exist in the live
+database. ``--static-only`` skips the LLM phase entirely;
+``--skip-grounding-check`` skips the static check.
+
 Examples:
 
 ```
 datasight verify
+datasight verify --static-only
 datasight verify --queries verification.yaml
 datasight verify --model gpt-4o
 ```
@@ -470,6 +476,8 @@ datasight verify [OPTIONS]
 | `--project-dir` | Project directory containing .env and queries.yaml. Default: `.`. |
 | `--model` | Model name (overrides .env). |
 | `--queries` | Path to queries YAML file (default: queries.yaml in project dir). |
+| `--static-only` | Run only the cheap schema-drift check (no LLM, no query execution). Reports unresolved column/table references in queries.yaml, schema_description.md, and time_series.yaml against the live DB. |
+| `--skip-grounding-check` | Skip the static drift check that normally runs before the LLM phase. |
 
 ### `datasight ask`
 
