@@ -468,8 +468,7 @@ def test_apply_returns_grounding_drift_summary(loaded_state, monkeypatch):
     project_dir = Path(loaded_state.project_dir)
     queries_path = project_dir / "queries.yaml"
     queries_path.write_text(
-        "- question: Stale wide reference\n"
-        "  sql: SELECT region, sales_2020 FROM sales;\n",
+        "- question: Stale wide reference\n  sql: SELECT region, sales_2020 FROM sales;\n",
         encoding="utf-8",
     )
 
@@ -516,13 +515,11 @@ def test_grounding_repair_endpoint_rewrites_stale_files(loaded_state, monkeypatc
     project_dir = Path(loaded_state.project_dir)
     queries_path = project_dir / "queries.yaml"
     queries_path.write_text(
-        "- question: Stale wide reference\n"
-        "  sql: SELECT region, sales_2020 FROM sales;\n",
+        "- question: Stale wide reference\n  sql: SELECT region, sales_2020 FROM sales;\n",
         encoding="utf-8",
     )
     repaired_yaml = (
-        "- question: Long-form sales\n"
-        "  sql: SELECT region, period, sales FROM sales_long;\n"
+        "- question: Long-form sales\n  sql: SELECT region, period, sales FROM sales_long;\n"
     )
 
     async def fake_repair(project_dir, old_schema, new_schema, drift, **kwargs):
@@ -548,6 +545,11 @@ def test_grounding_repair_endpoint_rewrites_stale_files(loaded_state, monkeypatc
     proposal = _suggestion_to_proposal_dict(suggestion)
 
     with TestClient(web_app.app) as client:
+        # FastAPI startup clears llm_client when no API key is configured
+        # (CI case). Stub it inside the context so the repair endpoint
+        # sees a configured client.
+        loaded_state.llm_client = cast(Any, object())
+        loaded_state.model = "stub"
         apply_resp = client.post(
             "/api/tidy/apply",
             json={
@@ -651,6 +653,11 @@ def test_grounding_repair_endpoint_surfaces_validation_errors(loaded_state, monk
     proposal = _suggestion_to_proposal_dict(suggestion)
 
     with TestClient(web_app.app) as client:
+        # FastAPI startup clears llm_client when no API key is configured
+        # (CI case). Stub it inside the context so the repair endpoint
+        # sees a configured client.
+        loaded_state.llm_client = cast(Any, object())
+        loaded_state.model = "stub"
         apply_resp = client.post(
             "/api/tidy/apply",
             json={

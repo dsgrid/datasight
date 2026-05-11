@@ -104,8 +104,7 @@ def grounding_check(project_dir: str) -> None:
     settings, _ = cli.resolve_settings(project_dir)
     if settings.database.mode != "duckdb":
         click.echo(
-            "grounding check requires DuckDB; database.mode is "
-            f"{settings.database.mode!r}.",
+            f"grounding check requires DuckDB; database.mode is {settings.database.mode!r}.",
             err=True,
         )
         sys.exit(2)
@@ -200,8 +199,7 @@ def grounding_repair(  # noqa: C901
     settings, resolved_model = cli.resolve_settings(project_dir, model)
     if settings.database.mode != "duckdb":
         click.echo(
-            "grounding repair requires DuckDB; database.mode is "
-            f"{settings.database.mode!r}.",
+            f"grounding repair requires DuckDB; database.mode is {settings.database.mode!r}.",
             err=True,
         )
         sys.exit(2)
@@ -266,9 +264,7 @@ def grounding_repair(  # noqa: C901
     click.echo(f"Running repair with model: {resolved_model}")
     try:
         result = asyncio.run(
-            _run_repair(
-                project_dir, old_schema, new_schema, drift, settings, resolved_model
-            )
+            _run_repair(project_dir, old_schema, new_schema, drift, settings, resolved_model)
         )
     except Exception as exc:  # noqa: BLE001 — surface to user
         click.echo(f"Repair failed: {exc}", err=True)

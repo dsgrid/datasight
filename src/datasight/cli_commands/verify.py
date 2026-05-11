@@ -104,9 +104,7 @@ def verify(project_dir, model, queries_path, static_only, skip_grounding_check):
                     enums = build_enum_values_sync(conn, truth)
                 finally:
                     conn.close()
-                report = check_grounding_drift(
-                    Path(project_dir), truth, enum_values=enums
-                )
+                report = check_grounding_drift(Path(project_dir), truth, enum_values=enums)
                 if not report.is_clean:
                     click.echo(format_drift_report(report), err=True)
                     click.echo("", err=True)
@@ -122,6 +120,15 @@ def verify(project_dir, model, queries_path, static_only, skip_grounding_check):
                 elif static_only:
                     click.echo("grounding clean: no drift detected.")
                     sys.exit(0)
+            elif static_only:
+                # --static-only can't run without a live DB to introspect.
+                # Fail loudly instead of falling through to the LLM phase,
+                # which would contradict the flag's semantics.
+                click.echo(
+                    f"Error: Database file not found: {resolved_db_path}",
+                    err=True,
+                )
+                sys.exit(1)
         elif static_only:
             click.echo(
                 "--static-only requires DuckDB; database.mode is "

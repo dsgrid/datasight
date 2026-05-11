@@ -3361,8 +3361,7 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
     # on AppState because grounding repair runs as a separate request
     # (the LLM call is too slow to block the apply response).
     old_schema: dict[str, set[str]] = {
-        t["name"]: {c["name"] for c in t["columns"]}
-        for t in state.schema_info
+        t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
     }
     state.pre_tidy_schema = old_schema
     # Persist alongside the in-memory snapshot so the user can retry
@@ -3477,14 +3476,9 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
         # of the apply path so the response returns immediately.
         grounding_drift: dict[str, Any] | None = None
         new_schema: dict[str, set[str]] = {
-            t["name"]: {c["name"] for c in t["columns"]}
-            for t in state.schema_info
+            t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
         }
-        if (
-            state.project_dir
-            and new_schema != old_schema
-            and not state.is_ephemeral
-        ):
+        if state.project_dir and new_schema != old_schema and not state.is_ephemeral:
             grounding_drift = _summarize_grounding_drift(
                 project_dir=state.project_dir,
                 db_path=db_path,
@@ -3530,9 +3524,7 @@ def _summarize_grounding_drift(
     except Exception:  # noqa: BLE001
         enum_values = set()
 
-    drift = check_grounding_drift(
-        Path(project_dir), new_schema, enum_values=enum_values
-    )
+    drift = check_grounding_drift(Path(project_dir), new_schema, enum_values=enum_values)
     return {
         "needs_repair": not drift.is_clean,
         "drift_items": len(drift.items),
@@ -3571,9 +3563,7 @@ async def _run_grounding_repair(  # noqa: C901
     except Exception:  # noqa: BLE001
         enum_values = set()
 
-    drift = check_grounding_drift(
-        Path(project_dir), new_schema, enum_values=enum_values
-    )
+    drift = check_grounding_drift(Path(project_dir), new_schema, enum_values=enum_values)
     if drift.is_clean:
         return {
             "drift_items": 0,
@@ -3592,13 +3582,13 @@ async def _run_grounding_repair(  # noqa: C901
             model=model,
             run_sql=run_sql,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("Grounding repair LLM call failed")
         return {
             "drift_items": len(drift.items),
             "files_written": [],
             "applied": False,
-            "error": str(exc),
+            "error": "Grounding repair failed; see server logs for details.",
         }
 
     if not result.any_changes:
@@ -3610,9 +3600,7 @@ async def _run_grounding_repair(  # noqa: C901
         }
     if not result.overall_ok:
         validation_errors = [
-            f"{f.name}: {err}"
-            for f in result.files
-            for err in f.validation_errors
+            f"{f.name}: {err}" for f in result.files for err in f.validation_errors
         ]
         return {
             "drift_items": len(drift.items),
@@ -3623,13 +3611,13 @@ async def _run_grounding_repair(  # noqa: C901
 
     try:
         written = write_repair_atomic(result, Path(project_dir))
-    except OSError as exc:
+    except OSError:
         logger.exception("Grounding repair atomic write failed")
         return {
             "drift_items": len(drift.items),
             "files_written": [],
             "applied": False,
-            "error": str(exc),
+            "error": "Failed to write repaired grounding files; see server logs for details.",
         }
     return {
         "drift_items": len(drift.items),
@@ -3683,28 +3671,46 @@ async def tidy_grounding_repair(state: AppState = Depends(get_state)):
     db_path = runner._database_path
 
     new_schema: dict[str, set[str]] = {
-        t["name"]: {c["name"] for c in t["columns"]}
-        for t in state.schema_info
+        t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
     }
 
-    async with state.state_lock:
-        summary = await _run_grounding_repair(
-            project_dir=state.project_dir,
-            db_path=db_path,
-            old_schema=old_schema,
-            new_schema=new_schema,
-            llm_client=state.llm_client,
-            model=state.model,
-            run_sql=state.sql_runner.run_sql,
-        )
+    # Snapshot the inputs we need before releasing the lock so the LLM
+    # call doesn't see a half-mutated state if a concurrent project
+    # change races us. ``project_dir`` is the guard — if it differs when
+    # we re-acquire the lock, the user switched projects mid-call and
+    # we must not touch the new project's state.
+    project_dir_snapshot = state.project_dir
+    llm_client = state.llm_client
+    model = state.model
+    run_sql = state.sql_runner.run_sql
 
-        # Reload the user-facing prose so the system prompt picks up the
-        # repaired schema_description.md. schema_info itself didn't
-        # change in this endpoint — only the grounding files on disk did.
-        if summary.get("applied"):
-            tables = await introspect_schema(
-                state.sql_runner.run_sql, runner=state.sql_runner
-            )
+    # Run the slow LLM + validation + write outside ``state_lock`` so
+    # other state-level operations (project load/unload, settings
+    # updates, tidy apply) aren't blocked for the minutes a local model
+    # can take. The repair itself only touches grounding files on disk;
+    # it doesn't mutate AppState.
+    summary = await _run_grounding_repair(
+        project_dir=project_dir_snapshot,
+        db_path=db_path,
+        old_schema=old_schema,
+        new_schema=new_schema,
+        llm_client=llm_client,
+        model=model,
+        run_sql=run_sql,
+    )
+
+    # Re-acquire the lock only for the small critical section that
+    # mutates AppState. Guard against a concurrent project switch: if
+    # the loaded project changed while the LLM ran, the schema we
+    # rebuilt no longer matches what's loaded — drop the mutation.
+    async with state.state_lock:
+        if (
+            summary.get("applied")
+            and state.project_loaded
+            and state.project_dir == project_dir_snapshot
+            and state.sql_runner is not None
+        ):
+            tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
             state.schema_text = format_schema_context(
                 tables,
                 user_description=_load_user_description(state),
@@ -3745,8 +3751,7 @@ async def grounding_status(state: AppState = Depends(get_state)):
     db_path = runner._database_path
 
     new_schema: dict[str, set[str]] = {
-        t["name"]: {c["name"] for c in t["columns"]}
-        for t in state.schema_info
+        t["name"]: {c["name"] for c in t["columns"]} for t in state.schema_info
     }
     summary = _summarize_grounding_drift(
         project_dir=state.project_dir,
@@ -3757,8 +3762,7 @@ async def grounding_status(state: AppState = Depends(get_state)):
     # whether to enable the repair button — without one, the user has
     # to use the CLI's ``--from-csv`` fallback.
     has_snapshot = (
-        state.pre_tidy_schema is not None
-        or read_snapshot(state.project_dir) is not None
+        state.pre_tidy_schema is not None or read_snapshot(state.project_dir) is not None
     )
     return {
         "available": True,

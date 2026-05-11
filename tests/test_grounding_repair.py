@@ -110,11 +110,13 @@ def test_parse_repair_json_rejects_malformed():
 
 
 def test_parse_repair_json_drops_unknown_keys():
-    text = json.dumps({
-        "queries.yaml": "x",
-        "comment": "ignore me",
-        "schema_description.md": "y",
-    })
+    text = json.dumps(
+        {
+            "queries.yaml": "x",
+            "comment": "ignore me",
+            "schema_description.md": "y",
+        }
+    )
     result = _parse_repair_json(text)
     assert set(result.keys()) == {"queries.yaml", "schema_description.md"}
 
@@ -204,10 +206,12 @@ def test_format_repair_summary_with_no_changes():
 def test_repair_grounding_happy_path(tmp_path):
     """LLM proposal validates cleanly on first try; result is well-formed."""
     db_path = _long_format_db(tmp_path)
-    (tmp_path / "queries.yaml").write_text(textwrap.dedent("""
+    (tmp_path / "queries.yaml").write_text(
+        textwrap.dedent("""
         - question: "Old top regions"
           sql: SELECT * FROM load_data WHERE elec_heating > 0;
-    """).strip())
+    """).strip()
+    )
 
     new_queries = textwrap.dedent("""
         - question: "Top regions"
@@ -217,17 +221,31 @@ def test_repair_grounding_happy_path(tmp_path):
     client = _FakeLLMClient([llm_response])
     run_sql = _make_run_sql(db_path)
 
-    drift = DriftReport(items=[DriftItem(
-        file=str(tmp_path / "queries.yaml"), line=None, kind="column",
-        claim="elec_heating", detail="missing",
-    )])
+    drift = DriftReport(
+        items=[
+            DriftItem(
+                file=str(tmp_path / "queries.yaml"),
+                line=None,
+                kind="column",
+                claim="elec_heating",
+                detail="missing",
+            )
+        ]
+    )
     old_schema = {"load_data": {"elec_heating", "geography"}}
     new_schema = {"load_data": {"geography", "fuel_type", "end_use", "energy_mwh"}}
 
-    result = asyncio.run(repair_grounding(
-        tmp_path, old_schema, new_schema, drift,
-        llm_client=client, model="test", run_sql=run_sql,
-    ))
+    result = asyncio.run(
+        repair_grounding(
+            tmp_path,
+            old_schema,
+            new_schema,
+            drift,
+            llm_client=client,
+            model="test",
+            run_sql=run_sql,
+        )
+    )
     assert result.overall_ok
     assert result.any_changes
     assert result.llm_retries == 0
@@ -239,28 +257,46 @@ def test_repair_grounding_happy_path(tmp_path):
 def test_repair_grounding_retries_on_invalid_sql(tmp_path):
     """First proposal fails to execute; second one validates."""
     db_path = _long_format_db(tmp_path)
-    (tmp_path / "queries.yaml").write_text(textwrap.dedent("""
+    (tmp_path / "queries.yaml").write_text(
+        textwrap.dedent("""
         - question: "Stale"
           sql: SELECT foo FROM load_data;
-    """).strip())
+    """).strip()
+    )
 
-    broken = json.dumps({"queries.yaml": "- question: q\n  sql: SELECT still_broken FROM load_data;"})
+    broken = json.dumps(
+        {"queries.yaml": "- question: q\n  sql: SELECT still_broken FROM load_data;"}
+    )
     good = json.dumps({"queries.yaml": "- question: q\n  sql: SELECT geography FROM load_data;"})
     client = _FakeLLMClient([broken, good])
     run_sql = _make_run_sql(db_path)
 
-    drift = DriftReport(items=[DriftItem(
-        file=str(tmp_path / "queries.yaml"), line=None, kind="column",
-        claim="foo", detail="missing",
-    )])
+    drift = DriftReport(
+        items=[
+            DriftItem(
+                file=str(tmp_path / "queries.yaml"),
+                line=None,
+                kind="column",
+                claim="foo",
+                detail="missing",
+            )
+        ]
+    )
     old_schema = {"load_data": {"foo"}}
     new_schema = {"load_data": {"geography", "fuel_type", "end_use", "energy_mwh"}}
 
-    result = asyncio.run(repair_grounding(
-        tmp_path, old_schema, new_schema, drift,
-        llm_client=client, model="test", run_sql=run_sql,
-        max_retries=2,
-    ))
+    result = asyncio.run(
+        repair_grounding(
+            tmp_path,
+            old_schema,
+            new_schema,
+            drift,
+            llm_client=client,
+            model="test",
+            run_sql=run_sql,
+            max_retries=2,
+        )
+    )
     assert result.overall_ok
     assert result.llm_retries == 1
     # The client should have been called twice and the second user prompt
@@ -273,10 +309,12 @@ def test_repair_grounding_retries_on_invalid_sql(tmp_path):
 def test_repair_grounding_gives_up_after_max_retries(tmp_path):
     """When every proposal is broken, the result surfaces validation errors."""
     db_path = _long_format_db(tmp_path)
-    (tmp_path / "queries.yaml").write_text(textwrap.dedent("""
+    (tmp_path / "queries.yaml").write_text(
+        textwrap.dedent("""
         - question: "Stale"
           sql: SELECT foo FROM load_data;
-    """).strip())
+    """).strip()
+    )
 
     bad = json.dumps({"queries.yaml": "- question: q\n  sql: SELECT nope_a FROM load_data;"})
     worse = json.dumps({"queries.yaml": "- question: q\n  sql: SELECT nope_b FROM load_data;"})
@@ -288,11 +326,18 @@ def test_repair_grounding_gives_up_after_max_retries(tmp_path):
     old_schema: dict[str, set[str]] = {}
     new_schema = {"load_data": {"geography"}}
 
-    result = asyncio.run(repair_grounding(
-        tmp_path, old_schema, new_schema, drift,
-        llm_client=client, model="test", run_sql=run_sql,
-        max_retries=2,
-    ))
+    result = asyncio.run(
+        repair_grounding(
+            tmp_path,
+            old_schema,
+            new_schema,
+            drift,
+            llm_client=client,
+            model="test",
+            run_sql=run_sql,
+            max_retries=2,
+        )
+    )
     assert not result.overall_ok
     q_file = next(f for f in result.files if f.name == "queries.yaml")
     assert q_file.validation_errors
@@ -313,10 +358,17 @@ def test_repair_files_are_loaded_from_disk(tmp_path):
     drift = DriftReport(items=[])
     new_schema = {"load_data": {"geography"}}
 
-    result = asyncio.run(repair_grounding(
-        tmp_path, {}, new_schema, drift,
-        llm_client=client, model="test", run_sql=run_sql,
-    ))
+    result = asyncio.run(
+        repair_grounding(
+            tmp_path,
+            {},
+            new_schema,
+            drift,
+            llm_client=client,
+            model="test",
+            run_sql=run_sql,
+        )
+    )
     file_names = {f.name for f in result.files}
     assert file_names == {"queries.yaml", "schema_description.md"}
     assert "time_series.yaml" not in file_names

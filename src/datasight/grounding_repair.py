@@ -91,7 +91,10 @@ def write_snapshot(project_dir: Path | str, schema: dict[str, set[str]]) -> Path
     target = snapshot_path(project_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=target.parent, delete=False,
+        mode="w",
+        encoding="utf-8",
+        dir=target.parent,
+        delete=False,
         prefix=".grounding-snapshot-",
     ) as tmp:
         json.dump(payload, tmp, indent=2, sort_keys=True)
@@ -255,11 +258,14 @@ async def repair_grounding(
 
     proposed: dict[str, str] | None = None
     last_error: str | None = None
-    retries = 0
     for attempt in range(max_retries + 1):
-        user_prompt = prompt if last_error is None else (
-            f"{prompt}\n\nYour previous response had validation errors. "
-            f"Fix them and return the full corrected JSON object:\n\n{last_error}"
+        user_prompt = (
+            prompt
+            if last_error is None
+            else (
+                f"{prompt}\n\nYour previous response had validation errors. "
+                f"Fix them and return the full corrected JSON object:\n\n{last_error}"
+            )
         )
         response = await llm_client.create_message(
             model=model,
@@ -273,7 +279,6 @@ async def repair_grounding(
             proposed = _parse_repair_json(text)
         except ValueError as exc:
             last_error = f"Could not parse JSON from your response: {exc}"
-            retries = attempt + 1
             logger.warning(f"repair attempt {attempt + 1}: {last_error}")
             continue
 
@@ -285,6 +290,9 @@ async def repair_grounding(
         await _validate_repair(files, run_sql=run_sql)
 
         if all(f.ok for f in files):
+            # ``attempt`` is the 0-based index of the call that succeeded,
+            # which equals the number of retries performed (0 = success
+            # on the first call, 1 = one retry, ...).
             return RepairResult(files=files, llm_retries=attempt)
 
         # Build a summarized error report for the next retry.
@@ -293,14 +301,12 @@ async def repair_grounding(
             for err in f.validation_errors:
                 error_lines.append(f"- {f.name}: {err}")
         last_error = "\n".join(error_lines)
-        retries = attempt + 1
-        logger.warning(
-            f"repair attempt {attempt + 1}: {len(error_lines)} validation error(s)"
-        )
+        logger.warning(f"repair attempt {attempt + 1}: {len(error_lines)} validation error(s)")
 
     # Out of retries — return the last attempt with its errors so the
-    # caller can fall back to manual edit mode.
-    return RepairResult(files=files, llm_retries=retries)
+    # caller can fall back to manual edit mode. ``max_retries`` is the
+    # number of retries performed beyond the initial call.
+    return RepairResult(files=files, llm_retries=max_retries)
 
 
 def write_repair_atomic(result: RepairResult, project_dir: Path) -> list[Path]:
@@ -332,7 +338,11 @@ def write_repair_atomic(result: RepairResult, project_dir: Path) -> list[Path]:
         # NamedTemporaryFile with delete=False so we can keep the path
         # after closing; os.replace then atomically swaps it in.
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=parent, delete=False, prefix=".grounding-",
+            mode="w",
+            encoding="utf-8",
+            dir=parent,
+            delete=False,
+            prefix=".grounding-",
         ) as tmp:
             tmp.write(f.new_text)
             tmp.flush()
@@ -507,9 +517,7 @@ async def _validate_repair(  # noqa: C901
                     await run_sql(sql)
                 except Exception as exc:  # noqa: BLE001
                     question = entry.get("question", "(no question)")
-                    f.validation_errors.append(
-                        f"query {i} ({question!r}) failed: {exc}"
-                    )
+                    f.validation_errors.append(f"query {i} ({question!r}) failed: {exc}")
         elif f.name == "time_series.yaml":
             try:
                 yaml.safe_load(f.new_text)

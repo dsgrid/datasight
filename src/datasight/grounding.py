@@ -37,6 +37,8 @@ import sqlglot
 import yaml
 from sqlglot import exp
 
+from datasight.schema import _quote_identifier
+
 
 # Backtick-quoted lowercase identifier in markdown. Matches ``foo``,
 # ``foo_bar``, ``foo.bar``. Anything that isn't a snake_case identifier
@@ -48,18 +50,77 @@ _MD_BACKTICK_IDENT = re.compile(r"`([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)`")
 # inside ``schema_description.md`` — used to suppress false positives
 # from the markdown scan. Not exhaustive: only the words that show up in
 # prose. Anything not here AND not in the current schema gets flagged.
-_SQL_KEYWORDS: frozenset[str] = frozenset({
-    "all", "and", "as", "asc", "avg", "between", "boolean", "by",
-    "case", "cast", "ceil", "coalesce", "corr", "count", "current_date",
-    "date", "date_trunc", "datetime", "day", "desc", "distinct",
-    "double", "else", "end", "extract", "false", "floor", "from",
-    "group", "having", "in", "inner", "integer", "is", "join", "left",
-    "limit", "max", "min", "month", "not", "now", "null", "offset",
-    "on", "or", "order", "outer", "over", "regr_intercept", "regr_r2",
-    "regr_slope", "right", "round", "row_number", "select", "sum",
-    "then", "timestamp", "to_date", "true", "union", "varchar",
-    "when", "where", "with", "year",
-})
+_SQL_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "all",
+        "and",
+        "as",
+        "asc",
+        "avg",
+        "between",
+        "boolean",
+        "by",
+        "case",
+        "cast",
+        "ceil",
+        "coalesce",
+        "corr",
+        "count",
+        "current_date",
+        "date",
+        "date_trunc",
+        "datetime",
+        "day",
+        "desc",
+        "distinct",
+        "double",
+        "else",
+        "end",
+        "extract",
+        "false",
+        "floor",
+        "from",
+        "group",
+        "having",
+        "in",
+        "inner",
+        "integer",
+        "is",
+        "join",
+        "left",
+        "limit",
+        "max",
+        "min",
+        "month",
+        "not",
+        "now",
+        "null",
+        "offset",
+        "on",
+        "or",
+        "order",
+        "outer",
+        "over",
+        "regr_intercept",
+        "regr_r2",
+        "regr_slope",
+        "right",
+        "round",
+        "row_number",
+        "select",
+        "sum",
+        "then",
+        "timestamp",
+        "to_date",
+        "true",
+        "union",
+        "varchar",
+        "when",
+        "where",
+        "with",
+        "year",
+    }
+)
 
 
 @dataclass
@@ -177,10 +238,15 @@ def _check_queries(  # noqa: C901
     try:
         docs = yaml.safe_load(text) or []
     except yaml.YAMLError as exc:
-        report.items.append(DriftItem(
-            file=str(path), line=None, kind="parse_error",
-            claim="", detail=f"yaml parse error: {exc}",
-        ))
+        report.items.append(
+            DriftItem(
+                file=str(path),
+                line=None,
+                kind="parse_error",
+                claim="",
+                detail=f"yaml parse error: {exc}",
+            )
+        )
         return
     if not isinstance(docs, list):
         return
@@ -229,27 +295,57 @@ def _check_queries(  # noqa: C901
                 name = tref.name
                 if not name or name in cte_names or name in all_tables:
                     continue
-                report.items.append(DriftItem(
-                    file=str(path), line=None, kind="table",
-                    claim=name,
-                    detail=f"table '{name}' not in current schema",
-                    suggestion=_nearest(name, all_tables),
-                ))
+                report.items.append(
+                    DriftItem(
+                        file=str(path),
+                        line=None,
+                        kind="table",
+                        claim=name,
+                        detail=f"table '{name}' not in current schema",
+                        suggestion=_nearest(name, all_tables),
+                    )
+                )
             for cref in stmt.find_all(exp.Column):
                 name = cref.name
-                if not name or name in all_columns or name in output_aliases:
+                if not name or name in output_aliases:
                     continue
-                # Qualified-but-unknown table prefixes are caught by the
-                # table check above; ignore the column part to avoid
-                # double-reporting.
-                if cref.table and cref.table not in all_tables:
+                qualifier = cref.table
+                if qualifier:
+                    # Qualified-but-unknown table prefixes are caught by
+                    # the table check above; ignore the column part to
+                    # avoid double-reporting.
+                    if qualifier not in all_tables:
+                        continue
+                    # Validate against the referenced table's column set
+                    # rather than the union. A column moved/renamed in
+                    # one table but still present elsewhere would
+                    # otherwise be a false negative.
+                    table_cols = schema_truth.get(qualifier, set())
+                    if name in table_cols:
+                        continue
+                    report.items.append(
+                        DriftItem(
+                            file=str(path),
+                            line=None,
+                            kind="column",
+                            claim=f"{qualifier}.{name}",
+                            detail=f"column '{name}' not in table '{qualifier}'",
+                            suggestion=_nearest(name, table_cols),
+                        )
+                    )
                     continue
-                report.items.append(DriftItem(
-                    file=str(path), line=None, kind="column",
-                    claim=name,
-                    detail=f"column '{name}' not in any table",
-                    suggestion=_nearest(name, all_columns),
-                ))
+                if name in all_columns:
+                    continue
+                report.items.append(
+                    DriftItem(
+                        file=str(path),
+                        line=None,
+                        kind="column",
+                        claim=name,
+                        detail=f"column '{name}' not in any table",
+                        suggestion=_nearest(name, all_columns),
+                    )
+                )
 
 
 def _check_schema_description(  # noqa: C901
@@ -271,13 +367,28 @@ def _check_schema_description(  # noqa: C901
         for m in _MD_BACKTICK_IDENT.finditer(line):
             ident = m.group(1).lower()
 
-            # ``table.column`` — check the column against that table's
-            # column list. Unknown tables are silently ignored here to
-            # avoid noise from prose that mentions tables from other DBs.
+            # ``table.column`` — check both the table and the column
+            # against the live schema. A reference to a renamed/dropped
+            # table is exactly the failure this check is meant to catch,
+            # so flag it instead of silently skipping.
             parts = ident.split(".")
             if len(parts) == 2:
                 table, col = parts
                 if table not in all_tables:
+                    key = (lineno, ident)
+                    if key in seen_on_line:
+                        continue
+                    seen_on_line.add(key)
+                    report.items.append(
+                        DriftItem(
+                            file=str(path),
+                            line=lineno,
+                            kind="table",
+                            claim=ident,
+                            detail=f"`{ident}` references unknown table '{table}'",
+                            suggestion=_nearest(table, all_tables),
+                        )
+                    )
                     continue
                 if col not in schema_truth.get(table, set()):
                     key = (lineno, ident)
@@ -285,12 +396,16 @@ def _check_schema_description(  # noqa: C901
                         continue
                     seen_on_line.add(key)
                     suggestion = _nearest(col, schema_truth.get(table, set()))
-                    report.items.append(DriftItem(
-                        file=str(path), line=lineno, kind="column",
-                        claim=ident,
-                        detail=f"`{ident}` not a column of '{table}'",
-                        suggestion=f"{table}.{suggestion}" if suggestion else None,
-                    ))
+                    report.items.append(
+                        DriftItem(
+                            file=str(path),
+                            line=lineno,
+                            kind="column",
+                            claim=ident,
+                            detail=f"`{ident}` not a column of '{table}'",
+                            suggestion=f"{table}.{suggestion}" if suggestion else None,
+                        )
+                    )
                 continue
 
             if ident in known:
@@ -304,15 +419,19 @@ def _check_schema_description(  # noqa: C901
             if key in seen_on_line:
                 continue
             seen_on_line.add(key)
-            report.items.append(DriftItem(
-                file=str(path), line=lineno, kind="column",
-                claim=ident,
-                detail=f"`{ident}` not in current schema (column or table)",
-                suggestion=_nearest(ident, all_columns | all_tables),
-            ))
+            report.items.append(
+                DriftItem(
+                    file=str(path),
+                    line=lineno,
+                    kind="column",
+                    claim=ident,
+                    detail=f"`{ident}` not in current schema (column or table)",
+                    suggestion=_nearest(ident, all_columns | all_tables),
+                )
+            )
 
 
-def _check_time_series(
+def _check_time_series(  # noqa: C901
     path: Path, schema_truth: dict[str, set[str]], report: DriftReport
 ) -> None:
     """Verify each entry's ``table`` / ``timestamp_column`` / ``group_columns``."""
@@ -320,10 +439,15 @@ def _check_time_series(
     try:
         docs = yaml.safe_load(text) or []
     except yaml.YAMLError as exc:
-        report.items.append(DriftItem(
-            file=str(path), line=None, kind="parse_error",
-            claim="", detail=f"yaml parse error: {exc}",
-        ))
+        report.items.append(
+            DriftItem(
+                file=str(path),
+                line=None,
+                kind="parse_error",
+                claim="",
+                detail=f"yaml parse error: {exc}",
+            )
+        )
         return
     if not isinstance(docs, list):
         return
@@ -335,29 +459,48 @@ def _check_time_series(
         if not table:
             continue
         if table not in schema_truth:
-            report.items.append(DriftItem(
-                file=str(path), line=None, kind="ts_table",
-                claim=str(table),
-                detail=f"time_series table '{table}' not in current schema",
-                suggestion=_nearest(str(table), set(schema_truth.keys())),
-            ))
+            report.items.append(
+                DriftItem(
+                    file=str(path),
+                    line=None,
+                    kind="ts_table",
+                    claim=str(table),
+                    detail=f"time_series table '{table}' not in current schema",
+                    suggestion=_nearest(str(table), set(schema_truth.keys())),
+                )
+            )
             continue
         ts_col = entry.get("timestamp_column")
         if ts_col and ts_col not in schema_truth[table]:
-            report.items.append(DriftItem(
-                file=str(path), line=None, kind="ts_column",
-                claim=str(ts_col),
-                detail=f"time_series timestamp_column '{ts_col}' not a column of '{table}'",
-                suggestion=_nearest(str(ts_col), schema_truth[table]),
-            ))
-        for col in entry.get("group_columns") or []:
+            report.items.append(
+                DriftItem(
+                    file=str(path),
+                    line=None,
+                    kind="ts_column",
+                    claim=str(ts_col),
+                    detail=f"time_series timestamp_column '{ts_col}' not a column of '{table}'",
+                    suggestion=_nearest(str(ts_col), schema_truth[table]),
+                )
+            )
+        # Match ``config.load_time_series_config``'s contract: only
+        # iterate when ``group_columns`` is actually a list. A scalar
+        # (e.g. ``group_columns: region``) would otherwise iterate
+        # characters and produce nonsense drift items.
+        group_cols = entry.get("group_columns")
+        if not isinstance(group_cols, list):
+            continue
+        for col in group_cols:
             if col not in schema_truth[table]:
-                report.items.append(DriftItem(
-                    file=str(path), line=None, kind="ts_column",
-                    claim=str(col),
-                    detail=f"time_series group_column '{col}' not a column of '{table}'",
-                    suggestion=_nearest(str(col), schema_truth[table]),
-                ))
+                report.items.append(
+                    DriftItem(
+                        file=str(path),
+                        line=None,
+                        kind="ts_column",
+                        claim=str(col),
+                        detail=f"time_series group_column '{col}' not a column of '{table}'",
+                        suggestion=_nearest(str(col), schema_truth[table]),
+                    )
+                )
 
 
 def _nearest(claim: str, candidates: set[str]) -> str | None:
@@ -411,18 +554,25 @@ def build_enum_values_sync(
         if "char" not in str(dtype).lower() and "string" not in str(dtype).lower():
             continue
         try:
-            count = conn.execute(
-                f"SELECT COUNT(DISTINCT {col}) FROM {table}"
-            ).fetchone()
-        except Exception:  # noqa: BLE001 — never let one bad column abort the whole scan
+            qcol = _quote_identifier(col)
+            qtable = _quote_identifier(table)
+        except ValueError:
+            # Identifier with embedded control chars; not safe to embed.
             continue
-        if count is None or count[0] > max_per_column:
-            continue
+        # Bound the scan so a free-text column on a huge table can't turn
+        # the "cheap pre-flight" grounding check into a full-table scan.
+        # ``LIMIT max_per_column + 1`` lets us decide whether the column
+        # qualifies (<= max_per_column distinct values) without counting
+        # all the rest.
         try:
             values = conn.execute(
-                f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL"
+                f"SELECT DISTINCT {qcol} FROM {qtable} "
+                f"WHERE {qcol} IS NOT NULL LIMIT {max_per_column + 1}"
             ).fetchall()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — never let one bad column abort the whole scan
+            continue
+        if len(values) > max_per_column:
+            # Likely free-text or high-cardinality; skip without adding.
             continue
         for (v,) in values:
             if isinstance(v, str):
@@ -481,9 +631,7 @@ async def build_schema_truth_async(
     return out
 
 
-def format_drift_report(
-    report: DriftReport, *, max_items_per_file: int = 20
-) -> str:
+def format_drift_report(report: DriftReport, *, max_items_per_file: int = 20) -> str:
     """Render a DriftReport as a multi-line string for terminal output.
 
     Truncates per-file listings beyond ``max_items_per_file`` with a

@@ -66,9 +66,7 @@ def build_cost_data(
     if elapsed_seconds is not None and elapsed_seconds > 0:
         data["elapsed_seconds"] = round(elapsed_seconds, 4)
         data["output_tokens_per_sec"] = round(output_tokens / elapsed_seconds, 2)
-        data["total_tokens_per_sec"] = round(
-            (input_tokens + output_tokens) / elapsed_seconds, 2
-        )
+        data["total_tokens_per_sec"] = round((input_tokens + output_tokens) / elapsed_seconds, 2)
     if provider is None or provider in _PROVIDERS_WITH_PRICING:
         pricing = MODEL_PRICING.get(model)
         if pricing:
@@ -112,8 +110,7 @@ def log_query_cost(
     rate_str = ""
     if "elapsed_seconds" in data:
         rate_str = (
-            f" elapsed={data['elapsed_seconds']:.2f}s"
-            f" out_tps={data['output_tokens_per_sec']:.1f}"
+            f" elapsed={data['elapsed_seconds']:.2f}s out_tps={data['output_tokens_per_sec']:.1f}"
         )
     logger.info(
         f"[tokens] QUERY TOTAL: api_calls={api_calls} "

@@ -707,9 +707,7 @@ def _offer_grounding_repair(  # noqa: C901
     if old_schema == new_schema:
         return
 
-    drift = check_grounding_drift(
-        Path(project_dir), new_schema, enum_values=enum_values
-    )
+    drift = check_grounding_drift(Path(project_dir), new_schema, enum_values=enum_values)
     if drift.is_clean:
         return
 
@@ -726,9 +724,7 @@ def _offer_grounding_repair(  # noqa: C901
         )
         return
 
-    if not click.confirm(
-        "Repair grounding files with the configured LLM?", default=False
-    ):
+    if not click.confirm("Repair grounding files with the configured LLM?", default=False):
         return
 
     try:
