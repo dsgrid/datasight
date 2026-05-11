@@ -62,9 +62,6 @@ _SQL_KEYWORDS: frozenset[str] = frozenset({
 })
 
 
-_DEFAULT_GROUNDING_FILES = ("queries.yaml", "schema_description.md", "time_series.yaml")
-
-
 @dataclass
 class DriftItem:
     """One finding: a claim in a grounding file that doesn't resolve.
