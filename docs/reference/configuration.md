@@ -74,7 +74,7 @@ For help picking a provider, see [Choosing an LLM](../use/concepts/choosing-an-l
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name (must support tool calling). `qwen2.5:7b` works well for CLI queries; for the web UI with visualizations, try `qwen2.5:14b`. |
+| `OLLAMA_MODEL` | `qwen2.5:7b` | Ollama model name (must support tool calling). `qwen2.5:7b` is the safest cross-platform default (~2 GB resident, fits on 16 GB Macs). For Apple Silicon with 48 GB+ unified memory, `qwen3.6:35b-a3b-coding-mxfp8` gives richer answers at comparable decode speed. See [Choosing an AI provider](../use/concepts/choosing-an-llm.md#apple-silicon-mlx-native-models). |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama API endpoint |
 
 ### Database settings

@@ -112,9 +112,14 @@ Alternatively, paste the key directly into a project's `.env` file instead.
     OLLAMA_MODEL=qwen2.5:7b
     ```
 
-    `qwen2.5:7b` works well for CLI queries (`datasight ask`). For the web UI with
-    chart generation, `qwen2.5:14b` handles the more complex interactions better.
-    See [Choosing an AI provider](../concepts/choosing-an-llm.md) for hardware sizing guidance.
+    `qwen2.5:7b` works well for CLI queries (`datasight ask`) and is the safest
+    cross-platform default — it uses ~2 GB resident on Apple Silicon, so it fits
+    even on 16 GB Macs. For the web UI with chart generation, `qwen2.5:14b` handles
+    the more complex interactions better. On Apple Silicon with 48 GB+ of unified
+    memory, `qwen3.6:35b-a3b-coding-mxfp8` produces noticeably richer answers with
+    comparable decode speed (sparse MoE). See
+    [Choosing an AI provider](../concepts/choosing-an-llm.md#apple-silicon-mlx-native-models)
+    for measured per-model memory footprints and Apple-Silicon-specific guidance.
 
 See the [Configuration reference](../../reference/configuration.md) for every supported
 variable.

@@ -97,7 +97,7 @@ So a Llama 3.1 8B model fits in ~5 GB VRAM at 4-bit, a 70B model needs
 |---|---|
 | Apple Silicon with 16 GB unified memory | 7–8B models at 4-bit |
 | Apple Silicon with 32 GB | 13B at 4-bit, or 8B at 8-bit |
-| Apple Silicon with 64 GB+ | 34–70B at 4-bit |
+| Apple Silicon with 64 GB+ | 34–70B at 4-bit, or sparse-MoE models like Qwen3.6 35B-A3B |
 | NVIDIA laptop GPU, 8 GB VRAM | 7–8B at 4-bit |
 | NVIDIA laptop GPU, 16 GB VRAM | 13B at 4-bit |
 
@@ -106,6 +106,43 @@ starting point for CLI queries (`datasight ask`). For the web UI with
 visualizations, step up to `qwen2.5:14b` — the 7B model struggles with
 the more complex multi-step agent interactions required for chart
 generation. Smaller models often struggle with realistic schemas.
+
+### Apple Silicon: MLX-native models
+
+If you're on Apple Silicon, models tagged `-mlx-*` use Apple's MLX
+runtime and Metal compute. They typically decode 10–30% faster than the
+equivalent GGUF model, but the *resident memory* can be much larger than
+the weight size alone suggests because MLX allocates a large KV-cache
+buffer for the model's default context window (often 256K tokens).
+Measure before recommending to users — the model card's parameter count
+is not a reliable predictor of laptop fit.
+
+Measured on a single benchmark dataset (5 questions, agent loop with
+tool calls, Ollama server keep-alive at default 5 min) on a Mac with
+unified memory:
+
+| Model | Decode (tok/s) | Resident memory (incl. KV cache) | Answer style |
+|---|---|---|---|
+| `qwen2.5:7b` (q4_K_M, GGUF) | ~85 | **~2 GB** | Middle: substantive but can hit `max_tokens` |
+| `gemma4:e2b-mlx-bf16` | ~95 | ~11 GB | Tersest: dumps data tables, minimal analysis |
+| `qwen3.6:35b-a3b-coding-mxfp8` | ~90 | ~38 GB | Richest: includes slopes, R², regional context |
+
+The headline surprise: **`gemma4:e2b-mlx-bf16` is not a low-memory
+option**, despite the "e2b" (effective 2B) naming. Its weights are
+small but the default 256K-token context allocation dominates resident
+memory. Use it on 32 GB+ Macs only.
+
+Apple Silicon recommendations by RAM tier:
+
+| Unified memory | Recommended model | Why |
+|---|---|---|
+| 16 GB | `qwen2.5:7b` (GGUF) | Only option that fits with headroom for the OS, browser, and IDE. |
+| 32 GB | `qwen2.5:7b` or `gemma4:e2b-mlx-bf16` | Either fits. Gemma is faster but its answers are tersest; pick based on whether you want interpretation or just raw data. |
+| 48 GB+ | `qwen3.6:35b-a3b-coding-mxfp8` | Sparse MoE (3B active params) — best answer quality, comparable speed, properly leverages Apple Silicon's unified memory + Metal. |
+
+If you have an Apple Silicon machine but aren't sure which tag to use,
+start with `qwen2.5:7b` (the cross-platform recommendation above). It
+works on every backend and has the smallest memory footprint by far.
 
 ### On an HPC GPU node
 
