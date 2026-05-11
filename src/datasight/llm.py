@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
@@ -118,12 +119,20 @@ class ToolUseBlock:
 
 @dataclass
 class Usage:
-    """Token usage statistics from an LLM response."""
+    """Token usage statistics from an LLM response.
+
+    ``elapsed_seconds`` is wall-clock time for the API call, measured
+    client-side. It is the only available timing signal for providers whose
+    response payloads omit native timing fields (Ollama's OpenAI-compatible
+    endpoint, for example). Includes prefill + decode + network; callers
+    that want a clean decode rate should probe the model directly.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    elapsed_seconds: float = 0.0
 
 
 @dataclass
@@ -299,9 +308,14 @@ class AnthropicLLMClient:
 
         response = None
         retries = 0
+        elapsed_seconds = 0.0
         for attempt in range(DEFAULT_MAX_ATTEMPTS):
             is_last = attempt == DEFAULT_MAX_ATTEMPTS - 1
             try:
+                # Wall-clock the actual API call; this is the only timing
+                # signal available across all providers since their response
+                # payloads don't expose per-call timing uniformly.
+                _t0 = time.monotonic()
                 response = await self._client.messages.create(
                     model=model,
                     max_tokens=max_tokens,
@@ -310,6 +324,7 @@ class AnthropicLLMClient:
                     tools=anthropic_tools,
                     messages=anthropic_messages,
                 )
+                elapsed_seconds = time.monotonic() - _t0
                 break
             except anthropic.AuthenticationError as e:
                 # Auth failures are a configuration problem, not a transient
@@ -392,6 +407,7 @@ class AnthropicLLMClient:
             cache_creation_input_tokens=getattr(response.usage, "cache_creation_input_tokens", 0)
             or 0,
             cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+            elapsed_seconds=elapsed_seconds,
         )
         return LLMResponse(
             content=content,
@@ -599,9 +615,11 @@ class _OpenAICompatibleClient:
 
         response = None
         retries = 0
+        elapsed_seconds = 0.0
         for attempt in range(DEFAULT_MAX_ATTEMPTS):
             is_last = attempt == DEFAULT_MAX_ATTEMPTS - 1
             try:
+                _t0 = time.monotonic()
                 if openai_tools:
                     response = await self._client.chat.completions.create(
                         model=model,
@@ -617,6 +635,7 @@ class _OpenAICompatibleClient:
                         max_tokens=max_tokens,
                         temperature=0,
                     )
+                elapsed_seconds = time.monotonic() - _t0
                 break
             except oa.AuthenticationError as e:
                 # Auth failures are a configuration problem — don't retry.
@@ -736,6 +755,7 @@ class _OpenAICompatibleClient:
         usage = Usage(
             input_tokens=response.usage.prompt_tokens if response.usage else 0,
             output_tokens=response.usage.completion_tokens if response.usage else 0,
+            elapsed_seconds=elapsed_seconds,
         )
         return LLMResponse(
             content=content,

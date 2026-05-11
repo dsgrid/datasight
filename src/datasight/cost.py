@@ -38,6 +38,7 @@ def build_cost_data(
     *,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    elapsed_seconds: float | None = None,
     provider: str | None = None,
 ) -> dict[str, Any]:
     """Build a cost/token summary dict for a single turn.
@@ -47,6 +48,12 @@ def build_cost_data(
     ``None`` even if the model name happens to be in ``MODEL_PRICING`` —
     GitHub Models reuses OpenAI model names but is billed by quota, not
     per-token, so pricing them against OpenAI rates is misleading.
+
+    When ``elapsed_seconds`` is supplied and positive, ``elapsed_seconds``,
+    ``output_tokens_per_sec`` and ``total_tokens_per_sec`` are added to the
+    returned dict. ``output_tokens_per_sec`` is a wall-clock aggregate —
+    it includes prefill + decode + network, so it's a lower bound on the
+    model's true decode rate.
     """
     data: dict[str, Any] = {
         "api_calls": api_calls,
@@ -56,20 +63,25 @@ def build_cost_data(
         "cache_read_input_tokens": cache_read_input_tokens,
         "estimated_cost": None,
     }
-    if provider is not None and provider not in _PROVIDERS_WITH_PRICING:
-        return data
-    pricing = MODEL_PRICING.get(model)
-    if pricing:
-        input_cost = input_tokens * pricing[0] / 1_000_000
-        output_cost = output_tokens * pricing[1] / 1_000_000
-        # Anthropic prompt-cache writes are billed at 1.25x input price and
-        # cache reads at 0.1x input price for the ephemeral cache used here.
-        cache_creation_cost = cache_creation_input_tokens * pricing[0] * 1.25 / 1_000_000
-        cache_read_cost = cache_read_input_tokens * pricing[0] * 0.1 / 1_000_000
-        data["estimated_cost"] = round(
-            input_cost + output_cost + cache_creation_cost + cache_read_cost,
-            6,
+    if elapsed_seconds is not None and elapsed_seconds > 0:
+        data["elapsed_seconds"] = round(elapsed_seconds, 4)
+        data["output_tokens_per_sec"] = round(output_tokens / elapsed_seconds, 2)
+        data["total_tokens_per_sec"] = round(
+            (input_tokens + output_tokens) / elapsed_seconds, 2
         )
+    if provider is None or provider in _PROVIDERS_WITH_PRICING:
+        pricing = MODEL_PRICING.get(model)
+        if pricing:
+            input_cost = input_tokens * pricing[0] / 1_000_000
+            output_cost = output_tokens * pricing[1] / 1_000_000
+            # Anthropic prompt-cache writes are billed at 1.25x input price and
+            # cache reads at 0.1x input price for the ephemeral cache used here.
+            cache_creation_cost = cache_creation_input_tokens * pricing[0] * 1.25 / 1_000_000
+            cache_read_cost = cache_read_input_tokens * pricing[0] * 0.1 / 1_000_000
+            data["estimated_cost"] = round(
+                input_cost + output_cost + cache_creation_cost + cache_read_cost,
+                6,
+            )
     return data
 
 
@@ -81,6 +93,7 @@ def log_query_cost(
     *,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    elapsed_seconds: float | None = None,
     provider: str | None = None,
 ) -> None:
     """Emit a one-line loguru summary of token usage and estimated cost."""
@@ -91,13 +104,21 @@ def log_query_cost(
         output_tokens,
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=cache_read_input_tokens,
+        elapsed_seconds=elapsed_seconds,
         provider=provider,
     )
     cost = data["estimated_cost"]
     cost_str = f" est_cost=${cost:.4f}" if cost is not None else ""
+    rate_str = ""
+    if "elapsed_seconds" in data:
+        rate_str = (
+            f" elapsed={data['elapsed_seconds']:.2f}s"
+            f" out_tps={data['output_tokens_per_sec']:.1f}"
+        )
     logger.info(
         f"[tokens] QUERY TOTAL: api_calls={api_calls} "
         f"input={input_tokens} output={output_tokens} "
         f"cache_create={cache_creation_input_tokens} cache_read={cache_read_input_tokens}"
+        f"{rate_str}"
         f"{cost_str}"
     )

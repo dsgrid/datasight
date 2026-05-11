@@ -20,6 +20,7 @@ from datasight.cli_helpers import (
     resolve_settings as resolve_settings,
 )
 from datasight.config import create_sql_runner_from_settings
+from datasight.cost import build_cost_data, log_query_cost
 from datasight.data_profile import (
     build_measure_overview,
     build_prompt_recipes,
@@ -117,7 +118,6 @@ async def run_ask_pipeline(
         load_schema_description,
         load_time_series_config,
     )
-    from datasight.cost import build_cost_data, log_query_cost
     from datasight.data_profile import format_time_series_prompt_context
     from datasight.prompts import build_system_prompt
     from datasight.query_log import QueryLogger
@@ -257,6 +257,7 @@ async def run_ask_pipeline(
             result.total_output_tokens,
             cache_creation_input_tokens=result.total_cache_creation_input_tokens,
             cache_read_input_tokens=result.total_cache_read_input_tokens,
+            elapsed_seconds=result.total_elapsed_seconds,
             provider=settings.llm.provider,
         )
         cost_data = build_cost_data(
@@ -266,6 +267,7 @@ async def run_ask_pipeline(
             result.total_output_tokens,
             cache_creation_input_tokens=result.total_cache_creation_input_tokens,
             cache_read_input_tokens=result.total_cache_read_input_tokens,
+            elapsed_seconds=result.total_elapsed_seconds,
             provider=settings.llm.provider,
         )
         query_logger.log_cost(
@@ -1157,8 +1159,6 @@ def build_cli_provenance(
     project_dir: str,
     provider: str | None = None,
 ) -> dict[str, Any]:
-    from datasight.cost import build_cost_data
-
     cost_data = build_cost_data(
         model,
         result.api_calls,
@@ -1166,6 +1166,7 @@ def build_cli_provenance(
         result.total_output_tokens,
         cache_creation_input_tokens=result.total_cache_creation_input_tokens,
         cache_read_input_tokens=result.total_cache_read_input_tokens,
+        elapsed_seconds=result.total_elapsed_seconds,
         provider=provider,
     )
     tools = []
@@ -1206,6 +1207,8 @@ def build_cli_provenance(
             "api_calls": result.api_calls,
             "input_tokens": result.total_input_tokens,
             "output_tokens": result.total_output_tokens,
+            "elapsed_seconds": cost_data.get("elapsed_seconds"),
+            "output_tokens_per_sec": cost_data.get("output_tokens_per_sec"),
             "estimated_cost": cost_data.get("estimated_cost"),
         },
         "warnings": warnings,

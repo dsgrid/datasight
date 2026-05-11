@@ -816,6 +816,7 @@ class AgentResult:
     total_output_tokens: int = 0
     total_cache_creation_input_tokens: int = 0
     total_cache_read_input_tokens: int = 0
+    total_elapsed_seconds: float = 0.0
     api_calls: int = 0
     retries_performed: int = 0
     truncated: bool = False
@@ -903,6 +904,7 @@ async def run_agent_loop(  # noqa: C901
     total_output_tokens = 0
     total_cache_creation_input_tokens = 0
     total_cache_read_input_tokens = 0
+    total_elapsed_seconds = 0.0
     api_calls = 0
     retries_performed = 0
 
@@ -919,6 +921,7 @@ async def run_agent_loop(  # noqa: C901
         total_output_tokens += response.usage.output_tokens
         total_cache_creation_input_tokens += response.usage.cache_creation_input_tokens
         total_cache_read_input_tokens += response.usage.cache_read_input_tokens
+        total_elapsed_seconds += response.usage.elapsed_seconds
         retries_performed += response.call_stats.retries_performed
 
         if max_cost_usd is not None:
@@ -947,6 +950,7 @@ async def run_agent_loop(  # noqa: C901
                     total_output_tokens=total_output_tokens,
                     total_cache_creation_input_tokens=total_cache_creation_input_tokens,
                     total_cache_read_input_tokens=total_cache_read_input_tokens,
+                    total_elapsed_seconds=total_elapsed_seconds,
                     api_calls=api_calls,
                     retries_performed=retries_performed,
                 )
@@ -968,6 +972,7 @@ async def run_agent_loop(  # noqa: C901
                 total_output_tokens=total_output_tokens,
                 total_cache_creation_input_tokens=total_cache_creation_input_tokens,
                 total_cache_read_input_tokens=total_cache_read_input_tokens,
+                total_elapsed_seconds=total_elapsed_seconds,
                 api_calls=api_calls,
                 retries_performed=retries_performed,
                 truncated=True,
@@ -1020,6 +1025,7 @@ async def run_agent_loop(  # noqa: C901
             total_output_tokens=total_output_tokens,
             total_cache_creation_input_tokens=total_cache_creation_input_tokens,
             total_cache_read_input_tokens=total_cache_read_input_tokens,
+            total_elapsed_seconds=total_elapsed_seconds,
             api_calls=api_calls,
             retries_performed=retries_performed,
         )
@@ -1031,6 +1037,7 @@ async def run_agent_loop(  # noqa: C901
         total_output_tokens=total_output_tokens,
         total_cache_creation_input_tokens=total_cache_creation_input_tokens,
         total_cache_read_input_tokens=total_cache_read_input_tokens,
+        total_elapsed_seconds=total_elapsed_seconds,
         api_calls=api_calls,
         retries_performed=retries_performed,
     )

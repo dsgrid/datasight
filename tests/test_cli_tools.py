@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from datasight.cli import cli
+from datasight.cost import build_cost_data
 from datasight.llm import LLMResponse, TextBlock, ToolUseBlock, Usage
 
 
@@ -1486,6 +1487,7 @@ def _make_sql_result(text="answer", queries=None):
         total_output_tokens=0,
         total_cache_creation_input_tokens=0,
         total_cache_read_input_tokens=0,
+        total_elapsed_seconds=0.0,
         api_calls=0,
     )
 
@@ -1939,8 +1941,6 @@ def test_ask_sql_script_rejects_with_file(project_dir, tmp_path):
 
 
 def test_build_cost_data_known_model_returns_estimated_cost():
-    from datasight.cost import build_cost_data
-
     data = build_cost_data(
         "claude-sonnet-4-6",
         api_calls=2,
@@ -1955,8 +1955,6 @@ def test_build_cost_data_known_model_returns_estimated_cost():
 
 
 def test_build_cost_data_counts_anthropic_cache_tokens():
-    from datasight.cost import build_cost_data
-
     data = build_cost_data(
         "claude-sonnet-4-6",
         api_calls=1,
@@ -1972,8 +1970,6 @@ def test_build_cost_data_counts_anthropic_cache_tokens():
 
 
 def test_build_cost_data_unknown_model_returns_none_cost():
-    from datasight.cost import build_cost_data
-
     data = build_cost_data(
         "made-up-model",
         api_calls=1,
@@ -1984,6 +1980,49 @@ def test_build_cost_data_unknown_model_returns_none_cost():
     assert data["input_tokens"] == 100
     assert data["output_tokens"] == 200
     assert data["estimated_cost"] is None
+
+
+def test_build_cost_data_with_elapsed_adds_token_rates():
+    data = build_cost_data(
+        "qwen2.5",
+        api_calls=2,
+        input_tokens=1000,
+        output_tokens=500,
+        elapsed_seconds=10.0,
+        provider="ollama",
+    )
+    assert data["elapsed_seconds"] == 10.0
+    assert data["output_tokens_per_sec"] == 50.0
+    assert data["total_tokens_per_sec"] == 150.0
+    # Ollama is not in _PROVIDERS_WITH_PRICING, so no cost estimate.
+    assert data["estimated_cost"] is None
+
+
+def test_build_cost_data_without_elapsed_omits_rate_fields():
+    data = build_cost_data(
+        "qwen2.5",
+        api_calls=1,
+        input_tokens=100,
+        output_tokens=50,
+        provider="ollama",
+    )
+    assert "elapsed_seconds" not in data
+    assert "output_tokens_per_sec" not in data
+
+
+def test_build_cost_data_zero_elapsed_omits_rate_fields():
+    # Zero elapsed (e.g. a synthetic agent test that never made an API call)
+    # would divide by zero — guard against it by skipping the rate fields.
+    data = build_cost_data(
+        "qwen2.5",
+        api_calls=0,
+        input_tokens=0,
+        output_tokens=0,
+        elapsed_seconds=0.0,
+        provider="ollama",
+    )
+    assert "elapsed_seconds" not in data
+    assert "output_tokens_per_sec" not in data
 
 
 def test_run_ask_pipeline_logs_cost_entry(monkeypatch, project_dir):
