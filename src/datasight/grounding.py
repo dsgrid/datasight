@@ -169,7 +169,7 @@ def check_grounding_drift(
     return report
 
 
-def _check_queries(
+def _check_queries(  # noqa: C901
     path: Path, schema_truth: dict[str, set[str]], report: DriftReport
 ) -> None:
     """Walk every ``sql:`` block, flag unresolved table/column references."""
@@ -252,7 +252,7 @@ def _check_queries(
                 ))
 
 
-def _check_schema_description(
+def _check_schema_description(  # noqa: C901
     path: Path,
     schema_truth: dict[str, set[str]],
     enum_values: set[str],

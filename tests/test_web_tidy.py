@@ -477,7 +477,8 @@ def test_apply_returns_grounding_drift_summary(loaded_state, monkeypatch):
 
     async def fake_repair(*args, **kwargs):
         repair_called.append((args, kwargs))
-        raise AssertionError("repair_grounding must not run during apply")
+        msg = "repair_grounding must not run during apply"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
 
@@ -588,7 +589,8 @@ def test_grounding_repair_endpoint_requires_llm_client(loaded_state, monkeypatch
 
     async def fake_repair(*args, **kwargs):
         repair_called.append((args, kwargs))
-        raise AssertionError("repair_grounding must not run without llm_client")
+        msg = "repair_grounding must not run without llm_client"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
 

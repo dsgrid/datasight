@@ -475,7 +475,7 @@ def _parse_repair_json(text: str) -> dict[str, str]:
     return out
 
 
-async def _validate_repair(
+async def _validate_repair(  # noqa: C901
     files: list[RepairFile],
     *,
     run_sql: Callable[[str], Awaitable[Any]],
