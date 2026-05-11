@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import datasight.web.app as web_app
+from datasight.grounding_repair import RepairFile, RepairResult
 from datasight.runner import DuckDBRunner
 from datasight.tidy import _detect_period_groups
 from datasight.tidy_llm import ProposeResult
@@ -455,6 +456,166 @@ def test_apply_creates_table_with_replace_disposition(loaded_state):
     # The new shape is long: it should have a `year` column.
     sales_cols = next(t["columns"] for t in body["schema_info"] if t["name"] == "sales")
     assert any(c["name"] == "year" for c in sales_cols)
+
+
+def test_apply_repairs_stale_grounding_when_llm_configured(loaded_state, monkeypatch):
+    """When grounding files reference columns the reshape removes, the
+    apply endpoint should detect drift, call the LLM, and rewrite the
+    affected files atomically — surfacing what changed in the response.
+
+    Monkeypatches :func:`repair_grounding` so the test exercises the
+    wiring (drift detection → repair call → atomic write → response
+    shaping) without depending on a live LLM. The endpoint's TestClient
+    startup re-initializes ``state.llm_client`` from the env, so a
+    state-level stub gets clobbered before the request runs.
+    """
+    project_dir = Path(loaded_state.project_dir)
+    queries_path = project_dir / "queries.yaml"
+    queries_path.write_text(
+        "- question: Stale wide reference\n"
+        "  sql: SELECT region, sales_2020 FROM sales;\n",
+        encoding="utf-8",
+    )
+    repaired_yaml = (
+        "- question: Long-form sales\n"
+        "  sql: SELECT region, period, sales FROM sales_long;\n"
+    )
+
+    async def fake_repair(project_dir, old_schema, new_schema, drift, **kwargs):
+        # Verify the wiring passes the right schemas: drop disposition →
+        # ``sales`` is gone from new_schema, ``sales_long`` is present.
+        assert "sales_2020" in old_schema["sales"]
+        assert "sales" not in new_schema
+        assert "sales_long" in new_schema
+        return RepairResult(
+            files=[
+                RepairFile(
+                    name="queries.yaml",
+                    path=queries_path,
+                    old_text=queries_path.read_text(encoding="utf-8"),
+                    new_text=repaired_yaml,
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
+
+    suggestion = _detect_period_groups(loaded_state.schema_info[0])[0]
+    proposal = _suggestion_to_proposal_dict(suggestion)
+
+    with TestClient(web_app.app) as client:
+        response = client.post(
+            "/api/tidy/apply",
+            json={
+                "proposal": proposal,
+                "mode": "table",
+                "disposition": {"mode": "drop"},
+            },
+        )
+
+    body = response.json()
+    assert body["success"], body
+    summary = body["grounding_repair"]
+    assert summary is not None, body
+    assert summary["applied"] is True, summary
+    assert summary["files_written"] == ["queries.yaml"]
+    assert summary["drift_items"] >= 1
+
+    rewritten = queries_path.read_text(encoding="utf-8")
+    assert "sales_2020" not in rewritten
+    assert "sales_long" in rewritten
+
+
+def test_apply_skips_grounding_repair_when_no_llm_configured(loaded_state, monkeypatch):
+    """No llm_client → repair flow short-circuits before the drift check.
+    Response carries ``grounding_repair: None`` and ``repair_grounding``
+    is never called even when drift exists on disk."""
+    project_dir = Path(loaded_state.project_dir)
+    queries_path = project_dir / "queries.yaml"
+    original_text = "- question: Stale\n  sql: SELECT sales_2020 FROM sales;\n"
+    queries_path.write_text(original_text, encoding="utf-8")
+
+    repair_called: list[Any] = []
+
+    async def fake_repair(*args, **kwargs):
+        repair_called.append((args, kwargs))
+        raise AssertionError("repair_grounding should not be called without llm_client")
+
+    monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
+
+    suggestion = _detect_period_groups(loaded_state.schema_info[0])[0]
+    proposal = _suggestion_to_proposal_dict(suggestion)
+
+    with TestClient(web_app.app) as client:
+        # Drop the LLM client after startup has re-initialized it from env.
+        loaded_state.llm_client = None
+        response = client.post(
+            "/api/tidy/apply",
+            json={
+                "proposal": proposal,
+                "mode": "table",
+                "disposition": {"mode": "drop"},
+            },
+        )
+
+    body = response.json()
+    assert body["success"], body
+    assert body["grounding_repair"] is None, body
+    assert repair_called == [], "repair_grounding was called unexpectedly"
+    # The stale queries.yaml stays exactly as written.
+    assert queries_path.read_text(encoding="utf-8") == original_text
+
+
+def test_apply_grounding_repair_surfaces_validation_errors(loaded_state, monkeypatch):
+    """When the LLM proposal validates dirty, the file is left untouched
+    and the summary surfaces the validation errors so the UI can show
+    them to the user."""
+    project_dir = Path(loaded_state.project_dir)
+    queries_path = project_dir / "queries.yaml"
+    original_text = "- question: Stale\n  sql: SELECT sales_2020 FROM sales;\n"
+    queries_path.write_text(original_text, encoding="utf-8")
+
+    async def fake_repair(project_dir, old_schema, new_schema, drift, **kwargs):
+        return RepairResult(
+            files=[
+                RepairFile(
+                    name="queries.yaml",
+                    path=queries_path,
+                    old_text=original_text,
+                    new_text=(
+                        "- question: still broken\n"
+                        "  sql: SELECT nonexistent_col FROM sales_long;\n"
+                    ),
+                    validation_errors=["query 1 ('still broken') failed: nonexistent_col"],
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(web_app, "repair_grounding", fake_repair)
+
+    suggestion = _detect_period_groups(loaded_state.schema_info[0])[0]
+    proposal = _suggestion_to_proposal_dict(suggestion)
+
+    with TestClient(web_app.app) as client:
+        response = client.post(
+            "/api/tidy/apply",
+            json={
+                "proposal": proposal,
+                "mode": "table",
+                "disposition": {"mode": "drop"},
+            },
+        )
+
+    body = response.json()
+    assert body["success"], body
+    summary = body["grounding_repair"]
+    assert summary is not None, body
+    assert summary["applied"] is False
+    assert summary["files_written"] == []
+    assert summary["validation_errors"], summary
+    assert any("nonexistent_col" in err for err in summary["validation_errors"])
+    # File contents untouched — write_repair_atomic skipped the bad file.
+    assert queries_path.read_text(encoding="utf-8") == original_text
 
 
 def test_apply_creates_table_with_bare_drop_disposition(loaded_state):

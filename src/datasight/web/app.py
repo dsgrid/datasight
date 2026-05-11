@@ -97,6 +97,14 @@ from datasight.settings import (
     load_global_env,
     restore_original_env,
 )
+from datasight.grounding import (
+    build_enum_values_sync,
+    check_grounding_drift,
+)
+from datasight.grounding_repair import (
+    repair_grounding,
+    write_repair_atomic,
+)
 from datasight.sql_validation import build_measure_rule_map, build_schema_map, validate_sql
 from datasight.tidy import _detect_period_groups, analyze_tidy_patterns
 from datasight.tidy_llm import propose_reshapes
@@ -3339,6 +3347,15 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
 
     db_path = runner._database_path
 
+    # Snapshot the pre-apply schema so the post-apply grounding-repair step
+    # can show the LLM both old and new shapes. Without an explicit
+    # snapshot the repair prompt degenerates to "regenerate from scratch"
+    # and loses any human customizations in the grounding files.
+    old_schema: dict[str, set[str]] = {
+        t["name"]: {c["name"] for c in t["columns"]}
+        for t in state.schema_info
+    }
+
     async with state.state_lock:
         # Cached DataFrames can keep DuckDB buffers alive and block the
         # read-write reopen of the same file; drop them before closing.
@@ -3431,6 +3448,37 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
             }
             for t in tables
         ]
+
+        # Grounding repair: when the schema actually changed, rewrite
+        # queries.yaml / schema_description.md / time_series.yaml so the
+        # next LLM call sees stale-reference-free grounding. Must happen
+        # *before* the schema_text rebuild below, because
+        # ``_load_user_description`` reads schema_description.md from
+        # disk — we want it to load the repaired content, not the stale
+        # one. Failures here are logged and surfaced in the response but
+        # don't fail the apply (the database mutation already committed).
+        grounding_summary: dict[str, Any] | None = None
+        new_schema: dict[str, set[str]] = {
+            t["name"]: {c["name"] for c in t["columns"]}
+            for t in state.schema_info
+        }
+        if (
+            state.project_dir
+            and state.llm_client is not None
+            and state.model
+            and new_schema != old_schema
+            and not state.is_ephemeral
+        ):
+            grounding_summary = await _repair_grounding_after_tidy(
+                project_dir=state.project_dir,
+                db_path=db_path,
+                old_schema=old_schema,
+                new_schema=new_schema,
+                llm_client=state.llm_client,
+                model=state.model,
+                run_sql=state.sql_runner.run_sql,
+            )
+
         state.schema_text = format_schema_context(
             tables,
             user_description=None if state.is_ephemeral else _load_user_description(state),
@@ -3442,6 +3490,110 @@ async def tidy_apply(request: Request, state: AppState = Depends(get_state)):  #
         "success": True,
         "result": result.to_dict(),
         "schema_info": state.schema_info,
+        "grounding_repair": grounding_summary,
+    }
+
+
+async def _repair_grounding_after_tidy(  # noqa: C901
+    *,
+    project_dir: str,
+    db_path: str,
+    old_schema: dict[str, set[str]],
+    new_schema: dict[str, set[str]],
+    llm_client: LLMClient,
+    model: str,
+    run_sql,
+) -> dict[str, Any]:
+    """Run the grounding-drift check and, if needed, the LLM repair.
+
+    Returns a structured summary the API caller can render in the UI:
+
+    - ``drift_items``: how many unresolved references the static check found
+    - ``files_written``: paths that were rewritten and accepted
+    - ``applied``: True iff at least one file was successfully written
+    - ``validation_errors``: per-file SQL execution errors when the LLM's
+      proposal still didn't validate after retries (empty on success)
+    - ``error``: top-level exception message when the flow itself crashed
+
+    The endpoint already committed the database mutation by the time this
+    runs, so failures here are surfaced as info but don't fail the apply.
+    """
+    import duckdb as _duckdb
+
+    # Load enum values from a fresh read-only conn — pure data fetch.
+    try:
+        ro = _duckdb.connect(db_path, read_only=True)
+        try:
+            enum_values = build_enum_values_sync(ro, new_schema)
+        finally:
+            ro.close()
+    except Exception:  # noqa: BLE001
+        enum_values = set()
+
+    drift = check_grounding_drift(
+        Path(project_dir), new_schema, enum_values=enum_values
+    )
+    if drift.is_clean:
+        return {
+            "drift_items": 0,
+            "files_written": [],
+            "applied": False,
+            "skipped": "no_drift",
+        }
+
+    try:
+        result = await repair_grounding(
+            Path(project_dir),
+            old_schema,
+            new_schema,
+            drift,
+            llm_client=llm_client,
+            model=model,
+            run_sql=run_sql,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Grounding repair LLM call failed")
+        return {
+            "drift_items": len(drift.items),
+            "files_written": [],
+            "applied": False,
+            "error": str(exc),
+        }
+
+    if not result.any_changes:
+        return {
+            "drift_items": len(drift.items),
+            "files_written": [],
+            "applied": False,
+            "skipped": "no_llm_changes",
+        }
+    if not result.overall_ok:
+        validation_errors = [
+            f"{f.name}: {err}"
+            for f in result.files
+            for err in f.validation_errors
+        ]
+        return {
+            "drift_items": len(drift.items),
+            "files_written": [],
+            "applied": False,
+            "validation_errors": validation_errors,
+        }
+
+    try:
+        written = write_repair_atomic(result, Path(project_dir))
+    except OSError as exc:
+        logger.exception("Grounding repair atomic write failed")
+        return {
+            "drift_items": len(drift.items),
+            "files_written": [],
+            "applied": False,
+            "error": str(exc),
+        }
+    return {
+        "drift_items": len(drift.items),
+        "files_written": [p.name for p in written],
+        "applied": True,
     }
 
 
