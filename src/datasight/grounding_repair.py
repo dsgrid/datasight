@@ -155,8 +155,11 @@ REPAIR_FILE_NAMES: tuple[str, ...] = (
 
 # Match an opening ```json or ``` fence, then anything (non-greedy) up
 # to the closing ```. Used to peel a JSON object out of an LLM response
-# that wraps it in a markdown code block.
-_FENCED_JSON = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+# that wraps it in a markdown code block. Whitespace on either side of
+# the body is optional so we also handle terse outputs like
+# ``` ```json{...}``` ``` (no newline before the closing fence) without
+# burning a retry. The captured body is .strip()'d at the callsite.
+_FENCED_JSON = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 @dataclass

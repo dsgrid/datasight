@@ -92,6 +92,22 @@ def test_parse_repair_json_fenced_block():
     assert _parse_repair_json(text) == {"queries.yaml": "a"}
 
 
+def test_parse_repair_json_fenced_block_no_trailing_newline():
+    # Some models emit the closing fence directly after ``}`` with no
+    # newline. The regex must still match so we don't waste a retry on
+    # a recoverable formatting quirk.
+    text = '```json\n{"queries.yaml": "a"}```'
+    assert _parse_repair_json(text) == {"queries.yaml": "a"}
+
+
+def test_parse_repair_json_fenced_block_no_leading_newline():
+    # Symmetric: opening fence on the same line as the JSON body. The
+    # plain ``` (no language tag) variant covers the case where the
+    # LLM omitted the language hint too.
+    text = '```{"queries.yaml": "a"}```'
+    assert _parse_repair_json(text) == {"queries.yaml": "a"}
+
+
 def test_parse_repair_json_with_prose_prefix():
     text = 'Here you go:\n{"queries.yaml": "a"}'
     assert _parse_repair_json(text) == {"queries.yaml": "a"}

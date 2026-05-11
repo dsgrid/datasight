@@ -3722,7 +3722,25 @@ async def tidy_grounding_repair(state: AppState = Depends(get_state)):
             and state.project_dir == project_dir_snapshot
             and state.sql_runner is not None
         ):
+            # Re-introspect so the prompt + map reflect any DB-side
+            # changes (the repair itself only rewrites grounding files,
+            # so in the common case this matches the existing
+            # schema_info — but we don't want to rely on that
+            # invariant). Update schema_info first, then build the map
+            # from it, so schema_text and schema_map can't desync.
+            # Mirrors the assignment order in tidy_apply.
             tables = await introspect_schema(state.sql_runner.run_sql, runner=state.sql_runner)
+            state.schema_info = [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "columns": [
+                        {"name": c.name, "dtype": c.dtype, "nullable": c.nullable}
+                        for c in t.columns
+                    ],
+                }
+                for t in tables
+            ]
             state.schema_text = format_schema_context(
                 tables,
                 user_description=_load_user_description(state),
