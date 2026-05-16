@@ -821,7 +821,7 @@ def test_quality_overview_returns_profile(monkeypatch):
     monkeypatch.setattr(
         web_app,
         "build_quality_overview",
-        lambda schema_info, run_sql: _fake_quality_overview(schema_info, run_sql),  # noqa: ARG005
+        lambda schema_info, run_sql, **_: _fake_quality_overview(schema_info, run_sql),  # noqa: ARG005
     )
 
     web_app._state.project_loaded = True
@@ -853,7 +853,7 @@ def test_quality_overview_supports_table_scope(monkeypatch):
     original_sql_runner = web_app._state.sql_runner
     original_insight_cache = dict(web_app._state._insight_cache)
 
-    async def fake_overview(schema_info, run_sql):  # noqa: ARG001
+    async def fake_overview(schema_info, run_sql, **_):  # noqa: ARG001
         captured["tables"] = [table["name"] for table in schema_info]
         return await _fake_quality_overview(schema_info, run_sql)
 

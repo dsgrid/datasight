@@ -94,7 +94,12 @@ def inspect(files, output_format, output_path):  # noqa: C901
             "profiling tables", build_dataset_overview(schema_info, runner.run_sql)
         )
         quality_data = await _run_phase(
-            "running quality checks", build_quality_overview(schema_info, runner.run_sql)
+            "running quality checks",
+            build_quality_overview(
+                schema_info,
+                runner.run_sql,
+                sql_dialect=(db_settings.sql_dialect if db_settings else "duckdb"),
+            ),
         )
         measure_data = await _run_phase(
             "discovering measures",

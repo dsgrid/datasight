@@ -1979,7 +1979,9 @@ async def get_quality_overview(table: str | None = None, state: AppState = Depen
     overview, cached = await _get_cached_insight(
         state,
         cache_key,
-        lambda: build_quality_overview(schema_info, sql_runner.run_sql),
+        lambda: build_quality_overview(
+            schema_info, sql_runner.run_sql, sql_dialect=state.sql_dialect
+        ),
     )
     return {"overview": overview, "cached": cached}
 

@@ -496,6 +496,73 @@ def render_quality_markdown(quality_data: dict[str, Any]) -> str:  # noqa: C901
         lines.extend(["", "## Wide Tables"])
         for item in quality_data["wide_tables"]:
             lines.append(f"- `{item['table']}`: {item['reason']}")
+
+    cleanup_blocks: list[tuple[str, str]] = []
+
+    if quality_data.get("duplicate_rows"):
+        lines.extend(["", "## Whole-Row Duplicates"])
+        for item in quality_data["duplicate_rows"]:
+            lines.append(f"- `{item['table']}`: {item['duplicate_count']} duplicate row(s)")
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append((f"{item['table']} (whole-row dedup)", item["cleanup_sql"]))
+    if quality_data.get("pk_duplicates"):
+        lines.extend(["", "## Primary-Key-Shaped Duplicates"])
+        for item in quality_data["pk_duplicates"]:
+            sample = ", ".join(f"{e['value']} (×{e['count']})" for e in item["examples"][:3])
+            lines.append(f"- `{item['table']}.{item['column']}`: duplicate values — {sample}")
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (f"{item['table']}.{item['column']} (PK dedup)", item["cleanup_sql"])
+                )
+    if quality_data.get("text_flags"):
+        lines.extend(["", "## Text Cleanliness"])
+        for item in quality_data["text_flags"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item['issue']} ({item['count']} row(s))"
+            )
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (
+                        f"{item['table']}.{item['column']} ({item['issue']})",
+                        item["cleanup_sql"],
+                    )
+                )
+    if quality_data.get("outlier_flags"):
+        lines.extend(["", "## Numeric Outliers (IQR)"])
+        for item in quality_data["outlier_flags"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}`: {item['outlier_count']} row(s) outside "
+                f"IQR fence [q1={item.get('q1')}, q3={item.get('q3')}]"
+            )
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (f"{item['table']}.{item['column']} (outliers)", item["cleanup_sql"])
+                )
+    if quality_data.get("orphan_flags"):
+        lines.extend(["", "## Orphan Foreign-Key-Shaped Values"])
+        for item in quality_data["orphan_flags"]:
+            lines.append(
+                f"- `{item['table']}.{item['column']}` → `{item['parent_table']}.{item['parent_column']}`: "
+                f"{item['orphan_count']} orphan value(s)"
+            )
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (
+                        f"{item['table']}.{item['column']} (orphans → {item['parent_table']})",
+                        item["cleanup_sql"],
+                    )
+                )
+
+    if cleanup_blocks:
+        lines.extend(["", "## Suggested Cleanup"])
+        for title, sql in cleanup_blocks:
+            lines.append("")
+            lines.append(f"### {title}")
+            lines.append("")
+            lines.append("```sql")
+            lines.extend(sql.splitlines())
+            lines.append("```")
+
     if quality_data["notes"]:
         lines.extend(["", "## Notes"])
         for item in quality_data["notes"]:

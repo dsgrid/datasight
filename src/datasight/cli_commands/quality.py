@@ -36,6 +36,16 @@ from datasight.cli_helpers import format_epilog
 )
 @click.option("--table", default=None, help="Audit a specific table.")
 @click.option(
+    "--deep",
+    is_flag=True,
+    default=False,
+    help=(
+        "Run expensive detectors: whole-row and PK-shaped duplicates, text "
+        "whitespace/empty-string flags, IQR-based numeric outliers, and "
+        "orphan foreign-key-shaped values."
+    ),
+)
+@click.option(
     "--format",
     "output_format",
     type=click.Choice(["table", "json", "markdown"]),
@@ -50,7 +60,7 @@ from datasight.cli_helpers import format_epilog
     default=None,
     help="Write the quality audit to a file instead of stdout.",
 )
-def quality(project_dir, table, output_format, output_path):  # noqa: C901
+def quality(project_dir, table, deep, output_format, output_path):  # noqa: C901
     """Audit data quality - nulls, suspicious ranges, and date coverage.
 
     Also checks temporal completeness when time_series.yaml defines expected
@@ -79,7 +89,12 @@ def quality(project_dir, table, output_format, output_path):  # noqa: C901
                 msg = f"Table not found: {table}"
                 raise click.ClickException(msg)
             schema_info = [table_info]
-        base = await build_quality_overview(schema_info, sql_runner.run_sql)
+        base = await build_quality_overview(
+            schema_info,
+            sql_runner.run_sql,
+            sql_dialect=settings.database.sql_dialect,
+            deep=deep,
+        )
         ts_configs = time_series_configs
         if table and ts_configs:
             ts_configs = [c for c in ts_configs if c["table"].lower() == table.lower()]
@@ -220,6 +235,121 @@ def quality(project_dir, table, output_format, output_path):  # noqa: C901
                 ],
             )
         )
+    cleanup_blocks: list[tuple[str, str]] = []
+    if quality_data.get("duplicate_rows"):
+        console.print(
+            cli.build_profile_detail_table(
+                "Whole-Row Duplicates",
+                [("Table", "left"), ("Duplicate rows", "right")],
+                [
+                    [item["table"], str(item["duplicate_count"])]
+                    for item in quality_data["duplicate_rows"]
+                ],
+            )
+        )
+        for item in quality_data["duplicate_rows"]:
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append((f"{item['table']} (whole-row dedup)", item["cleanup_sql"]))
+    if quality_data.get("pk_duplicates"):
+        console.print(
+            cli.build_profile_detail_table(
+                "Primary-Key-Shaped Duplicates",
+                [("Column", "left"), ("Sample duplicates", "left")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        ", ".join(f"{e['value']} (×{e['count']})" for e in item["examples"][:3]),
+                    ]
+                    for item in quality_data["pk_duplicates"]
+                ],
+            )
+        )
+        for item in quality_data["pk_duplicates"]:
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (f"{item['table']}.{item['column']} (PK dedup)", item["cleanup_sql"])
+                )
+    if quality_data.get("text_flags"):
+        console.print(
+            cli.build_profile_detail_table(
+                "Text Cleanliness",
+                [("Column", "left"), ("Issue", "left"), ("Rows", "right")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        item["issue"],
+                        str(item["count"]),
+                    ]
+                    for item in quality_data["text_flags"]
+                ],
+            )
+        )
+        for item in quality_data["text_flags"]:
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (
+                        f"{item['table']}.{item['column']} ({item['issue']})",
+                        item["cleanup_sql"],
+                    )
+                )
+    if quality_data.get("outlier_flags"):
+        console.print(
+            cli.build_profile_detail_table(
+                "Numeric Outliers (IQR)",
+                [("Column", "left"), ("Rows", "right"), ("Q1", "right"), ("Q3", "right")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        str(item["outlier_count"]),
+                        cli.format_profile_value(item.get("q1")),
+                        cli.format_profile_value(item.get("q3")),
+                    ]
+                    for item in quality_data["outlier_flags"]
+                ],
+            )
+        )
+        for item in quality_data["outlier_flags"]:
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (f"{item['table']}.{item['column']} (outliers)", item["cleanup_sql"])
+                )
+    if quality_data.get("orphan_flags"):
+        console.print(
+            cli.build_profile_detail_table(
+                "Orphan Foreign-Key-Shaped Values",
+                [("Child", "left"), ("Parent", "left"), ("Orphans", "right")],
+                [
+                    [
+                        f"{item['table']}.{item['column']}",
+                        f"{item['parent_table']}.{item['parent_column']}",
+                        str(item["orphan_count"]),
+                    ]
+                    for item in quality_data["orphan_flags"]
+                ],
+            )
+        )
+        for item in quality_data["orphan_flags"]:
+            if item.get("cleanup_sql"):
+                cleanup_blocks.append(
+                    (
+                        f"{item['table']}.{item['column']} (orphans → {item['parent_table']})",
+                        item["cleanup_sql"],
+                    )
+                )
+    if cleanup_blocks:
+        from rich.panel import Panel
+        from rich.syntax import Syntax
+
+        console.print()
+        console.print("[bold]Suggested Cleanup[/bold]")
+        for title, sql in cleanup_blocks:
+            console.print(
+                Panel(
+                    Syntax(sql, "sql", theme="ansi_dark", word_wrap=True),
+                    title=title,
+                    border_style="dim",
+                )
+            )
     if quality_data["notes"]:
         console.print(
             cli.build_profile_detail_table(
