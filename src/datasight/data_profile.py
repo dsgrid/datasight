@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import yaml
@@ -841,28 +842,50 @@ def format_measure_prompt_context(measure_data: dict[str, Any]) -> str:
 async def build_quality_overview(  # noqa: C901
     schema_info: list[dict[str, Any]],
     run_sql: RunSql,
+    *,
+    sql_dialect: str = "duckdb",
+    deep: bool = False,
 ) -> dict[str, Any]:
-    """Build a deterministic overview focused on data quality signals."""
+    """Build a deterministic overview focused on data quality signals.
+
+    ``sql_dialect`` selects between ``duckdb``, ``sqlite``, and ``postgres``
+    SQL where the checks need dialect-specific syntax (percentile, qualify,
+    multi-column distinct). ``deep=True`` enables the more expensive
+    detectors: whole-row duplicates, PK-shaped duplicates, text-cleanliness
+    flags, IQR-based numeric outliers, and orphan foreign-key-shaped values.
+    """
     null_columns: list[dict[str, Any]] = []
     numeric_flags: list[dict[str, Any]] = []
     date_columns: list[dict[str, Any]] = []
+    duplicate_rows: list[dict[str, Any]] = []
+    pk_duplicates: list[dict[str, Any]] = []
+    text_flags: list[dict[str, Any]] = []
+    outlier_flags: list[dict[str, Any]] = []
+    orphan_flags: list[dict[str, Any]] = []
     notes: list[str] = []
+
+    parent_keys = _index_pk_shaped_columns(schema_info) if deep else {}
 
     for table in schema_info:
         table_name = table["name"]
-        row_count = table.get("row_count")
-        for column in table.get("columns", []):
+        schema_row_count = table.get("row_count")
+        columns = table.get("columns", [])
+        if not columns:
+            continue
+
+        batch = await _batched_column_scan(
+            run_sql, table_name, columns, deep=deep, sql_dialect=sql_dialect
+        )
+        row_count = schema_row_count if schema_row_count is not None else batch.get("__row_count")
+
+        for column in columns:
             column_name = column["name"]
             dtype = column.get("dtype", "")
+            stats = batch.get(column_name)
+            if not stats:
+                continue
 
-            null_count = await _run_scalar(
-                run_sql,
-                (
-                    f"SELECT SUM(CASE WHEN {_quote_identifier(column_name)} IS NULL THEN 1 ELSE 0 END) "
-                    f"AS value FROM {_quote_identifier(table_name)}"
-                ),
-                "value",
-            )
+            null_count = stats.get("null_count")
             if null_count and row_count:
                 try:
                     null_rate = round((float(null_count or 0) / row_count) * 100, 1)
@@ -879,31 +902,76 @@ async def build_quality_overview(  # noqa: C901
                     )
 
             if _is_numeric_dtype(dtype) and not _looks_like_identifier(column_name):
-                stats = await _get_numeric_stats(run_sql, table_name, column_name)
-                if stats:
-                    min_value = stats.get("min")
-                    max_value = stats.get("max")
-                    avg_value = stats.get("avg")
-                    if min_value == max_value and min_value is not None:
-                        numeric_flags.append(
-                            {
-                                "table": table_name,
-                                "column": column_name,
-                                "issue": f"constant numeric value ({min_value})",
-                            }
-                        )
-                    elif avg_value in {min_value, max_value} and min_value != max_value:
-                        numeric_flags.append(
-                            {
-                                "table": table_name,
-                                "column": column_name,
-                                "issue": f"average sits on boundary ({avg_value})",
-                            }
-                        )
+                min_value = stats.get("min")
+                max_value = stats.get("max")
+                avg_value = stats.get("avg")
+                if min_value == max_value and min_value is not None:
+                    numeric_flags.append(
+                        {
+                            "table": table_name,
+                            "column": column_name,
+                            "issue": f"constant numeric value ({min_value})",
+                        }
+                    )
+                elif avg_value in {min_value, max_value} and min_value != max_value:
+                    numeric_flags.append(
+                        {
+                            "table": table_name,
+                            "column": column_name,
+                            "issue": f"average sits on boundary ({avg_value})",
+                        }
+                    )
             elif _is_date_dtype(dtype):
                 coverage = await _get_date_coverage(run_sql, table_name, column_name)
                 if coverage:
                     date_columns.append(coverage)
+
+            if deep and _is_text_dtype(dtype):
+                from datasight.cleanup import (
+                    empty_string_preview,
+                    whitespace_preview,
+                )
+
+                ws = stats.get("whitespace_count")
+                empty = stats.get("empty_count")
+                if ws:
+                    text_flags.append(
+                        {
+                            "table": table_name,
+                            "column": column_name,
+                            "issue": "leading/trailing whitespace",
+                            "count": int(ws),
+                            "cleanup_sql": whitespace_preview(
+                                table_name, column_name, sql_dialect
+                            ),
+                        }
+                    )
+                if empty:
+                    text_flags.append(
+                        {
+                            "table": table_name,
+                            "column": column_name,
+                            "issue": "empty string used in place of NULL",
+                            "count": int(empty),
+                            "cleanup_sql": empty_string_preview(
+                                table_name, column_name, sql_dialect
+                            ),
+                        }
+                    )
+
+        if deep:
+            duplicate_rows.extend(
+                await _detect_whole_row_duplicates(run_sql, table_name, sql_dialect)
+            )
+            pk_duplicates.extend(
+                await _detect_pk_duplicates(run_sql, table_name, columns, sql_dialect)
+            )
+            outlier_flags.extend(
+                await _detect_numeric_outliers(run_sql, table_name, columns, sql_dialect)
+            )
+            orphan_flags.extend(
+                await _detect_orphan_fks(run_sql, table_name, columns, parent_keys, sql_dialect)
+            )
 
     if not null_columns:
         notes.append("No null-heavy columns detected in the sampled profiling pass.")
@@ -911,8 +979,17 @@ async def build_quality_overview(  # noqa: C901
         notes.append("No obvious date columns detected for freshness checks.")
     if not numeric_flags:
         notes.append("No obviously degenerate numeric ranges detected.")
+    if deep:
+        if not duplicate_rows and not pk_duplicates:
+            notes.append("No duplicate rows or duplicate primary-key-shaped values detected.")
+        if not text_flags:
+            notes.append("No text-cleanliness issues (whitespace, empty strings) detected.")
+        if not outlier_flags:
+            notes.append("No IQR outliers detected in numeric columns.")
+        if not orphan_flags:
+            notes.append("No orphan foreign-key-shaped values detected.")
 
-    return {
+    result: dict[str, Any] = {
         "table_count": len(schema_info),
         "null_columns": sorted(
             null_columns,
@@ -923,6 +1000,334 @@ async def build_quality_overview(  # noqa: C901
         "date_columns": date_columns[:6],
         "notes": notes,
     }
+    if deep:
+        result["deep"] = True
+        result["duplicate_rows"] = duplicate_rows
+        result["pk_duplicates"] = pk_duplicates[:8]
+        result["text_flags"] = text_flags[:12]
+        result["outlier_flags"] = outlier_flags[:12]
+        result["orphan_flags"] = orphan_flags[:12]
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Batched per-table column scan
+# ---------------------------------------------------------------------------
+
+
+async def _batched_column_scan(
+    run_sql: RunSql,
+    table_name: str,
+    columns: list[dict[str, Any]],
+    *,
+    deep: bool,
+    sql_dialect: str,
+) -> dict[str, Any]:
+    """Project counts and (for numeric/text columns) stats in a single query.
+
+    Returns a mapping of column name → dict with keys ``null_count``,
+    ``min``, ``max``, ``avg``, ``whitespace_count``, ``empty_count``. The
+    special key ``__row_count`` holds ``COUNT(*)`` for the table. Missing
+    keys mean the check didn't apply to that column.
+    """
+    select_parts: list[str] = ["COUNT(*) AS __row_count"]
+    plans: list[tuple[int, dict[str, Any]]] = []
+
+    for idx, column in enumerate(columns):
+        name = column["name"]
+        dtype = column.get("dtype", "")
+        quoted = _quote_identifier(name)
+        select_parts.append(f"COUNT({quoted}) AS nn_{idx}")
+        plan: dict[str, Any] = {"name": name, "is_numeric": False, "is_text": False}
+        if _is_numeric_dtype(dtype) and not _looks_like_identifier(name):
+            select_parts.append(f"MIN({quoted}) AS mn_{idx}")
+            select_parts.append(f"MAX({quoted}) AS mx_{idx}")
+            select_parts.append(f"AVG({quoted}) AS av_{idx}")
+            plan["is_numeric"] = True
+        if deep and _is_text_dtype(dtype):
+            select_parts.append(
+                f"SUM(CASE WHEN {quoted} IS NOT NULL AND {quoted} <> TRIM({quoted}) "
+                f"THEN 1 ELSE 0 END) AS ws_{idx}"
+            )
+            select_parts.append(f"SUM(CASE WHEN {quoted} = '' THEN 1 ELSE 0 END) AS em_{idx}")
+            plan["is_text"] = True
+        plans.append((idx, plan))
+
+    sql = f"SELECT {', '.join(select_parts)} FROM {_quote_identifier(table_name)}"
+    try:
+        df = await run_sql(sql)
+    except Exception as exc:
+        logger.debug(f"Batched column scan failed for {table_name}: {exc}")
+        return {}
+    if df.empty:
+        return {}
+
+    row = df.iloc[0]
+    row_count = _to_int_or_none(row.get("__row_count"))
+    nonnull_total = row_count if row_count is not None else 0
+
+    out: dict[str, Any] = {"__row_count": row_count}
+    for idx, plan in plans:
+        name = plan["name"]
+        nn = _to_int_or_none(row.get(f"nn_{idx}"))
+        entry: dict[str, Any] = {}
+        if nn is not None and row_count is not None:
+            entry["null_count"] = max(0, nonnull_total - nn)
+        if plan["is_numeric"]:
+            entry["min"] = _scalar_or_none(row.get(f"mn_{idx}"))
+            entry["max"] = _scalar_or_none(row.get(f"mx_{idx}"))
+            entry["avg"] = _scalar_or_none(row.get(f"av_{idx}"))
+        if plan["is_text"]:
+            entry["whitespace_count"] = _to_int_or_none(row.get(f"ws_{idx}")) or 0
+            entry["empty_count"] = _to_int_or_none(row.get(f"em_{idx}")) or 0
+        out[name] = entry
+    return out
+
+
+def _scalar_or_none(value: Any) -> str | None:
+    """Convert a SQL scalar to a stringified value or None."""
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return str(value)
+
+
+# ---------------------------------------------------------------------------
+# Deep detectors
+# ---------------------------------------------------------------------------
+
+
+def _index_pk_shaped_columns(
+    schema_info: list[dict[str, Any]],
+) -> dict[str, tuple[str, str]]:
+    """Map ``<table_name_lower>`` → ``(parent_table, parent_column)``.
+
+    A table contributes if it has exactly one ID-shaped column. Used for the
+    orphan-FK detector: a child column named ``<parent>_id`` (or ``<parent>``)
+    can be checked against the parent's PK-shaped column.
+    """
+    parent_keys: dict[str, tuple[str, str]] = {}
+    for table in schema_info:
+        table_name = table["name"]
+        id_cols = [
+            c["name"] for c in table.get("columns", []) if _looks_like_identifier(c["name"])
+        ]
+        if len(id_cols) == 1:
+            parent_keys[table_name.lower()] = (table_name, id_cols[0])
+    return parent_keys
+
+
+async def _detect_whole_row_duplicates(
+    run_sql: RunSql, table_name: str, sql_dialect: str
+) -> list[dict[str, Any]]:
+    """Count rows that are exact duplicates across all columns."""
+    qt = _quote_identifier(table_name)
+    if sql_dialect == "duckdb":
+        sql = (
+            f"SELECT (SELECT COUNT(*) FROM {qt}) - "
+            f"(SELECT COUNT(*) FROM (SELECT DISTINCT * FROM {qt})) AS dup_count"
+        )
+    else:
+        # SQLite and Postgres both accept this subquery form.
+        sql = (
+            f"SELECT (SELECT COUNT(*) FROM {qt}) - "
+            f"(SELECT COUNT(*) FROM (SELECT DISTINCT * FROM {qt}) AS _d) "
+            f"AS dup_count"
+        )
+    try:
+        df = await run_sql(sql)
+    except Exception as exc:
+        logger.debug(f"Whole-row duplicate check failed for {table_name}: {exc}")
+        return []
+    if df.empty:
+        return []
+    dup = _to_int_or_none(df.iloc[0].get("dup_count"))
+    if not dup:
+        return []
+    from datasight.cleanup import whole_row_dedup_preview
+
+    return [
+        {
+            "table": table_name,
+            "duplicate_count": dup,
+            "cleanup_sql": whole_row_dedup_preview(table_name, sql_dialect),
+        }
+    ]
+
+
+async def _detect_pk_duplicates(
+    run_sql: RunSql,
+    table_name: str,
+    columns: list[dict[str, Any]],
+    sql_dialect: str,
+) -> list[dict[str, Any]]:
+    """For each ID-shaped column, find values appearing more than once."""
+    findings: list[dict[str, Any]] = []
+    qt = _quote_identifier(table_name)
+    for column in columns:
+        name = column["name"]
+        if not _looks_like_identifier(name):
+            continue
+        qc = _quote_identifier(name)
+        sql = (
+            f"SELECT {qc} AS value, COUNT(*) AS n FROM {qt} "
+            f"WHERE {qc} IS NOT NULL "
+            f"GROUP BY {qc} HAVING COUNT(*) > 1 "
+            f"ORDER BY COUNT(*) DESC LIMIT 5"
+        )
+        try:
+            df = await run_sql(sql)
+        except Exception as exc:
+            logger.debug(f"PK duplicate check failed for {table_name}.{name}: {exc}")
+            continue
+        if df.empty:
+            continue
+        examples = [{"value": str(r["value"]), "count": int(r["n"])} for _, r in df.iterrows()]
+        from datasight.cleanup import pk_dedup_preview
+
+        findings.append(
+            {
+                "table": table_name,
+                "column": name,
+                "examples": examples,
+                "cleanup_sql": pk_dedup_preview(table_name, name, sql_dialect),
+            }
+        )
+    return findings
+
+
+async def _detect_numeric_outliers(
+    run_sql: RunSql,
+    table_name: str,
+    columns: list[dict[str, Any]],
+    sql_dialect: str,
+) -> list[dict[str, Any]]:
+    """Flag numeric columns whose IQR-based outlier fence is exceeded.
+
+    Skipped for SQLite (no percentile aggregate available without
+    extensions). Identifier-shaped columns are skipped to avoid false
+    positives on sparse ID ranges.
+    """
+    if sql_dialect == "sqlite":
+        return []
+    findings: list[dict[str, Any]] = []
+    qt = _quote_identifier(table_name)
+    for column in columns:
+        name = column["name"]
+        dtype = column.get("dtype", "")
+        if not _is_numeric_dtype(dtype) or _looks_like_identifier(name):
+            continue
+        qc = _quote_identifier(name)
+        if sql_dialect == "postgres":
+            q1_expr = f"percentile_cont(0.25) WITHIN GROUP (ORDER BY {qc})"
+            q3_expr = f"percentile_cont(0.75) WITHIN GROUP (ORDER BY {qc})"
+        else:  # duckdb
+            q1_expr = f"quantile_cont({qc}, 0.25)"
+            q3_expr = f"quantile_cont({qc}, 0.75)"
+        sql = (
+            f"WITH q AS (SELECT {q1_expr} AS q1, {q3_expr} AS q3 FROM {qt}) "
+            f"SELECT q.q1 AS q1, q.q3 AS q3, "
+            f"(SELECT COUNT(*) FROM {qt}, q "
+            f"WHERE {qc} IS NOT NULL "
+            f"AND ({qc} < q.q1 - 1.5 * (q.q3 - q.q1) "
+            f"OR {qc} > q.q3 + 1.5 * (q.q3 - q.q1))) AS outlier_count "
+            f"FROM q"
+        )
+        try:
+            df = await run_sql(sql)
+        except Exception as exc:
+            logger.debug(f"Outlier check failed for {table_name}.{name}: {exc}")
+            continue
+        if df.empty:
+            continue
+        row = df.iloc[0]
+        count = _to_int_or_none(row.get("outlier_count"))
+        if not count:
+            continue
+        q1 = _scalar_or_none(row.get("q1"))
+        q3 = _scalar_or_none(row.get("q3"))
+        from datasight.cleanup import outlier_preview
+
+        findings.append(
+            {
+                "table": table_name,
+                "column": name,
+                "outlier_count": count,
+                "q1": q1,
+                "q3": q3,
+                "cleanup_sql": outlier_preview(table_name, name, q1, q3, sql_dialect),
+            }
+        )
+    return findings
+
+
+async def _detect_orphan_fks(  # noqa: C901
+    run_sql: RunSql,
+    table_name: str,
+    columns: list[dict[str, Any]],
+    parent_keys: dict[str, tuple[str, str]],
+    sql_dialect: str,
+) -> list[dict[str, Any]]:
+    """For columns shaped like ``<parent>_id``, count values not in parent.
+
+    Self-references (parent == child) are skipped to avoid double-counting
+    a table's own PK.
+    """
+    findings: list[dict[str, Any]] = []
+    qt = _quote_identifier(table_name)
+    for column in columns:
+        name = column["name"]
+        if not _looks_like_identifier(name):
+            continue
+        parent_lookup = name.lower()
+        if parent_lookup.endswith("_id"):
+            parent_lookup = parent_lookup[:-3]
+        elif parent_lookup.startswith("id_"):
+            parent_lookup = parent_lookup[3:]
+        elif parent_lookup == "id":
+            continue
+        # Try both singular and a naive pluralization.
+        candidates = [parent_lookup, parent_lookup + "s"]
+        match = next((parent_keys[c] for c in candidates if c in parent_keys), None)
+        if not match:
+            continue
+        parent_table, parent_column = match
+        if parent_table.lower() == table_name.lower():
+            continue
+        qc = _quote_identifier(name)
+        qpt = _quote_identifier(parent_table)
+        qpc = _quote_identifier(parent_column)
+        sql = (
+            f"SELECT COUNT(DISTINCT {qc}) AS orphan_count FROM {qt} "
+            f"WHERE {qc} IS NOT NULL "
+            f"AND {qc} NOT IN (SELECT {qpc} FROM {qpt} WHERE {qpc} IS NOT NULL)"
+        )
+        try:
+            df = await run_sql(sql)
+        except Exception as exc:
+            logger.debug(f"Orphan FK check failed for {table_name}.{name}: {exc}")
+            continue
+        if df.empty:
+            continue
+        count = _to_int_or_none(df.iloc[0].get("orphan_count"))
+        if not count:
+            continue
+        from datasight.cleanup import orphan_fk_preview
+
+        findings.append(
+            {
+                "table": table_name,
+                "column": name,
+                "parent_table": parent_table,
+                "parent_column": parent_column,
+                "orphan_count": count,
+                "cleanup_sql": orphan_fk_preview(
+                    table_name, name, parent_table, parent_column, sql_dialect
+                ),
+            }
+        )
+    return findings
 
 
 async def build_trend_overview(

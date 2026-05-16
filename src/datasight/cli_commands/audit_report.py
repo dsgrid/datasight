@@ -104,6 +104,7 @@ def audit_report(project_dir, table, output_path, output_format):  # noqa: C901
             validation_rules,
             declared_joins,
             project_name=Path(project_dir).name,
+            sql_dialect=settings.database.sql_dialect,
         )
 
     report_data = asyncio.run(_run_audit_report())

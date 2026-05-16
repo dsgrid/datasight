@@ -20,10 +20,15 @@ async def build_audit_report(
     validation_rules: list[dict[str, Any]] | None = None,
     declared_joins: list[dict[str, Any]] | None = None,
     project_name: str | None = None,
+    *,
+    sql_dialect: str = "duckdb",
+    deep: bool = False,
 ) -> dict[str, Any]:
     """Run all audit checks and assemble a composite report."""
     dataset_overview = await build_dataset_overview(schema_info, run_sql)
-    quality = await build_quality_overview(schema_info, run_sql)
+    quality = await build_quality_overview(
+        schema_info, run_sql, sql_dialect=sql_dialect, deep=deep
+    )
     integrity = await build_integrity_overview(schema_info, run_sql, declared_joins)
     distribution = await build_distribution_overview(schema_info, run_sql, overrides)
 

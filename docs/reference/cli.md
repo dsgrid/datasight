@@ -606,6 +606,7 @@ datasight quality [OPTIONS]
 | --- | --- |
 | `--project-dir` | Project directory containing .env and config files. Default: `.`. |
 | `--table` | Audit a specific table. |
+| `--deep` | Run expensive detectors: whole-row and PK-shaped duplicates, text whitespace/empty-string flags, IQR-based numeric outliers, and orphan foreign-key-shaped values. |
 | `--format` | Output format (default: table). Default: `table`. |
 | `--output`, `-o` | Write the quality audit to a file instead of stdout. |
 

@@ -511,3 +511,213 @@ async def test_build_dimension_overview(energy_conn):
     out = await build_dimension_overview(_schema_info(), _rs(energy_conn))
     assert "dimension_columns" in out
     assert "join_hints" in out
+
+
+# ---------------------------------------------------------------------------
+# Deep-mode quality checks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def messy_conn(tmp_path):
+    """Fixture that intentionally exercises each deep detector."""
+    db = tmp_path / "m.duckdb"
+    conn = duckdb.connect(str(db))
+    conn.execute("CREATE TABLE plants (plant_id INTEGER, plant_name VARCHAR)")
+    conn.execute("INSERT INTO plants VALUES (1, 'Alpha'), (2, 'Beta'), (3, 'Gamma')")
+    conn.execute(
+        "CREATE TABLE generation (plant_id INTEGER, fuel_type VARCHAR, state VARCHAR, mwh DOUBLE)"
+    )
+    # Most rows are tight; one outlier on mwh.
+    base_rows = [(i % 3 + 1, "coal", "CA", 100.0 + i) for i in range(40)]
+    # Whole-row duplicate (entire row appears twice)
+    base_rows.append((1, "gas", "OR", 50.0))
+    base_rows.append((1, "gas", "OR", 50.0))
+    # PK-shaped duplicate on plant_id (already true via base rows, but make
+    # sure at least one value is duplicated with differing other columns).
+    base_rows.append((4, "gas", "WA", 200.0))
+    base_rows.append((4, "gas", "TX", 210.0))
+    # Whitespace and empty-string in fuel_type/state
+    base_rows.append((1, " coal ", "CA", 100.0))
+    base_rows.append((2, "", "CA", 100.0))
+    # Numeric outlier (well outside IQR).
+    base_rows.append((1, "coal", "CA", 99999.0))
+    # Orphan FK: plant_id=99 not in plants.
+    base_rows.append((99, "coal", "CA", 120.0))
+    conn.executemany("INSERT INTO generation VALUES (?, ?, ?, ?)", base_rows)
+    yield conn
+    conn.close()
+
+
+def _messy_schema_info() -> list[dict[str, object]]:
+    return [
+        {
+            "name": "plants",
+            "row_count": 3,
+            "columns": [
+                {"name": "plant_id", "dtype": "INTEGER"},
+                {"name": "plant_name", "dtype": "VARCHAR"},
+            ],
+        },
+        {
+            "name": "generation",
+            "row_count": 47,
+            "columns": [
+                {"name": "plant_id", "dtype": "INTEGER"},
+                {"name": "fuel_type", "dtype": "VARCHAR"},
+                {"name": "state", "dtype": "VARCHAR"},
+                {"name": "mwh", "dtype": "DOUBLE"},
+            ],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_quality_overview_shallow_omits_deep_keys(energy_conn):
+    out = await build_quality_overview(_schema_info(), _rs(energy_conn))
+    assert "duplicate_rows" not in out
+    assert "outlier_flags" not in out
+    assert out.get("deep") is not True
+
+
+@pytest.mark.asyncio
+async def test_quality_overview_deep_finds_everything(messy_conn):
+    out = await build_quality_overview(
+        _messy_schema_info(),
+        _rs(messy_conn),
+        sql_dialect="duckdb",
+        deep=True,
+    )
+    assert out.get("deep") is True
+
+    # Whole-row dup: the (1, gas, OR, 50) pair.
+    assert any(
+        item["table"] == "generation" and item["duplicate_count"] >= 1
+        for item in out["duplicate_rows"]
+    )
+    assert all("cleanup_sql" in item for item in out["duplicate_rows"])
+
+    # PK duplicates on generation.plant_id (multiple rows per plant_id).
+    pk = [
+        item
+        for item in out["pk_duplicates"]
+        if item["table"] == "generation" and item["column"] == "plant_id"
+    ]
+    assert pk and pk[0]["examples"]
+    assert "cleanup_sql" in pk[0]
+
+    # Text flags: whitespace on fuel_type, empty string on fuel_type.
+    issues = {(item["column"], item["issue"]) for item in out["text_flags"]}
+    assert ("fuel_type", "leading/trailing whitespace") in issues
+    assert ("fuel_type", "empty string used in place of NULL") in issues
+    for item in out["text_flags"]:
+        assert "cleanup_sql" in item
+
+    # Outlier on mwh.
+    outliers = [item for item in out["outlier_flags"] if item["column"] == "mwh"]
+    assert outliers and outliers[0]["outlier_count"] >= 1
+    assert "cleanup_sql" in outliers[0]
+
+    # Orphan FK: generation.plant_id=99 has no parent in plants.
+    orphans = [
+        item
+        for item in out["orphan_flags"]
+        if item["table"] == "generation" and item["column"] == "plant_id"
+    ]
+    assert orphans and orphans[0]["parent_table"] == "plants"
+    assert orphans[0]["orphan_count"] >= 1
+    assert "cleanup_sql" in orphans[0]
+
+
+@pytest.mark.asyncio
+async def test_quality_overview_batched_scan_single_query(messy_conn):
+    """The batched-scan refactor should issue one scan SQL per table."""
+    seen: list[str] = []
+
+    async def tracking_run(sql):
+        seen.append(sql)
+        return await _rs(messy_conn)(sql)
+
+    await build_quality_overview(_messy_schema_info(), tracking_run)
+    # One COUNT/MIN/MAX/AVG SELECT per table — find them by the marker alias.
+    batched = [s for s in seen if "__row_count" in s]
+    assert len(batched) == 2  # one per table
+
+
+def test_cleanup_dedup_sql_dialects():
+    from datasight.cleanup import pk_dedup_preview, whole_row_dedup_preview
+
+    assert "QUALIFY" in pk_dedup_preview("t", "id", "duckdb")
+    assert "ROW_NUMBER" in pk_dedup_preview("t", "id", "postgres")
+    assert "rowid" in pk_dedup_preview("t", "id", "sqlite")
+    assert "DISTINCT" in whole_row_dedup_preview("t", "duckdb")
+    assert "DISTINCT" in whole_row_dedup_preview("t", "sqlite")
+
+
+def test_cleanup_text_and_outlier_and_orphan_previews():
+    from datasight.cleanup import (
+        empty_string_preview,
+        orphan_fk_preview,
+        outlier_preview,
+        whitespace_preview,
+    )
+
+    assert "= ''" in empty_string_preview("t", "c", "duckdb")
+    assert "TRIM" in whitespace_preview("t", "c", "duckdb")
+    # Outlier preview inlines q1/q3 as literals.
+    sql = outlier_preview("t", "c", "1.0", "9.0", "duckdb")
+    assert "1.0" in sql and "9.0" in sql
+    # Fallback when q1/q3 are unknown.
+    assert "ORDER BY" in outlier_preview("t", "c", None, None, "duckdb")
+    fk = orphan_fk_preview("child", "fk", "parent", "id", "duckdb")
+    assert "NOT IN" in fk and "parent" in fk
+
+
+@pytest.mark.asyncio
+async def test_deep_detectors_swallow_query_errors():
+    """Each detector should return [] when the underlying SQL fails."""
+    from datasight.data_profile import (
+        _detect_numeric_outliers,
+        _detect_orphan_fks,
+        _detect_pk_duplicates,
+        _detect_whole_row_duplicates,
+    )
+
+    async def boom(sql):  # noqa: ARG001
+        msg = "no such table"
+        raise RuntimeError(msg)
+
+    cols = [{"name": "plant_id", "dtype": "INTEGER"}, {"name": "mwh", "dtype": "DOUBLE"}]
+    parents = {"plants": ("plants", "plant_id")}
+    assert await _detect_whole_row_duplicates(boom, "t", "duckdb") == []
+    assert await _detect_pk_duplicates(boom, "t", cols, "duckdb") == []
+    assert await _detect_numeric_outliers(boom, "t", cols, "duckdb") == []
+    assert await _detect_orphan_fks(boom, "t", cols, parents, "duckdb") == []
+
+
+@pytest.mark.asyncio
+async def test_outlier_detector_skipped_on_sqlite():
+    from datasight.data_profile import _detect_numeric_outliers
+
+    async def boom(sql):  # noqa: ARG001 — should never be called
+        msg = "SQL should not run on sqlite"
+        raise AssertionError(msg)
+
+    cols = [{"name": "mwh", "dtype": "DOUBLE"}]
+    assert await _detect_numeric_outliers(boom, "t", cols, "sqlite") == []
+
+
+@pytest.mark.asyncio
+async def test_orphan_detector_skips_self_and_unmatched(messy_conn):
+    """Orphan check requires a parent table with one ID-shaped column."""
+    from datasight.data_profile import _detect_orphan_fks
+
+    # No parent indexed → no findings, regardless of column shape.
+    cols = [{"name": "plant_id", "dtype": "INTEGER"}]
+    assert await _detect_orphan_fks(_rs(messy_conn), "generation", cols, {}, "duckdb") == []
+    # Self-reference (child is also the parent) is skipped.
+    parents = {"generation": ("generation", "plant_id")}
+    assert (
+        await _detect_orphan_fks(_rs(messy_conn), "generation", cols, parents, "duckdb")
+        == []
+    )
