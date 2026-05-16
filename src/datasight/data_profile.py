@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import yaml
@@ -1087,11 +1088,8 @@ def _scalar_or_none(value: Any) -> str | None:
     """Convert a SQL scalar to a stringified value or None."""
     if value is None:
         return None
-    try:
-        if isinstance(value, float) and value != value:  # NaN check
-            return None
-    except TypeError:
-        pass
+    if isinstance(value, float) and math.isnan(value):
+        return None
     return str(value)
 
 
