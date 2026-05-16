@@ -65,6 +65,40 @@ Use it to spot:
 - quick notes worth turning into follow-up questions
 - temporal completeness issues when [`time_series.yaml`](../../project-setup/how-to/declare-time-series.md) is present
 
+The default pass batches per-column null and numeric scans into one query
+per table, so it stays cheap on wide schemas.
+
+### Deeper checks: `datasight quality --deep`
+
+Add `--deep` to run the more expensive detectors and emit previewable
+cleanup SQL alongside each finding:
+
+```bash
+datasight quality --deep
+datasight quality --deep --format markdown -o quality-deep.md
+```
+
+`--deep` adds:
+
+- **Whole-row duplicates** — rows that are exact duplicates across all columns
+- **Primary-key-shaped duplicates** — values appearing more than once in
+  any `id`, `*_id`, or `id_*` column
+- **Text cleanliness** — counts of values with leading or trailing
+  whitespace, and counts of empty strings used in place of NULL
+- **Numeric outliers (IQR)** — counts of values outside the
+  `[Q1 − 1.5·IQR, Q3 + 1.5·IQR]` fence (skipped on SQLite, which has no
+  percentile aggregate)
+- **Orphan foreign-key-shaped values** — values in `<parent>_id` columns
+  that don't appear in `<parent>.<id>`, detected against any parent
+  table with exactly one ID-shaped column
+
+Each finding includes a `cleanup_sql` field with a previewable `SELECT`
+that shows the candidate rows. Destructive forms
+(`UPDATE`, `CREATE OR REPLACE TABLE`) appear only as comments inside the
+preview — datasight never auto-mutates your tables. The CLI table and
+markdown outputs render the cleanup SQL in a dedicated
+**Suggested Cleanup** section.
+
 ## Detect untidy column shapes
 
 !!! warning "Experimental"
@@ -398,7 +432,7 @@ directory name appears in the report title.
 For a thorough data quality audit, run the commands in this order:
 
 1. **Profile** — understand the shape of the data
-2. **Quality** — find nulls, range issues, date gaps, and untidy column shapes
+2. **Quality** — find nulls, range issues, date gaps, and untidy column shapes (add `--deep` for duplicates, text cleanliness, outliers, and orphan-FK checks with previewable cleanup SQL)
 3. **Integrity** — verify primary keys, foreign keys, and join behavior
 4. **Distribution** — inspect percentiles, outliers, and temporal spikes
 5. **Measures** — identify metrics and verify aggregation defaults
