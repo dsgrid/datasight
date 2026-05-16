@@ -184,6 +184,162 @@ def test_quality_markdown_output_writes_file(project_dir, tmp_path):
     assert "## Date Coverage" in text
 
 
+def _fake_deep_quality_data() -> dict:
+    """Synthesized output from build_quality_overview with deep=True."""
+    return {
+        "table_count": 2,
+        "null_columns": [
+            {"table": "orders", "column": "notes", "null_count": 9, "null_rate": 90.0}
+        ],
+        "numeric_flags": [
+            {"table": "orders", "column": "qty", "issue": "constant numeric value (1)"}
+        ],
+        "date_columns": [
+            {"table": "orders", "column": "order_date", "min": "2024-01-01", "max": "2024-12-31"}
+        ],
+        "notes": ["All checks ran."],
+        "deep": True,
+        "duplicate_rows": [
+            {
+                "table": "orders",
+                "duplicate_count": 3,
+                "cleanup_sql": 'SELECT DISTINCT * FROM "orders";',
+            }
+        ],
+        "pk_duplicates": [
+            {
+                "table": "orders",
+                "column": "id",
+                "examples": [{"value": "7", "count": 2}, {"value": "9", "count": 2}],
+                "cleanup_sql": 'SELECT * FROM "orders" QUALIFY ROW_NUMBER() OVER (PARTITION BY "id" ORDER BY "id") = 1;',
+            }
+        ],
+        "text_flags": [
+            {
+                "table": "orders",
+                "column": "region",
+                "issue": "leading/trailing whitespace",
+                "count": 4,
+                "cleanup_sql": 'SELECT "region" AS original, TRIM("region") AS trimmed FROM "orders";',
+            },
+            {
+                "table": "orders",
+                "column": "region",
+                "issue": "empty string used in place of NULL",
+                "count": 2,
+                "cleanup_sql": 'SELECT * FROM "orders" WHERE "region" = \'\';',
+            },
+        ],
+        "outlier_flags": [
+            {
+                "table": "orders",
+                "column": "amount",
+                "outlier_count": 11,
+                "q1": "10.0",
+                "q3": "30.0",
+                "cleanup_sql": (
+                    '-- Rows in \'amount\' outside the IQR fence [q1=10.0, q3=30.0].\n'
+                    'SELECT * FROM "orders" WHERE "amount" IS NOT NULL;'
+                ),
+            }
+        ],
+        "orphan_flags": [
+            {
+                "table": "orders",
+                "column": "product_id",
+                "parent_table": "products",
+                "parent_column": "id",
+                "orphan_count": 2,
+                "cleanup_sql": (
+                    "SELECT DISTINCT \"product_id\" FROM \"orders\" "
+                    "WHERE \"product_id\" NOT IN (SELECT \"id\" FROM \"products\");"
+                ),
+            }
+        ],
+    }
+
+
+def test_render_quality_markdown_deep_sections():
+    """The markdown renderer surfaces every deep finding plus cleanup SQL."""
+    from datasight.cli import render_quality_markdown
+
+    md = render_quality_markdown(_fake_deep_quality_data())
+    assert "## Whole-Row Duplicates" in md
+    assert "3 duplicate row(s)" in md
+    assert "## Primary-Key-Shaped Duplicates" in md
+    assert "7 (×2)" in md
+    assert "## Text Cleanliness" in md
+    assert "leading/trailing whitespace" in md
+    assert "empty string used in place of NULL" in md
+    assert "## Numeric Outliers (IQR)" in md
+    assert "11 row(s) outside" in md
+    assert "## Orphan Foreign-Key-Shaped Values" in md
+    assert "products.id" in md
+    assert "## Suggested Cleanup" in md
+    # Each cleanup SQL block should appear under a level-3 heading.
+    assert "### orders (whole-row dedup)" in md
+    assert "### orders.id (PK dedup)" in md
+    assert "### orders.region (leading/trailing whitespace)" in md
+    assert "### orders.amount (outliers)" in md
+    assert "### orders.product_id (orphans → products)" in md
+    # ```sql fences enclose at least one SQL snippet.
+    assert md.count("```sql") >= 5
+
+
+def test_quality_cli_deep_renders_all_sections(project_dir, monkeypatch):
+    """End-to-end: --deep CLI output renders the Rich tables and cleanup panel."""
+    from datasight.cli_commands import quality as quality_cmd
+
+    async def fake_overview(schema_info, run_sql, **kwargs):  # noqa: ARG001
+        assert kwargs.get("deep") is True
+        assert kwargs.get("sql_dialect") in {"duckdb", "sqlite", "postgres"}
+        return _fake_deep_quality_data()
+
+    monkeypatch.setattr(quality_cmd, "build_quality_overview", fake_overview)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["quality", "--project-dir", project_dir, "--deep"])
+    assert result.exit_code == 0, result.output
+    output = result.output
+    assert "Whole-Row Duplicates" in output
+    assert "Primary-Key-Shaped Duplicates" in output
+    assert "Text Cleanliness" in output
+    assert "Numeric Outliers" in output
+    assert "Orphan Foreign-Key-Shaped Values" in output
+    assert "Suggested Cleanup" in output
+    # One of the previewed cleanup SQL snippets should appear in the panel.
+    assert "SELECT DISTINCT" in output
+
+
+def test_quality_cli_deep_markdown_output(project_dir, monkeypatch, tmp_path):
+    """--deep --format markdown writes deep sections to file."""
+    from datasight.cli_commands import quality as quality_cmd
+
+    async def fake_overview(schema_info, run_sql, **_):  # noqa: ARG001
+        return _fake_deep_quality_data()
+
+    monkeypatch.setattr(quality_cmd, "build_quality_overview", fake_overview)
+    output_path = tmp_path / "deep.md"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "quality",
+            "--project-dir",
+            project_dir,
+            "--deep",
+            "--format",
+            "markdown",
+            "--output",
+            str(output_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    text = output_path.read_text(encoding="utf-8")
+    assert "## Suggested Cleanup" in text
+    assert "### orders (whole-row dedup)" in text
+
+
 def test_quality_json_output_writes_file(project_dir, tmp_path):
     output_path = tmp_path / "quality.json"
     runner = CliRunner()

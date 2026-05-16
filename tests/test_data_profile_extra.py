@@ -652,3 +652,72 @@ def test_cleanup_dedup_sql_dialects():
     assert "rowid" in pk_dedup_preview("t", "id", "sqlite")
     assert "DISTINCT" in whole_row_dedup_preview("t", "duckdb")
     assert "DISTINCT" in whole_row_dedup_preview("t", "sqlite")
+
+
+def test_cleanup_text_and_outlier_and_orphan_previews():
+    from datasight.cleanup import (
+        empty_string_preview,
+        orphan_fk_preview,
+        outlier_preview,
+        whitespace_preview,
+    )
+
+    assert "= ''" in empty_string_preview("t", "c", "duckdb")
+    assert "TRIM" in whitespace_preview("t", "c", "duckdb")
+    # Outlier preview inlines q1/q3 as literals.
+    sql = outlier_preview("t", "c", "1.0", "9.0", "duckdb")
+    assert "1.0" in sql and "9.0" in sql
+    # Fallback when q1/q3 are unknown.
+    assert "ORDER BY" in outlier_preview("t", "c", None, None, "duckdb")
+    fk = orphan_fk_preview("child", "fk", "parent", "id", "duckdb")
+    assert "NOT IN" in fk and "parent" in fk
+
+
+@pytest.mark.asyncio
+async def test_deep_detectors_swallow_query_errors():
+    """Each detector should return [] when the underlying SQL fails."""
+    from datasight.data_profile import (
+        _detect_numeric_outliers,
+        _detect_orphan_fks,
+        _detect_pk_duplicates,
+        _detect_whole_row_duplicates,
+    )
+
+    async def boom(sql):  # noqa: ARG001
+        msg = "no such table"
+        raise RuntimeError(msg)
+
+    cols = [{"name": "plant_id", "dtype": "INTEGER"}, {"name": "mwh", "dtype": "DOUBLE"}]
+    parents = {"plants": ("plants", "plant_id")}
+    assert await _detect_whole_row_duplicates(boom, "t", "duckdb") == []
+    assert await _detect_pk_duplicates(boom, "t", cols, "duckdb") == []
+    assert await _detect_numeric_outliers(boom, "t", cols, "duckdb") == []
+    assert await _detect_orphan_fks(boom, "t", cols, parents, "duckdb") == []
+
+
+@pytest.mark.asyncio
+async def test_outlier_detector_skipped_on_sqlite():
+    from datasight.data_profile import _detect_numeric_outliers
+
+    async def boom(sql):  # noqa: ARG001 — should never be called
+        msg = "SQL should not run on sqlite"
+        raise AssertionError(msg)
+
+    cols = [{"name": "mwh", "dtype": "DOUBLE"}]
+    assert await _detect_numeric_outliers(boom, "t", cols, "sqlite") == []
+
+
+@pytest.mark.asyncio
+async def test_orphan_detector_skips_self_and_unmatched(messy_conn):
+    """Orphan check requires a parent table with one ID-shaped column."""
+    from datasight.data_profile import _detect_orphan_fks
+
+    # No parent indexed → no findings, regardless of column shape.
+    cols = [{"name": "plant_id", "dtype": "INTEGER"}]
+    assert await _detect_orphan_fks(_rs(messy_conn), "generation", cols, {}, "duckdb") == []
+    # Self-reference (child is also the parent) is skipped.
+    parents = {"generation": ("generation", "plant_id")}
+    assert (
+        await _detect_orphan_fks(_rs(messy_conn), "generation", cols, parents, "duckdb")
+        == []
+    )
